@@ -1,0 +1,212 @@
+"""
+Tracking Session Runner for Legacy Sensor Lite.
+Coordinates camera stream, MediaPipe pose processing, shared memory output,
+and OpenCV HUD preview window.
+"""
+import time
+import cv2
+import ctypes
+try:
+    from .camera_manager import LatestFrameCamera, CameraManager
+    from .kinect_shared_memory import KinectBridge
+    from .pose_tracker import PoseTracker
+    from .tracking_overlay import TrackingOverlay
+    from .config_manager import parse_preset
+except (ImportError, ValueError):
+    from camera_manager import LatestFrameCamera, CameraManager
+    from kinect_shared_memory import KinectBridge
+    from pose_tracker import PoseTracker
+    from tracking_overlay import TrackingOverlay
+    from config_manager import parse_preset
+
+def set_high_resolution_timer(enable=True):
+    """
+    Enables/disables Windows 1ms high-resolution timer via winmm and ntdll
+    to guarantee smooth 60 FPS pacing for camera grab, MediaPipe, and IPC DLL.
+    """
+    try:
+        if enable:
+            ctypes.windll.winmm.timeBeginPeriod(1)
+            cur = ctypes.c_ulong()
+            ctypes.windll.ntdll.NtSetTimerResolution(ctypes.c_ulong(10000), 1, ctypes.byref(cur))
+        else:
+            ctypes.windll.winmm.timeEndPeriod(1)
+    except Exception:
+        pass
+
+def run_tracking_session(config, on_close_callback=None, stop_event=None):
+    """
+    Starts the live tracking loop.
+    config: dictionary with tracking parameters.
+    on_close_callback: optional function called when tracking terminates.
+    stop_event: optional threading.Event to signal loop termination.
+    """
+    mode = config.get("camera_mode", "pscam")
+    cam_idx = config.get("camera_index", 0)
+    preset_str = config.get("pscam_preset" if mode == "pscam" else "webcam_preset", "1280x800 @ 60 FPS" if mode == "pscam" else "640x480 @ 30 FPS")
+    w, h, target_fps = parse_preset(preset_str)
+    mirror = config.get("mirror_horizontal", True)
+    smoothing_alpha = config.get("smoothing_alpha", 0.55)
+    det_conf = config.get("detection_confidence", 0.5)
+    target_height = config.get("target_height_m", 1.75)
+    show_hud = config.get("show_hud", True)
+
+    print(f"\n==========================================")
+    print(f"  INICIANDO SESSÃO DE RASTREAMENTO")
+    print(f"  Modo: {'PlayStation Camera' if mode == 'pscam' else 'Webcam Padrão'}")
+    print(f"  Câmera: {cam_idx} | Resolução: {w}x{h} @ {target_fps} FPS")
+    print(f"  Espelhado: {mirror} | Suavização: {smoothing_alpha}")
+    print(f"==========================================\n")
+
+    # Enable Windows 1ms high-precision timer for 60 FPS IPC streaming
+    set_high_resolution_timer(True)
+
+    # Auto-launch PSCam4Win tray if running in PS Camera mode and tray is inactive
+    if mode == "pscam" and CameraManager.is_pscam_installed() and not CameraManager.is_pscam_running():
+        CameraManager.launch_pscam_tray()
+
+    # 1. Initialize IPC Shared Memory Bridge (Pose, Image & CoachX)
+    bridge = KinectBridge()
+
+    # 2. Initialize Camera Grabber (pristine raw frames to tracker)
+    try:
+        camera = LatestFrameCamera(
+            camera_index=cam_idx,
+            target_w=w,
+            target_h=h,
+            target_fps=target_fps,
+            mirror=mirror,
+            is_pscam=(mode == "pscam")
+        )
+    except Exception as e:
+        print(f"[ERRO] Falha ao iniciar câmera: {e}")
+        bridge.close()
+        if on_close_callback:
+            on_close_callback()
+        return False
+
+    # 3. Initialize Pose Tracker
+    try:
+        tracker = PoseTracker(
+            detection_confidence=det_conf,
+            smoothing_alpha=smoothing_alpha,
+            target_height_m=target_height,
+            cfg=config
+        )
+    except Exception as e:
+        print(f"[ERRO] Falha ao iniciar MediaPipe Pose Tracker: {e}")
+        camera.release()
+        bridge.close()
+        if on_close_callback:
+            on_close_callback()
+        return False
+
+    # 4. Initialize Overlay
+    overlay = TrackingOverlay(show_hud=show_hud)
+
+    window_name = "Legacy Sensor Lite"
+    cv2.namedWindow(window_name, cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_EXPANDED)
+    cv2.resizeWindow(window_name, min(w, 1280), min(h, 800))
+
+    track_fps_counter = 0
+    track_fps_last_time = time.time()
+    measured_track_fps = float(target_fps)
+
+    mode_label = f"{'PS Camera' if mode == 'pscam' else 'Webcam'} ({camera.actual_w}x{camera.actual_h})"
+
+    try:
+        while True:
+            if stop_event is not None and stop_event.is_set():
+                break
+
+            ret, frame, cam_fps = camera.read()
+            if not ret or frame is None:
+                # Pump OpenCV event queue so window doesn't freeze during frame wait
+                key = cv2.waitKey(5) & 0xFF
+                if key in (27, ord('q'), ord('Q')):
+                    break
+                time.sleep(0.005)
+                continue
+
+            # Process Pose on pristine RAW frame with MediaPipe (guarantees correct anatomical limbs)
+            is_tracked, kinect_joints, px_joints, body_mask = tracker.process_frame(frame)
+
+            # Measure tracking FPS
+            track_fps_counter += 1
+            now = time.time()
+            dt = now - track_fps_last_time
+            if dt >= 1.0:
+                measured_track_fps = track_fps_counter / dt
+                track_fps_counter = 0
+                track_fps_last_time = now
+
+            # Prepare frame, mask and skeleton for display and Kinect HUD preview
+            fh, fw = frame.shape[:2]
+            if mirror:
+                display_frame = cv2.flip(frame, 1)
+                display_mask = cv2.flip(body_mask, 1) if body_mask is not None else None
+                display_px = [(fw - 1 - p[0], p[1], p[2]) for p in px_joints] if px_joints else None
+            else:
+                display_frame = frame.copy()
+                display_mask = body_mask
+                display_px = px_joints
+
+            # Update Shared Memory for Just Dance PC (Pose JDP1, 640x480 Image and 320x240 Player Mask JMI1 & JMI2)
+            if is_tracked and kinect_joints:
+                bridge.write(kinect_joints, display_frame, display_mask, tracked=True)
+            else:
+                bridge.write_empty()
+
+            # Render Player Silhouette Shadow & Contour ("sombrinha")
+            if is_tracked and display_mask is not None:
+                display_frame = overlay.draw_player_silhouette(display_frame, display_mask)
+
+            # Render Skeleton on top
+            if is_tracked and display_px:
+                display_frame = overlay.draw_skeleton(display_frame, display_px)
+
+            display_frame = overlay.draw_hud(
+                display_frame,
+                camera_info_str=mode_label,
+                is_tracked=is_tracked,
+                cam_fps=cam_fps,
+                track_fps=measured_track_fps,
+                is_calibrated=tracker.calibrator.is_calibrated,
+                is_mirrored=mirror,
+                calibration_tier=tracker.calibrator.calibration_tier
+            )
+
+            cv2.imshow(window_name, display_frame)
+
+            key = cv2.waitKey(1) & 0xFF
+            if key in (27, ord('q'), ord('Q')):  # ESC or Q
+                print("[INFO] Encerramento solicitado pelo usuário.")
+                break
+            elif key in (ord('c'), ord('C')):
+                tracker.recalibrate()
+                print("[INFO] Recalibração de altura/esqueleto acionada!")
+            elif key in (ord('m'), ord('M')):
+                mirror = not mirror
+                camera.set_mirror(mirror)
+                print(f"[INFO] Espelhamento alterado para: {mirror}")
+            elif key in (ord('h'), ord('H')):
+                overlay.toggle_hud()
+
+            # Check if user clicked window close button (X)
+            if cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1:
+                break
+
+    except Exception as e:
+        print(f"[ERRO] Exceção no loop de rastreamento: {e}")
+    finally:
+        set_high_resolution_timer(False)
+        bridge.write_empty()
+        bridge.close()
+        camera.release()
+        tracker.close()
+        cv2.destroyAllWindows()
+        print("[INFO] Sessão de rastreamento encerrada.")
+        if on_close_callback:
+            on_close_callback()
+
+    return True

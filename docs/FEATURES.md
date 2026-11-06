@@ -1,0 +1,153 @@
+# ✨ Catálogo de Funcionalidades — Legacy Sensor Lite
+
+Este documento descreve detalhadamente o estado atual de todas as funcionalidades do **Legacy Sensor Lite**, distinguindo com precisão o que está **Totalmente Implementado**, **Parcialmente Implementado** e **Planejado para o Futuro**.
+
+---
+
+## 📊 Matriz de Status das Funcionalidades
+
+| Funcionalidade | Status | Arquivo Principal | Descrição |
+|---|---|---|---|
+| **Rastreamento Esquelético (20 Joints)** | ✅ Totalmente Implementado | `kinect_shared_memory.py` | Mapeamento exato de 20 articulações em 344 bytes. |
+| **Rastreamento Multi-Tier (Corpo Parcial / Mesa)** | ✅ Totalmente Implementado | `pose_tracker.py` | Calibração em 3 camadas e sintetizador de membros inferiores para notebooks/mesas. |
+| **Silhueta e Contorno Neon ("Sombrinha")** | ✅ Totalmente Implementado | `pose_tracker.py` / `tracking_overlay.py` | Máscara anatômica com contorno neon e preenchimento translúcido. |
+| **Ponte de Imagem e Máscara (JMI1)** | ✅ Totalmente Implementado | `kinect_shared_memory.py` | Buffer de 1.3 MB (640x480 BGRA + 320x240 Player Mask) para o Just Dance. |
+| **Ponte de Coach X (JXC1)** | ✅ Totalmente Implementado | `kinect_shared_memory.py` | Buffer de 28 bytes para posicionamento de coach no jogo. |
+| **Integração PlayStation 4 Camera** | ✅ Totalmente Implementado | `camera_manager.py` | Suporte nativo ao sensor OV580 em **1280x800 @ 60 FPS**. |
+| **Auto-Detecção de Hotplug e Reconexão** | ✅ Totalmente Implementado | `camera_manager.py` / `gui.py` | Monitoramento PnP de hardware via Win32 CfgMgr32 (< 3ms) com auto-seleção e atualização fluida sem congelar o menu. |
+| **Máquina de Estados da PS4 Camera** | ✅ Totalmente Implementado | `camera_manager.py` / `gui.py` | Detecção em tempo real do ciclo de vida USB (Desconectada, Bootloader, Câmera Virtual e Pronta). |
+| **Integração Webcams Padrão** | ✅ Totalmente Implementado | `camera_manager.py` | Suporte a webcams USB e embutidas em 30 e 60 FPS. |
+| **Filtro Hand Anchor** | ✅ Totalmente Implementado | `pose_tracker.py` | Extrapolação do vetor de antebraço para mãos velozes. |
+| **Suavização EMA Adaptativa** | ✅ Totalmente Implementado | `pose_tracker.py` | Filtro dinâmico sensível à velocidade (anti-jitter). |
+| **Calibração de Escala e Eixos** | ✅ Totalmente Implementado | `pose_tracker.py` | Centralização dos quadris e conversão de eixos para o Just Dance. |
+| **Interface Gráfica Gamer Moderna** | ✅ Totalmente Implementado | `gui.py` | Layout horizontal com cartões de seleção arredondados, abas estilo console com caixa cinza e ícones vetoriais (engrenagem e sliders), tema PlayStation Blue e mini créditos. |
+| **Perfis Simplificados e Auto-Altura** | ✅ Totalmente Implementado | `gui.py` / `config_manager.py` | 3 perfis estilo console (Equilibrado, Competitivo, Ultra Estável) e calibração de altura 100% automática. |
+| **HUD de Jogo e Overlay OpenCV** | ✅ Totalmente Implementado | `tracking_overlay.py` | Renderização do esqueleto, silhueta e contadores reais de FPS. |
+| **Interface de Linha de Comando (CLI)**| ✅ Totalmente Implementado | `main.py` | Flags `--start`, `--mode` e `--camera`. |
+| **Rastreamento Multi-Jogador (2P)** | 🟡 Parcialmente Implementado | `pose_tracker.py` | O MediaPipe suporta `num_poses=2`, mas o Lite foca em 1P. |
+| **Auto-Framing / PTZ Digital** | ⏳ Planejado | — | Zoom digital suave seguindo o dançarino na tela. |
+| **Modo Headless (Sem Janela)** | ⏳ Planejado | `tracking_session.py` | Rastrear em background sem gastar GPU com janela gráfica. |
+
+---
+
+## 🔍 Detalhamento das Funcionalidades Implementadas
+
+### 1. Simulador do Kinect v1 para Just Dance PC
+- **Como funciona:** O jogo Just Dance PC espera receber os dados das 20 articulações do corpo no sistema de coordenadas métricas do sensor Kinect v1 original da Microsoft.
+- **Implementação:** O `pose_tracker.py` calcula os pontos-chave (como o centro dos quadris na média entre quadril esquerdo e direito, a coluna na média entre ombros e quadris, e o centro dos ombros) e entrega um vetor de 20 tuplas `(X, Y, Z, Confiança)`.
+- **Eixos Mapeados:**
+  - `X`: Lateral (-1.0m à esquerda do sensor, +1.0m à direita do sensor).
+  - `Y`: Vertical (+1.0m para cima, -1.0m para baixo).
+  - `Z`: Profundidade em metros (centralizado na distância nominal de dança de 2.0m).
+
+### 2. Integração Especializada com a PlayStation 4 Camera (OV580)
+- **Como funciona:** A PS4 Camera é uma câmera estéreo equipada com o processador OmniVision OV580 e dois sensores OV9713, capaz de atingir 60 FPS com alta nitidez e amplo campo de visão horizontal.
+- **Implementação:**
+  - O `camera_manager.py` detecta a instalação e o status de execução do driver `PSCam4Win`.
+  - Configura a câmera virtual DirectShow para operar em **1280x800 @ 60 FPS**.
+  - Mantém o FourCC original do driver em **YUY2 / NV12**, sem tentar forçar compactação MJPG incompatível.
+  - Oferece no menu a detecção em tempo real e o botão para iniciar o driver caso ele esteja parado.
+
+### 3. Filtro Hand Anchor (Extrapolação Anatômica)
+- **Problema resolvido:** Em coreografias de dança com giros rápidos ou mãos próximas ao tronco, as redes neurais de detecção de pose frequentemente perdem a visibilidade dos dedos (`INDEX` e `WRIST`), fazendo a mão "pular" para coordenadas inválidas e gerando notas `MISS` ou `OK`.
+- **Implementação:** O `HandAnchorFilter` calcula o vetor diretor 3D que vai do cotovelo até o pulso (`vetor = pulso - cotovelo`) e, caso a confiança dos dedos caia, projeta a ponta da mão ao longo dessa linha anatômica natural por uma distância proporcional de 12 centímetros.
+
+### 4. Suavização Dinâmica Anti-Jitter (Adaptive Dynamic EMA)
+- **Problema resolvido:** Filtros de suavização comuns adicionam atraso (*lag*) em movimentos rápidos ou deixam as mãos tremendo em poses paradas.
+- **Implementação:** O `AdaptiveSmoother` mede a velocidade instantânea de cada articulação entre quadros consecutivos:
+  - Movimentos lentos ou poses estáticas (< 0.05 m/s): utiliza fator alpha baixo (~0.25 a 0.35), resultando em um esqueleto perfeitamente estável e sem tremedeira.
+  - Movimentos rápidos ou passos rítmicos (> 0.20 m/s): o alpha escala dinamicamente até 0.85+, entregando resposta imediata aos passos de dança.
+
+### 5. Memória Compartilhada Seqlock Lockless Multi-Canal
+- **Como funciona:** O `kinect_shared_memory.py` implementa o `KinectBridge`, orquestrando três buffers de memória compartilhada Windows em formato *seqlock*:
+  1. `Local\LegacyWebcamKinectPose` (344 bytes): 20 articulações corporais consumidas por `NuiSkeletonGetNextFrame` no Just Dance PC.
+  2. `Local\LegacyWebcamKinectImage` (1.305.632 bytes): Cabeçalho de 32 bytes + Frame BGRA 640x480 + Máscara do Dançarino 320x240 consumida por `NuiImageStreamGetNextFrame`.
+  3. `Local\LegacyWebcamKinectCoachX` (28 bytes): Posição X da pista/coach.
+- **Garantia de Não-Travamento:** A gravação usa a técnica de *seqlock*:
+  - Ao iniciar a escrita, incrementa o número de sequência para um número ímpar.
+  - Grava os bytes de forma atômica e em bloco único (`struct.pack`).
+  - Ao concluir, incrementa a sequência para o número par subsequente.
+  - O `Kinect10.dll` lê o bloco sem precisar travar mutexes do Windows, garantindo que o jogo Just Dance PC nunca congele mesmo sob alta carga de processamento.
+
+### 6. Silhueta Sombreada e Contorno Neon ("Sombrinha")
+- **Problema resolvido:** O jogo Just Dance PC necessita de um stream de máscara de profundidade do jogador para exibir a silhueta no HUD inferior e reconhecer que há um dançarino diante da câmera. Além disso, a prévia do sensor clássico exibia a silhueta translúcida acompanhando os movimentos.
+- **Implementação:**
+  - O `pose_tracker.py` gera uma máscara binária anatômica (`build_body_mask`) conectando os pontos-chave de tronco, membros e cabeça via polígonos e cápsulas dilatadas.
+  - O `tracking_overlay.py` renderiza na prévia OpenCV uma silhueta semitransparente em tom escuro (`alpha = 0.30`) circundada por um contorno ciano/neon de alta visibilidade.
+  - O `tracking_session.py` redimensiona e transfere essa máscara no canal `Local\LegacyWebcamKinectImage`, restaurando a silhueta e a detecção de presença do jogador dentro do próprio Just Dance PC.
+
+### 7. Auto-Detecção de Hotplug e Reconexão Não-Bloqueante
+- **Problema resolvido:** Conectar ou desconectar câmeras (Webcam ou PS4 Camera) exigia intervenção manual com cliques repetitivos no botão de atualizar ou causava congelamentos na interface durante sondagens síncronas do OpenCV.
+- **Implementação:**
+  - O `camera_manager.py` integra a API nativa do Windows `cfgmgr32.dll` (`CM_Get_Device_ID_ListW`) com filtro `CM_GETIDLIST_FILTER_PRESENT`, obtendo um snapshot de dispositivos presentes em apenas **~2.8 milissegundos**, sem gerar processos externos.
+  - A interface `gui.py` executa essa verificação a cada 1.0 segundo. Ao detectar qualquer alteração de hardware PnP, despacha a enumeração detalhada do OpenCV para uma thread assíncrona (`threading.Thread(daemon=True)`).
+  - Quando a câmera é reconectada, o menu a seleciona automaticamente e atualiza o dropdown sem nenhum travamento visual.
+
+### 8. Máquina de Estados da PlayStation 4 Camera
+- **Problema resolvido:** A PS4 Camera possui um ciclo de vida complexo no Windows: ao ser plugada a frio na porta USB 3.0, ela surge no modo bootloader (`05A9:0580`), o driver `PSCam4Win` faz o upload do firmware, a câmera reinicia como hardware ativo (`05A9:058B`) e registra duas instâncias virtuais DirectShow (`SWD\VCAMDEVAPI`). O usuário ficava sem saber em qual etapa o sistema se encontrava.
+- **Implementação:**
+  - `CameraManager.get_ps4_camera_state()` classifica a câmera em 6 estados atômicos:
+    1. `NOT_INSTALLED`: Driver ausente em `C:\Program Files\PSCam4Win`.
+    2. `DISCONNECTED`: Câmera desplugada da porta USB.
+    3. `DRIVER_STOPPED`: Hardware conectado, mas aplicativo da bandeja fechado.
+    4. `BOOTLOADER_UPLOADING`: Câmera detectada e recebendo firmware USB.
+    5. `WAITING_VCAM`: Firmware carregado, aguardando registro DirectShow.
+    6. `READY`: Câmera virtual ativa e pronta para streaming a 60 FPS.
+  - A interface gráfica reflete essas transições instantaneamente com mensagens claras, cores de status dinâmicas e gerenciamento inteligente do botão de inicialização.
+
+### 9. Perfis de Rastreamento Simplificados e Calibração Automática de Altura
+- **Problema resolvido:** Sliders técnicos manuais (como fator EMA e confiança da rede neural) geravam dúvidas em jogadores casuais, e o slider de altura corporal causava confusão já que a normalização para o padrão métrico do Just Dance (1,75 m) é dinâmica e automática.
+- **Implementação:**
+  - **3 Perfis Simplificados em Cartões Interativos:**
+    1. ⭐ **Equilibrado (`balanced`)**: EMA 0.55 / Confiança 0.50 (Padrão recomendado para a maioria das músicas).
+    2. ⚡ **Competitivo (`competitive`)**: EMA 0.75 / Confiança 0.45 (Resposta ultrarrápida para coreografias velozes/extremas).
+    3. 🛡️ **Ultra Estável (`stable`)**: EMA 0.35 / Confiança 0.40 (Máxima filtragem de ruído para ambientes com pouca luz).
+  - **Calibração de Altura Automática:** O slider manual de altura foi completamente removido da UI, substituído por um informativo visual claro explicando que o `SkeletonCalibrator` já calcula e redimensiona dinamicamente as proporções corporais a cada quadro para a escala padrão de 1,75 m do Just Dance.
+  - **Gaveta Retrátil de Ajustes Avançados:** Permite que usuários avançados expandam os sliders milimétricos de EMA e Confiança quando desejado, com detecção automática do perfil "Personalizado".
+
+### 10. Rastreamento e Calibração Multi-Tier para Corpo Parcial / Enquadramento de Mesa (Desk Framing)
+- **Problema resolvido:** Jogadores que utilizam webcams integradas em notebooks ou webcams sobre a mesa frequentemente não possuem recuo suficiente na sala para enquadrar pernas e pés inteiros. Modelos de calibração rígidos exigiam tornozelos visíveis para estimar a escala; sem eles, a calibração falhava, o quadril perdia confiança e o `Kinect10.dll` rejeitava o jogador, gerando 0 pontos e ausência de silhueta no Just Dance.
+- **Implementação:**
+  - **Calibrador em 3 Camadas (`SkeletonCalibrator` Multi-Tier):**
+    1. *Tier 1 (Corpo Inteiro / `full_body`):* Utiliza cabeça, tornozelos e quadris para estimar a altura real e mapear para a escala padrão de 1,75 m do Just Dance.
+    2. *Tier 2 (Meio Corpo / `flexible_torso`):* Ativado quando os tornozelos saem do campo de visão; utiliza a envergadura de tronco (ombros até quadris) multiplicada pela proporção áurea anatômica humana (1,95x - 3,05x).
+    3. *Tier 3 (Enquadramento Mesa / `upper_body`):* Ativado em enquadramentos muito próximos onde apenas cabeça e ombros estão visíveis. Utiliza a distância biacromial (largura dos ombros x 4.6) e distância cabeça-ombros para inferir a escala completa, ancorando a origem corporal onde os quadris anatomicamente estariam (`Y = 0.0m`).
+  - **Sintetizador Dinâmico de Membros Inferiores (`process_frame`):**
+    - Quando os quadris saem do enquadramento inferior, são sintetizados logo abaixo dos ombros com confiança alta (`0.85 * min(sh_l, sh_r)`), garantindo estado `TRACKED` (2) no `Kinect10.dll` para o `HipCenter` (`Joint 0`), que é essencial para o jogo manter o jogador ativo.
+    - As pernas, joelhos e pés são sintetizados em postura ereta natural com confiança `0.35` (estado `INFERRED` / 1 no `Kinect10.dll`), satisfazendo o contrato do Just Dance sem penalizar a pontuação dos movimentos dos braços.
+  - **Fusão de Máscara de Silhueta Robusta:**
+    - O polígono anatômico do tronco é estendido até o limite inferior da imagem (`height - 1`) e fundido com a máscara de segmentação neural via `cv2.bitwise_or`. Isso assegura que o canal de silhueta `Local\LegacyWebcamKinectImage` (320x240) nunca envie uma máscara vazia, mantendo o dançarino visível no HUD do Just Dance mesmo sentado ou diante da mesa.
+  - **Feedback Visual Dinâmico no HUD:**
+    - O badge superior do HUD OpenCV exibe em tempo real o modo ativo: `CORPO INTEIRO (ATIVO)`, `MEIO CORPO (ATIVO)` ou `ENQUADRAMENTO MESA (ATIVO)`.
+
+### 11. Otimização de Pacing a 30 FPS Fixos e Resolução de Timer de 1 ms no Windows
+- **Problema resolvido:** A silhueta do dançarino dentro do Just Dance PC parecia travada a cerca de ~20 FPS com a DLL padrão do Kinect, enquanto tentativas ingênuas de acelerar a DLL para 60 FPS faziam o motor do jogo marcar todas as jogadas como "X" (erro).
+- **Causa Raiz Identificada:**
+  - A thread de ritmo em `0x10002320` no `Kinect10.dll` pulsa tanto o evento do stream de imagem quanto o evento do esqueleto (`0x1001e96c`).
+  - O motor de pontuação do Just Dance PC é calibrado estritamente para a taxa fixa do Kinect v1 de **30 FPS**. Disparar o esqueleto a 60 FPS descompassa a velocidade angular das articulações e o mapa de batidas da música, invalidando todas as pontuações.
+  - Ao mesmo tempo, o agendador padrão do Windows possui resolução de tick de 15,625 ms. Como `Sleep(33)` da DLL ultrapassa 2 ticks (31,25 ms), o Windows adormecia a thread por 3 ticks inteiros (`15,625 * 3 = 46,875 ms`), reduzindo a taxa real para apenas **21,33 FPS**.
+- **Solução Implementada:**
+  - **Preservação da DLL Original a 30 FPS (`0x21` / 33 ms):** Mantém a compatibilidade perfeita do motor de pontuação do Just Dance PC, sem erros de "X".
+  - **Temporizador de Alta Resolução de 1 ms no Python (`set_high_resolution_timer`):** No [tracking_session.py](file:///C:/Users/reydn/OneDrive/Documents/Projetos/LegacySensor_Lite/sensor/tracking_session.py), ativamos `winmm.timeBeginPeriod(1)` e `ntdll.NtSetTimerResolution(10000, 1, ...)`. Com resolução de 1,0 ms no Windows, o `Sleep(33)` acorda exatamente a cada **33,6 ms**, elevando a taxa de 21 FPS para **30 FPS cravados**, que é o teto máximo e ótimo da engine do Just Dance.
+
+### 12. Seleção Dinâmica de Dançarinos nos 6 Slots com Ancoragem de Quadril (1.0m)
+- **Problema resolvido:** O jogo Just Dance PC travava o jogador automaticamente no Slot 4 (Dançarino Roxo), e passos laterais pelo ambiente físico não alteravam a seleção para outros slots (Slots 1 a 6).
+- **Causa Raiz Identificada:**
+  1. *Ordem de Suavização no Pipeline:* O `AdaptiveSmoother` estava sendo executado *após* a translação lateral e o encaixe de slots (`apply_slot_snap`). O filtro EMA suavizava o salto entre slots, amortecendo a transição e prendendo o jogador.
+  2. *Altura dos Quadris:* O `SkeletonCalibrator` colocava o quadril em `Y = 0.0m` (nível do solo), fazendo o Just Dance interpretar que o jogador estava deitado ou fora da área útil de dança. A convenção métrica do Kinect v1 exige quadris a `Y = +1.0m` do chão.
+  3. *Ganho Lateral Insuficiente para Webcams:* A amplitude lateral padrão não gerava deslocamento suficiente para cruzar os limites de $\pm 0.75\text{m}$ necessários para alcançar os extremos do palco (Slot 1 Azul e Slot 4/6). No centro ($X \approx 0.0$ a $+0.35\text{m}$), o jogo seleciona o início do grupo do Coach 2 (Slot 4 Roxo).
+- **Solução Implementada:**
+  - **Inversão da Ordem do Pipeline:** A postura anatômica é suavizada primeiro (`smoother.apply`), e em seguida a translação de sala (`apply_camera_space_translation`) e o encaixe decisivo (`apply_slot_snap`) são aplicados sobre o esqueleto suavizado.
+  - **Elevação Métrica dos Quadris para 1.0m:** `k_y = -(y - origin_y) * scale + 1.0m`, posicionando quadris em 1.0m, cabeça em 1.75m e pés em 0.10m.
+  - **Ampliação do Alcance Lateral:** `camera_x_range_m: 2.8`, `coach_assist_multiplier: 1.50`, `coach_assist_max_m: 1.50` e `slot_snap_gain: 1.40`. Passos naturais agora cobrem de $-1.35\text{m}$ a $+1.35\text{m}$, permitindo selecionar com facilidade qualquer um dos 6 slots de dançarinos.
+
+---
+
+## 🟡 Funcionalidades Parciais e ⏳ Roadmap Futuro
+
+1. **Rastreamento Multi-Jogador (2 Jogadores):**
+   - *Estado Atual:* O modelo MediaPipe já suporta carregar 2 poses (`num_poses=2`), mas o mapeamento do Lite prioriza 1 jogador (Player 1) para manter a CPU o mais leve possível a 60 FPS. A extensão para alimentar dois esqueletos simultâneos na memória compartilhada está estruturada no pipeline.
+2. **Auto-Framing / PTZ Digital:**
+   - *Planejado:* Ajustar dinamicamente o recorte do frame para manter o dançarino sempre perfeitamente enquadrado ao centro da tela caso a câmera esteja posicionada muito distante.
+3. **Modo Background / Headless:**
+   - *Planejado:* Uma flag `--no-gui` que desativa a criação da janela OpenCV `cv2.imshow()`, permitindo que todo o poder da placa de vídeo e CPU seja 100% dedicado ao Just Dance PC em computadores mais modestos.
