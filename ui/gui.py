@@ -46,6 +46,7 @@ class LegacySensorGUI:
         self.is_tracking_active = False
         self._last_hw_snapshot = CameraManager.get_hardware_snapshot()
         self._last_pscam_state = None
+        self._current_pscam_state = "DISCONNECTED"
         self._is_refreshing_cams = False
         self.camera_list = []
         self.active_tab = "video"  # "video" | "calib"
@@ -102,7 +103,7 @@ class LegacySensorGUI:
 
         # Generate rounded gray pill backgrounds for top navigation tabs (radius 10)
         try:
-            w_vid, w_cal, h_tab = 224, 146, 42
+            w_vid, w_cal, h_tab = 144, 126, 42
             # Active (modern sleek gray selection)
             self.pill_tab_vid_act = make_pill_image(w_vid, h_tab, fill=(226, 232, 240, 255), outline=(203, 213, 225, 255), radius=10)
             self.pill_tab_cal_act = make_pill_image(w_cal, h_tab, fill=(226, 232, 240, 255), outline=(203, 213, 225, 255), radius=10)
@@ -345,22 +346,25 @@ class LegacySensorGUI:
         self.main_content = tk.Frame(master_box, bg=PALETTE["bg_window"], padx=26, pady=20)
         self.main_content.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
 
-        # 2.1 Top Tab Navigation Strip (Rounded Gray Selection Cards)
+        # 2.1 Top Tab Navigation Strip (Centered Rounded Gray Selection Cards)
         tab_strip = tk.Frame(self.main_content, bg=PALETTE["bg_window"])
         tab_strip.pack(fill=tk.X, pady=(0, 16))
 
-        w_vid, w_cal, h_tab = 224, 146, 42
+        tab_inner = tk.Frame(tab_strip, bg=PALETTE["bg_window"])
+        tab_inner.pack(anchor="center")
+
+        w_vid, w_cal, h_tab = 144, 126, 42
 
         # Tab 1: Video Config Card (Gear Icon)
         self.card_tab_video = tk.Canvas(
-            tab_strip, width=w_vid, height=h_tab, bg=PALETTE["bg_window"],
+            tab_inner, width=w_vid, height=h_tab, bg=PALETTE["bg_window"],
             highlightthickness=0, cursor="hand2"
         )
         self.card_tab_video.pack(side=tk.LEFT, padx=(0, 10))
         self.card_tab_vid_bg = self.card_tab_video.create_image(0, 0, anchor="nw", image=self.pill_tab_vid_act)
-        self.card_tab_vid_icon = self.card_tab_video.create_image(22, 21, anchor="center", image=self.icon_gear_act)
+        self.card_tab_vid_icon = self.card_tab_video.create_image(20, 21, anchor="center", image=self.icon_gear_act)
         self.card_tab_vid_txt = self.card_tab_video.create_text(
-            42, 21, text="Video Settings", anchor="w",
+            38, 21, text="Video Settings", anchor="w",
             fill="#0F172A", font=(self.font_family, 9, "bold")
         )
 
@@ -382,14 +386,14 @@ class LegacySensorGUI:
 
         # Tab 2: Calibration Card (Sliders Icon)
         self.card_tab_calib = tk.Canvas(
-            tab_strip, width=w_cal, height=h_tab, bg=PALETTE["bg_window"],
+            tab_inner, width=w_cal, height=h_tab, bg=PALETTE["bg_window"],
             highlightthickness=0, cursor="hand2"
         )
         self.card_tab_calib.pack(side=tk.LEFT)
         self.card_tab_cal_bg = self.card_tab_calib.create_image(0, 0, anchor="nw", image=self.pill_tab_cal_inact)
-        self.card_tab_cal_icon = self.card_tab_calib.create_image(22, 21, anchor="center", image=self.icon_sliders_inact)
+        self.card_tab_cal_icon = self.card_tab_calib.create_image(20, 21, anchor="center", image=self.icon_sliders_inact)
         self.card_tab_cal_txt = self.card_tab_calib.create_text(
-            42, 21, text="Calibration", anchor="w",
+            38, 21, text="Calibration", anchor="w",
             fill="#64748B", font=(self.font_family, 9, "bold")
         )
 
@@ -464,23 +468,18 @@ class LegacySensorGUI:
         """Constructs the view for 'Configuração de Vídeo'."""
         self.view_video = tk.Frame(self.view_container, bg=PALETTE["bg_window"])
 
-        # ---------------------------------------------------------------------
-        # Card A: PlayStation 4 Camera Status (Visible ONLY in 'pscam' mode)
-        # ---------------------------------------------------------------------
-        self.pscam_card = tk.Frame(self.view_video, bg=PALETTE["bg_card"],
-                                   highlightbackground=PALETTE["border_subtle"], highlightthickness=1, padx=16, pady=14)
+        # =====================================================================
+        # 1. PlayStation 4 Camera Views
+        # =====================================================================
+        # 1.1 Disconnected Balloon (Shown as the ONLY element when disconnected)
+        self.pscam_disconnected_box = tk.Frame(self.view_video, bg=PALETTE["bg_window"])
 
-        lbl_ps_title = tk.Label(self.pscam_card, text="PLAYSTATION®CAMERA INTEGRATION",
-                                font=(self.font_family, 9, "bold"), fg=PALETTE["blue_dark"], bg=PALETTE["bg_card"])
-        lbl_ps_title.pack(anchor="w", pady=(0, 10))
-
-        # Connection status card (styled matching lateral menu cards)
         self.pscam_status_box = tk.Frame(
-            self.pscam_card,
+            self.pscam_disconnected_box,
             bg=PALETTE["input_bg"],
             highlightbackground=PALETTE["border_subtle"],
             highlightthickness=1,
-            padx=14, pady=12
+            padx=16, pady=14
         )
         self.pscam_status_box.pack(fill=tk.X)
 
@@ -502,9 +501,8 @@ class LegacySensorGUI:
         )
         self.lbl_pscam_info.pack(anchor="w", pady=(2, 0))
 
-        # Launch Driver Button (styled like lateral menu action buttons)
         self.btn_launch_pscam = tk.Button(
-            self.pscam_card,
+            self.pscam_disconnected_box,
             text="Start PSCam4Win Driver",
             font=(self.font_family, 8, "bold"),
             bg=PALETTE["blue_pastel"],
@@ -518,32 +516,43 @@ class LegacySensorGUI:
         )
         self.btn_launch_pscam.pack(fill=tk.X, ipady=6, pady=(10, 0))
 
-        # Spec Badge inside PS Card (Visible when camera is ready)
+        # 1.2 Connected Options Card (Shown when PSCam is READY)
+        self.pscam_card = tk.Frame(self.view_video, bg=PALETTE["bg_card"],
+                                   highlightbackground=PALETTE["border_subtle"], highlightthickness=1, padx=16, pady=14)
+
+        lbl_ps_title = tk.Label(self.pscam_card, text="PLAYSTATION®CAMERA INTEGRATION",
+                                font=(self.font_family, 9, "bold"), fg=PALETTE["blue_dark"], bg=PALETTE["bg_card"])
+        lbl_ps_title.pack(anchor="w", pady=(0, 8))
+
+        self.lbl_pscam_ready_info = tk.Label(
+            self.pscam_card, text="Driver active and PlayStation®Camera connected (60 FPS)",
+            font=(self.font_family, 8), fg=PALETTE["status_ok"], bg=PALETTE["bg_card"]
+        )
+        self.lbl_pscam_ready_info.pack(anchor="w", pady=(0, 10))
+
         self.pscam_spec_badge = tk.Frame(self.pscam_card, bg=PALETTE["blue_pastel"], padx=12, pady=10)
+        self.pscam_spec_badge.pack(fill=tk.X)
+
         tk.Label(self.pscam_spec_badge, text="Optimized Auto Mode: 1280x800 @ 60 FPS (OV580 Stereo DirectShow)",
                  font=(self.font_family, 8, "bold"), fg=PALETTE["blue_dark"], bg=PALETTE["blue_pastel"]).pack(anchor="w")
         tk.Label(self.pscam_spec_badge,
                  text="Resolution picker is hidden in this tab because the PlayStation®Camera operates in the driver's native format.",
                  font=(self.font_family, 7), fg=PALETTE["text_muted"], bg=PALETTE["blue_pastel"]).pack(anchor="w", pady=(2, 0))
 
-        # ---------------------------------------------------------------------
-        # Card B: Standard Webcam Picker (Visible ONLY in 'webcam' mode)
-        # ---------------------------------------------------------------------
-        self.webcam_card = tk.Frame(self.view_video, bg=PALETTE["bg_card"],
-                                    highlightbackground=PALETTE["border_subtle"], highlightthickness=1, padx=16, pady=14)
+        # =====================================================================
+        # 2. Standard Webcam Views
+        # =====================================================================
+        # 2.1 Disconnected Balloon (Shown as the ONLY element when no webcam found)
+        self.webcam_disconnected_box = tk.Frame(self.view_video, bg=PALETTE["bg_window"])
 
-        lbl_web_title = tk.Label(self.webcam_card, text="WEBCAM VIDEO SETTINGS",
-                                 font=(self.font_family, 9, "bold"), fg=PALETTE["blue_dark"], bg=PALETTE["bg_card"])
-        lbl_web_title.pack(anchor="w", pady=(0, 10))
-
-        # Status box when no webcam is connected (styled matching lateral menu cards)
         self.webcam_status_box = tk.Frame(
-            self.webcam_card,
+            self.webcam_disconnected_box,
             bg=PALETTE["input_bg"],
             highlightbackground=PALETTE["border_subtle"],
             highlightthickness=1,
-            padx=14, pady=12
+            padx=16, pady=14
         )
+        self.webcam_status_box.pack(fill=tk.X)
 
         self.lbl_webcam_icon = tk.Label(self.webcam_status_box, image=self.icon_status_err, bg=PALETTE["input_bg"])
         self.lbl_webcam_icon.pack(side=tk.LEFT, padx=(0, 14))
@@ -563,9 +572,8 @@ class LegacySensorGUI:
         )
         self.lbl_webcam_info.pack(anchor="w", pady=(2, 0))
 
-        # Search Webcams Action Button (styled like lateral menu action buttons)
         self.btn_refresh_webcam = tk.Button(
-            self.webcam_card,
+            self.webcam_disconnected_box,
             text="Search for Webcams",
             font=(self.font_family, 8, "bold"),
             bg=PALETTE["blue_pastel"],
@@ -577,12 +585,18 @@ class LegacySensorGUI:
             cursor="hand2",
             command=self._refresh_cameras
         )
+        self.btn_refresh_webcam.pack(fill=tk.X, ipady=6, pady=(10, 0))
 
-        # Controls box when webcam is connected
-        self.webcam_controls_box = tk.Frame(self.webcam_card, bg=PALETTE["bg_card"])
+        # 2.2 Connected Options Card (Shown when webcams exist)
+        self.webcam_card = tk.Frame(self.view_video, bg=PALETTE["bg_card"],
+                                    highlightbackground=PALETTE["border_subtle"], highlightthickness=1, padx=16, pady=14)
+
+        lbl_web_title = tk.Label(self.webcam_card, text="WEBCAM VIDEO SETTINGS",
+                                 font=(self.font_family, 9, "bold"), fg=PALETTE["blue_dark"], bg=PALETTE["bg_card"])
+        lbl_web_title.pack(anchor="w", pady=(0, 10))
 
         # Device selection row
-        dev_row = tk.Frame(self.webcam_controls_box, bg=PALETTE["bg_card"])
+        dev_row = tk.Frame(self.webcam_card, bg=PALETTE["bg_card"])
         dev_row.pack(fill=tk.X, pady=(0, 8))
 
         tk.Label(dev_row, text="Device:", font=(self.font_family, 8, "bold"),
@@ -601,7 +615,7 @@ class LegacySensorGUI:
         btn_refresh.pack(side=tk.RIGHT)
 
         # Preset selection row
-        preset_row = tk.Frame(self.webcam_controls_box, bg=PALETTE["bg_card"])
+        preset_row = tk.Frame(self.webcam_card, bg=PALETTE["bg_card"])
         preset_row.pack(fill=tk.X, pady=(0, 6))
 
         tk.Label(preset_row, text="Resolution / FPS:", font=(self.font_family, 8, "bold"),
@@ -610,12 +624,11 @@ class LegacySensorGUI:
         self.cb_preset = ttk.Combobox(preset_row, state="readonly", style="Modern.TCombobox")
         self.cb_preset.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
-        # ---------------------------------------------------------------------
-        # Card C: Shared Display Preferences (Mirroring & HUD)
-        # ---------------------------------------------------------------------
+        # =====================================================================
+        # 3. Additional Display Options (Shown ONLY when connected)
+        # =====================================================================
         self.display_card = tk.Frame(self.view_video, bg=PALETTE["bg_card"],
                                      highlightbackground=PALETTE["border_subtle"], highlightthickness=1, padx=16, pady=12)
-        self.display_card.pack(fill=tk.X, pady=(10, 0))
 
         tk.Label(self.display_card, text="ADDITIONAL DISPLAY OPTIONS",
                  font=(self.font_family, 9, "bold"), fg=PALETTE["blue_dark"], bg=PALETTE["bg_card"]).pack(anchor="w", pady=(0, 6))
@@ -973,18 +986,69 @@ class LegacySensorGUI:
 
     def _update_video_view_visibility(self):
         """
-        In 'pscam' mode: Shows pscam_card, HIDES webcam_card (resolution & camera options).
-        In 'webcam' mode: Shows webcam_card, HIDES pscam_card.
+        Dynamically adjusts visibility of video panels:
+        - When DISCONNECTED: The balloon (and its action button) is the ONLY THING displayed.
+          Camera options and Additional Display Options are completely hidden.
+        - When CONNECTED: The balloon is hidden; the camera options card and Additional
+          Display Options are displayed.
         """
         mode = self.cfg.get("camera_mode", "pscam")
+        cams = getattr(self, "camera_list", [])
+
         if mode == "pscam":
-            self.webcam_card.pack_forget()
-            if not self.pscam_card.winfo_ismapped():
-                self.pscam_card.pack(fill=tk.X, before=self.display_card)
+            # Hide webcam elements
+            if hasattr(self, 'webcam_disconnected_box'):
+                self.webcam_disconnected_box.pack_forget()
+            if hasattr(self, 'webcam_card'):
+                self.webcam_card.pack_forget()
+
+            state = getattr(self, '_current_pscam_state', 'DISCONNECTED')
+            is_ready = (state == "READY")
+
+            if not is_ready:
+                # Disconnected: ONLY the balloon appears
+                if hasattr(self, 'pscam_card'):
+                    self.pscam_card.pack_forget()
+                if hasattr(self, 'display_card'):
+                    self.display_card.pack_forget()
+                if hasattr(self, 'pscam_disconnected_box') and not self.pscam_disconnected_box.winfo_ismapped():
+                    self.pscam_disconnected_box.pack(fill=tk.X)
+            else:
+                # Connected: Balloon disappears, options and additional options appear
+                if hasattr(self, 'pscam_disconnected_box'):
+                    self.pscam_disconnected_box.pack_forget()
+                if hasattr(self, 'pscam_card') and not self.pscam_card.winfo_ismapped():
+                    self.pscam_card.pack(fill=tk.X)
+                if hasattr(self, 'display_card') and not self.display_card.winfo_ismapped():
+                    self.display_card.pack(fill=tk.X, pady=(10, 0))
+
         else:
-            self.pscam_card.pack_forget()
-            if not self.webcam_card.winfo_ismapped():
-                self.webcam_card.pack(fill=tk.X, before=self.display_card)
+            # Hide pscam elements
+            if hasattr(self, 'pscam_disconnected_box'):
+                self.pscam_disconnected_box.pack_forget()
+            if hasattr(self, 'pscam_card'):
+                self.pscam_card.pack_forget()
+
+            webcams = [c for c in cams if not c.is_pscam]
+            if not webcams and not any(c.is_pscam for c in cams):
+                webcams = cams
+
+            if not webcams:
+                # Disconnected: ONLY the balloon appears
+                if hasattr(self, 'webcam_card'):
+                    self.webcam_card.pack_forget()
+                if hasattr(self, 'display_card'):
+                    self.display_card.pack_forget()
+                if hasattr(self, 'webcam_disconnected_box') and not self.webcam_disconnected_box.winfo_ismapped():
+                    self.webcam_disconnected_box.pack(fill=tk.X)
+            else:
+                # Connected: Balloon disappears, options and additional options appear
+                if hasattr(self, 'webcam_disconnected_box'):
+                    self.webcam_disconnected_box.pack_forget()
+                if hasattr(self, 'webcam_card') and not self.webcam_card.winfo_ismapped():
+                    self.webcam_card.pack(fill=tk.X)
+                if hasattr(self, 'display_card') and not self.display_card.winfo_ismapped():
+                    self.display_card.pack(fill=tk.X, pady=(10, 0))
 
     def _set_mode(self, mode):
         self.cfg["camera_mode"] = mode
@@ -1054,14 +1118,10 @@ class LegacySensorGUI:
             self.cb_cameras["values"] = [msg]
             self.cb_cameras.set(msg)
             if mode == "webcam":
-                self.webcam_controls_box.pack_forget()
                 self.lbl_webcam_conn_title.configure(text="Searching for webcams...")
                 self.lbl_webcam_info.configure(text="Scanning USB video capture devices...")
                 self.btn_refresh_webcam.configure(state="disabled", text="Searching...")
-                if not self.webcam_status_box.winfo_ismapped():
-                    self.webcam_status_box.pack(fill=tk.X)
-                if not self.btn_refresh_webcam.winfo_ismapped():
-                    self.btn_refresh_webcam.pack(fill=tk.X, ipady=6, pady=(10, 0))
+            self._update_video_view_visibility()
             return
 
         if mode == "pscam":
@@ -1087,12 +1147,6 @@ class LegacySensorGUI:
                 webcams = cams
 
             if webcams:
-                # Webcams detected: show controls, hide disconnected box and search button
-                self.webcam_status_box.pack_forget()
-                self.btn_refresh_webcam.pack_forget()
-                if not self.webcam_controls_box.winfo_ismapped():
-                    self.webcam_controls_box.pack(fill=tk.X)
-
                 values = [str(c) for c in webcams]
                 self.cb_cameras["values"] = values
                 current_idx = self.cfg.get("camera_index", 0)
@@ -1104,21 +1158,16 @@ class LegacySensorGUI:
                 self.cb_cameras.set(str(selected))
                 self.cfg["camera_index"] = selected.index
             else:
-                # No webcams detected: show disconnected card with large X and action button
-                self.webcam_controls_box.pack_forget()
                 if self.icon_status_err:
                     self.lbl_webcam_icon.configure(image=self.icon_status_err)
                 self.lbl_webcam_conn_title.configure(text="Webcam not connected")
                 self.lbl_webcam_info.configure(text="Camera disconnected from USB Port")
                 self.btn_refresh_webcam.configure(state="normal", text="Search for Webcams")
-                if not self.webcam_status_box.winfo_ismapped():
-                    self.webcam_status_box.pack(fill=tk.X)
-                if not self.btn_refresh_webcam.winfo_ismapped():
-                    self.btn_refresh_webcam.pack(fill=tk.X, ipady=6, pady=(10, 0))
-
                 self.cb_cameras["values"] = ["No webcam found"]
                 self.cb_cameras.set("No webcam found")
                 self.cfg["camera_index"] = -1
+
+        self._update_video_view_visibility()
 
     def _update_pscam_status(self):
         info = CameraManager.get_ps4_camera_state()
@@ -1126,6 +1175,7 @@ class LegacySensorGUI:
 
     def _apply_pscam_state(self, ps4_info: dict):
         state = ps4_info.get("state", "DISCONNECTED")
+        self._current_pscam_state = state
         running = ps4_info.get("running", False)
         vcam_count = ps4_info.get("vcam_count", 0)
 
@@ -1141,9 +1191,6 @@ class LegacySensorGUI:
                 state="disabled", text="Driver Not Installed",
                 bg=PALETTE["input_bg"], fg=PALETTE["text_muted"]
             )
-            self.pscam_spec_badge.pack_forget()
-            if not self.btn_launch_pscam.winfo_ismapped():
-                self.btn_launch_pscam.pack(fill=tk.X, ipady=6, pady=(10, 0))
 
         elif state == "DISCONNECTED":
             if self.icon_status_err:
@@ -1167,9 +1214,6 @@ class LegacySensorGUI:
                     state="normal", text="Start PSCam4Win Driver",
                     bg=PALETTE["blue_pastel"], fg=PALETTE["blue_dark"]
                 )
-            self.pscam_spec_badge.pack_forget()
-            if not self.btn_launch_pscam.winfo_ismapped():
-                self.btn_launch_pscam.pack(fill=tk.X, ipady=6, pady=(10, 0))
 
         elif state == "DRIVER_STOPPED":
             if self.icon_status_warn:
@@ -1183,9 +1227,6 @@ class LegacySensorGUI:
                 state="normal", text="Start PSCam4Win Driver",
                 bg=PALETTE["blue_pastel"], fg=PALETTE["blue_dark"]
             )
-            self.pscam_spec_badge.pack_forget()
-            if not self.btn_launch_pscam.winfo_ismapped():
-                self.btn_launch_pscam.pack(fill=tk.X, ipady=6, pady=(10, 0))
 
         elif state == "BOOTLOADER_UPLOADING":
             if self.icon_status_warn:
@@ -1199,9 +1240,6 @@ class LegacySensorGUI:
                 state="disabled", text="Uploading Firmware...",
                 bg=PALETTE["blue_pastel"], fg=PALETTE["blue_dark"]
             )
-            self.pscam_spec_badge.pack_forget()
-            if not self.btn_launch_pscam.winfo_ismapped():
-                self.btn_launch_pscam.pack(fill=tk.X, ipady=6, pady=(10, 0))
 
         elif state == "WAITING_VCAM":
             if self.icon_status_warn:
@@ -1215,9 +1253,6 @@ class LegacySensorGUI:
                 state="disabled", text="PSCam4Win Driver Active",
                 bg=PALETTE["blue_pastel"], fg=PALETTE["blue_dark"]
             )
-            self.pscam_spec_badge.pack_forget()
-            if not self.btn_launch_pscam.winfo_ismapped():
-                self.btn_launch_pscam.pack(fill=tk.X, ipady=6, pady=(10, 0))
 
         elif state == "READY":
             if self.icon_status_ok:
@@ -1230,10 +1265,10 @@ class LegacySensorGUI:
                 txt = f"Driver active and PlayStation®Camera connected (Index {cam_idx} • 60 FPS)"
             else:
                 txt = f"Driver active and PlayStation®Camera connected ({vcam_count} virtual camera(s) active • 60 FPS)"
-            self.lbl_pscam_info.configure(text=txt, fg=PALETTE["status_ok"])
-            self.btn_launch_pscam.pack_forget()
-            if not self.pscam_spec_badge.winfo_ismapped():
-                self.pscam_spec_badge.pack(fill=tk.X, pady=(10, 0))
+            if hasattr(self, 'lbl_pscam_ready_info'):
+                self.lbl_pscam_ready_info.configure(text=txt)
+
+        self._update_video_view_visibility()
 
     def _schedule_periodic_check(self):
         try:

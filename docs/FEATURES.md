@@ -159,12 +159,13 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
     - Pode ser ativado ou desativado livremente pelo usuário na aba de configurações de vídeo da interface gráfica.
 
 ### 14. Cards Modernos de Status de Conexão com Ações Contextuais
-- **Melhoria de UX/UI:** Quando nenhuma PlayStation Camera ou Webcam USB estiver conectada, a interface gráfica substitui os seletores estáticos por um card visual destacado, concebido com a mesma linguagem estética dos botões e painéis laterais.
-- **Componentes Visuais:**
+- **Melhoria de UX/UI:** Quando nenhuma PlayStation Camera ou Webcam USB estiver conectada, o balão de status torna-se o **único componente visível** na área de configurações, ocultando caixas de opções e opções adicionais até que uma câmera seja detectada.
+- **Componentes Visuais e Layout:**
+  - **Menu Superior Centralizado:** As abas "Video Settings" e "Calibration" ficam perfeitamente centralizadas no topo do painel principal, com a largura da aba de vídeo ajustada proporcionalmente (144px vs 126px) para eliminar sobras visuais.
   - **Ícones de Status Supersampleados (Pillow 4x LANCZOS):** Badge circular vermelho com "X" nítido e em negrito para desconexão/erro, badge âmbar para estados transitórios de firmware/driver, e badge verde com checkmark para conexão ativa.
   - **Diagnóstico em Tempo Real:** Exibe o status preciso do hardware e do serviço, como `"Driver Offline and Camera disconnected from USB Port"` ou `"Driver Online and Camera disconnected from USB Port"`.
   - **Botão de Ação Direto:** Botão plano estilizado com `PALETTE["blue_pastel"]` e texto em azul PlayStation (`PALETTE["blue_dark"]`) permitindo inicializar o PSCam4Win (`"Start PSCam4Win Driver"`) ou reescanear portas USB (`"Search for Webcams"`).
-  - **Ocultamento Inteligente:** O seletor de resolução/dispositivo é automaticamente ocultado quando nenhuma câmera estiver disponível, e o badge de especificações nativas (1280x800 @ 60 FPS) surge no lugar do botão de driver assim que a PS4 Camera estiver pronta (`READY`).
+  - **Transição Fluida Conectado/Desconectado:** O painel de opções da câmera e as "Opções Adicionais" (HUD, FaceFollow PTZ) só surgem na tela assim que o hardware/driver estiver no estado `READY`. Quando desconectado, voltam a ser recolhidos instantaneamente, mantendo a tela 100% limpa.
 
 ---
 
