@@ -857,7 +857,16 @@ class LegacySensorGUI:
             variable=self.var_hud,
             style="Modern.TCheckbutton"
         )
-        chk_hud.pack(anchor="w")
+        chk_hud.pack(anchor="w", pady=(0, 4))
+
+        self.var_face_follow = tk.BooleanVar(value=self.cfg.get("face_follow_enabled", True))
+        chk_face = ttk.Checkbutton(
+            self.display_card,
+            text="Auto-Frame Face in Just Dance (Dynamic Center & Zoom for Dancer Selection)",
+            variable=self.var_face_follow,
+            style="Modern.TCheckbutton"
+        )
+        chk_face.pack(anchor="w")
 
     def _build_calib_view(self):
         """Constructs the view for 'Calibração' with simplified game-style preset cards."""
@@ -1580,6 +1589,8 @@ class LegacySensorGUI:
     def _save_current_settings(self):
         self.cfg["mirror_horizontal"] = self.var_mirror.get()
         self.cfg["show_hud"] = self.var_hud.get()
+        if hasattr(self, 'var_face_follow'):
+            self.cfg["face_follow_enabled"] = self.var_face_follow.get()
         self.cfg["tracking_preset"] = getattr(self, "current_calib_preset", "balanced")
         mode = self.cfg.get("camera_mode", "pscam")
         if mode == "pscam":

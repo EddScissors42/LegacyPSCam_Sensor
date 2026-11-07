@@ -25,7 +25,7 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
 | **HUD de Jogo e Overlay OpenCV** | ✅ Totalmente Implementado | `tracking_overlay.py` | Renderização do esqueleto, silhueta e contadores reais de FPS. |
 | **Interface de Linha de Comando (CLI)**| ✅ Totalmente Implementado | `main.py` | Flags `--start`, `--mode` e `--camera`. |
 | **Rastreamento Multi-Jogador (2P)** | 🟡 Parcialmente Implementado | `pose_tracker.py` | O MediaPipe suporta `num_poses=2`, mas o Lite foca em 1P. |
-| **Auto-Framing / PTZ Digital** | ⏳ Planejado | — | Zoom digital suave seguindo o dançarino na tela. |
+| **Auto-Framing / FaceFollow PTZ** | ✅ Totalmente Implementado | `pose_tracker.py` | Auto-framing digital com zoom suave (1.22x) e centralização dinâmica do rosto para a foto/avatar do dançarino no Just Dance. |
 | **Modo Headless (Sem Janela)** | ⏳ Planejado | `tracking_session.py` | Rastrear em background sem gastar GPU com janela gráfica. |
 
 ---
@@ -139,7 +139,21 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
 - **Solução Implementada:**
   - **Inversão da Ordem do Pipeline:** A postura anatômica é suavizada primeiro (`smoother.apply`), e em seguida a translação de sala (`apply_camera_space_translation`) e o encaixe decisivo (`apply_slot_snap`) são aplicados sobre o esqueleto suavizado.
   - **Elevação Métrica dos Quadris para 1.0m:** `k_y = -(y - origin_y) * scale + 1.0m`, posicionando quadris em 1.0m, cabeça em 1.75m e pés em 0.10m.
-  - **Ampliação do Alcance Lateral:** `camera_x_range_m: 2.8`, `coach_assist_multiplier: 1.50`, `coach_assist_max_m: 1.50` e `slot_snap_gain: 1.40`. Passos naturais agora cobrem de $-1.35\text{m}$ a $+1.35\text{m}$, permitindo selecionar com facilidade qualquer um dos 6 slots de dançarinos.
+  - **Alcance Lateral Balanceado com Alinhamento Óptico:** `camera_x_range_m: 2.2`, `coach_assist_multiplier: 1.25`, `coach_assist_max_m: 1.20` e `slot_snap_gain: 1.25`. Passos naturais agora cobrem de $-1.15\text{m}$ a $+1.15\text{m}$, permitindo selecionar qualquer um dos 4 ou 6 slots de dançarinos sem estourar o campo de visão ou deslocar a cabeça para fora da tela.
+
+### 13. Auto-Framing Digital (FaceFollow PTZ) e Alinhamento Óptico do Avatar de Seleção
+- **Problema resolvido:** Na tela de seleção de dançarinos do Just Dance PC, o quadrado que exibe o rosto do jogador (avatar de seleção) aparecia deslocado para o lado da sala (por exemplo, na porta), embora se movesse quando o jogador movia a cabeça, e o rosto não ficava focado nem centralizado.
+- **Causas Raízes Identificadas:**
+  1. *Duplicação de Deslocamento pelo CoachX no Kinect10.dll:* O `KinectBridge` estava gravando `coach_x = hip_x` com `enabled = True` no canal `Local\LegacyWebcamKinectCoachX`. No entanto, os 20 joints no canal `Local\LegacyWebcamKinectPose` (`JDP1`) já continham o deslocamento lateral $X$. Ao ler `JDP1`, a função `0x1020` do `Kinect10.dll` somava `coach_x` novamente a todas as articulações, dobrando o desvio lateral ($X_{\text{final}} = X + \text{hip\_x}$).
+  2. *Multiplicadores Excessivos de Amplitude Lateral:* A combinação de amplitude $2.8\text{m}$, multiplicador de $1.50$ e snap de $1.40$ (mais a duplicação do `CoachX`) multiplicava o desvio por até $11.76\text{x}$. Qualquer passo ou leve inclinação projetava a cabeça do jogador a mais de $2.0\text{m}$ para fora do enquadramento, caindo na borda extrema da imagem (na porta da sala).
+  3. *Ausência de Auto-Framing (PTZ Digital):* O Just Dance recorta o quadrado do avatar a partir da imagem do sensor. Em webcams normais ou na PS4 Camera (amplo campo de visão), o rosto ficava distante e descentralizado.
+- **Solução Implementada:**
+  - **Desativação de Offset Automático no CoachX:** O `KinectBridge` agora grava `coach_x = 0.0` e `enabled = False`, eliminando a soma duplicada dentro do `Kinect10.dll` e mantendo a projeção do esqueleto 100% fiel à posição física do dançarino.
+  - **Parâmetros Laterais Calibrados Opticamente:** Amplitude lateral calibrada para $2.2\text{m}$, com teto máximo de $\pm 1.20\text{m}$, garantindo que a projeção 3D da cabeça permaneça estritamente contida nos limites da imagem 640x480.
+  - **Filtro FaceFollowPTZ (Auto-Framing com Zoom 1.22x):**
+    - Rastreia dinamicamente os pontos faciais (`NOSE`, `LEFT_EAR`, `RIGHT_EAR`) com filtro EMA (`alpha = 0.20`) e deslocamento vertical (`y_bias = 0.06`).
+    - Recorta e redimensiona suavemente o frame e a máscara enviados ao Just Dance (`Local\LegacyWebcamKinectImage`), mantendo o rosto do jogador focado, nítido e perfeitamente centralizado no quadrado de seleção de dançarinos.
+    - Pode ser ativado ou desativado livremente pelo usuário na aba de configurações de vídeo da interface gráfica.
 
 ---
 
@@ -147,7 +161,5 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
 
 1. **Rastreamento Multi-Jogador (2 Jogadores):**
    - *Estado Atual:* O modelo MediaPipe já suporta carregar 2 poses (`num_poses=2`), mas o mapeamento do Lite prioriza 1 jogador (Player 1) para manter a CPU o mais leve possível a 60 FPS. A extensão para alimentar dois esqueletos simultâneos na memória compartilhada está estruturada no pipeline.
-2. **Auto-Framing / PTZ Digital:**
-   - *Planejado:* Ajustar dinamicamente o recorte do frame para manter o dançarino sempre perfeitamente enquadrado ao centro da tela caso a câmera esteja posicionada muito distante.
-3. **Modo Background / Headless:**
+2. **Modo Background / Headless:**
    - *Planejado:* Uma flag `--no-gui` que desativa a criação da janela OpenCV `cv2.imshow()`, permitindo que todo o poder da placa de vídeo e CPU seja 100% dedicado ao Just Dance PC em computadores mais modestos.

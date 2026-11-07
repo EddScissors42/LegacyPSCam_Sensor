@@ -31,7 +31,7 @@ from sensor.kinect_shared_memory import (
 from sensor.pose_tracker import (
     PoseTracker, HandAnchorFilter, AdaptiveSmoother, SkeletonCalibrator,
     CameraSpaceXTracker, apply_camera_space_translation, apply_slot_snap,
-    avg, lerp
+    FaceFollowPTZ, avg, lerp
 )
 from sensor.camera_manager import CameraManager
 from sensor.tracking_overlay import TrackingOverlay
@@ -349,9 +349,31 @@ def test_calibrator():
     print("  -> SkeletonCalibrator PASSED (All 3 Tiers verified + Kinect coordinate standard + Slot Selection)")
 
 def test_pose_tracker():
-    print("[TEST] PoseTracker (high-frequency monotonic timestamps & body mask)...")
+    print("[TEST] PoseTracker (high-frequency monotonic timestamps, body mask & FaceFollowPTZ)...")
     tracker = PoseTracker()
     dummy = np.zeros((480, 640, 3), dtype=np.uint8)
+
+    # Test FaceFollowPTZ auto-framing
+    ptz = FaceFollowPTZ(cfg={"face_follow_enabled": True, "face_follow_zoom": 1.25})
+    assert ptz.valid is False
+
+    class MockPt:
+        def __init__(self, x, y):
+            self.x = x
+            self.y = y
+            self.visibility = 0.95
+            self.presence = 0.95
+
+    mock_lms = [MockPt(0.5, 0.3)] * 33
+    ptz.update_from_norm(mock_lms, mirrored=True)
+    assert ptz.valid is True
+    assert abs(ptz.cx - 0.5) < 0.05
+    assert abs(ptz.cy - (0.3 + 0.06)) < 0.05
+
+    dummy_mask = np.zeros((240, 320), dtype=np.uint8)
+    out_frame, out_mask = ptz.apply(dummy, dummy_mask)
+    assert out_frame.shape == (480, 640, 3)
+    assert out_mask.shape == (240, 320)
 
     # Simulate fast burst frames in quick succession (< 1ms between calls)
     for _ in range(5):
@@ -360,7 +382,7 @@ def test_pose_tracker():
         assert body_mask is None
 
     tracker.close()
-    print("  -> PoseTracker PASSED (Monotonic timestamp handles high FPS without crashing)")
+    print("  -> PoseTracker PASSED (Monotonic timestamp & FaceFollowPTZ validated)")
 
 def test_overlay():
     print("[TEST] TrackingOverlay (silhouette & skeleton)...")

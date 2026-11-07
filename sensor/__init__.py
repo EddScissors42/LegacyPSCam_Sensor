@@ -7,7 +7,7 @@ from .camera_manager import CameraManager, LatestFrameCamera
 from .pose_tracker import (
     PoseTracker, HandAnchorFilter, AdaptiveSmoother, SkeletonCalibrator,
     CameraSpaceXTracker, apply_camera_space_translation, apply_slot_snap,
-    KINECT_CONNECTIONS
+    FaceFollowPTZ, KINECT_CONNECTIONS
 )
 from .kinect_shared_memory import (
     KinectBridge, KinectSharedMemory, KinectMultiPoseSharedMemory, KinectImageSharedMemory, KinectCoachXSharedMemory,
@@ -28,6 +28,7 @@ __all__ = [
     "CameraSpaceXTracker",
     "apply_camera_space_translation",
     "apply_slot_snap",
+    "FaceFollowPTZ",
     "KINECT_CONNECTIONS",
     "JOINT_NAMES",
     "KinectBridge",

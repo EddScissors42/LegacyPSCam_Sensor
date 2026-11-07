@@ -18,6 +18,7 @@ Legacy Sensor Lite is a high-performance, lightweight motion tracking sensor for
   - Dynamic Anti-Jitter Smoothing (EMA): Adaptive velocity-based filter eliminates resting jitter while preserving instantaneous response during fast steps.
   - Automatic Height and Scale Normalization: Calibrates body proportions directly into the coordinate space expected by Just Dance.
   - Full 6-Player Coach Slot Support: Lateral range tracking allows players to select any dancer slot across the room.
+  - Auto-Framing / FaceFollow PTZ: Smooth pan/tilt/zoom (1.22x) auto-centers and focuses the player's face for the dancer selection portrait box.
 - Direct Shared Memory IPC (Kinect Bridge):
   - Streams directly to Just Dance via Windows shared memory (`Local\LegacyWebcamKinectPose`, `Local\LegacyWebcamKinectImage`, and `Local\LegacyWebcamKinectCoachX`) using lockless seqlock protocol, consumed by `Kinect10.dll`.
   - Windows 1ms high-precision timer ensures a solid 30 FPS sync for in-game scoring and silhouette HUD.

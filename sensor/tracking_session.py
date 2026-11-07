@@ -151,9 +151,17 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
                 display_mask = body_mask
                 display_px = px_joints
 
+            # Apply dynamic Face Follow (PTZ Auto-framing) for dancer selection avatar
+            if is_tracked and tracker.last_norm_landmarks:
+                tracker.face_ptz.update_from_norm(tracker.last_norm_landmarks, mirrored=mirror)
+                kinect_frame, kinect_mask = tracker.face_ptz.apply(display_frame, display_mask)
+            else:
+                tracker.face_ptz.reset()
+                kinect_frame, kinect_mask = display_frame, display_mask
+
             # Update Shared Memory for Just Dance PC (Pose JDP1, 640x480 Image and 320x240 Player Mask JMI1 & JMI2)
             if is_tracked and kinect_joints:
-                bridge.write(kinect_joints, display_frame, display_mask, tracked=True)
+                bridge.write(kinect_joints, kinect_frame, kinect_mask, tracked=True)
             else:
                 bridge.write_empty()
 

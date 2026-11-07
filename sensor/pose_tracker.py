@@ -400,21 +400,21 @@ class CameraSpaceXTracker:
             else:
                 centered = cam_x - 0.5
 
-            dz = float(self.cfg.get('camera_x_deadzone', 0.02))
+            dz = float(self.cfg.get('camera_x_deadzone', 0.025))
             if abs(centered) < dz:
                 centered = 0.0
             else:
                 sign = 1.0 if centered > 0 else -1.0
                 centered = (abs(centered) - dz) * sign
 
-            target = centered * float(self.cfg.get('camera_x_range_m', 2.8))
+            target = centered * float(self.cfg.get('camera_x_range_m', 2.2))
 
             if self.cfg.get('coach_assist_enabled', True):
-                target = target * float(self.cfg.get('coach_assist_multiplier', 1.50))
-                max_m = float(self.cfg.get('coach_assist_max_m', 1.50))
+                target = target * float(self.cfg.get('coach_assist_multiplier', 1.25))
+                max_m = float(self.cfg.get('coach_assist_max_m', 1.20))
                 target = float(np.clip(target, -max_m, max_m))
 
-            alpha = float(np.clip(float(self.cfg.get('camera_x_smoothing', 0.45)), 0.05, 1.0))
+            alpha = float(np.clip(float(self.cfg.get('camera_x_smoothing', 0.42)), 0.05, 1.0))
             if not self.valid:
                 self.offset = target
                 self.valid = True
@@ -453,8 +453,8 @@ def apply_slot_snap(joints, cfg=None):
         return joints
     arr = np.array(joints, dtype=np.float32)
     hip_x = float(arr[0, 0])
-    gain = float(cfg.get('slot_snap_gain', 1.40)) if cfg else 1.40
-    dead = float(cfg.get('slot_snap_deadzone', 0.05)) if cfg else 0.05
+    gain = float(cfg.get('slot_snap_gain', 1.25)) if cfg else 1.25
+    dead = float(cfg.get('slot_snap_deadzone', 0.06)) if cfg else 0.06
     if abs(hip_x) <= dead:
         target_x = hip_x
     else:
@@ -462,6 +462,77 @@ def apply_slot_snap(joints, cfg=None):
     dx = target_x - hip_x
     arr[:, 0] += dx
     return [tuple(map(float, row)) for row in arr]
+
+class FaceFollowPTZ:
+    """
+    Software Pan-Tilt-Zoom (PTZ) auto-framing filter.
+    Smoothly tracks the player's face landmarks and centers/zooms the video frame
+    and player segmentation mask sent to Just Dance via shared memory (Local\\LegacyWebcamKinectImage).
+    Ensures the player's face avatar on the dancer selection screen is crisp, focused, and centered.
+    """
+    def __init__(self, cfg=None):
+        self.cfg = cfg or {}
+        self.cx = 0.5
+        self.cy = 0.38
+        self.valid = False
+
+    def reset(self):
+        self.cx = 0.5
+        self.cy = 0.38
+        self.valid = False
+
+    def update_from_norm(self, norm_landmarks, mirrored=True):
+        if not norm_landmarks:
+            return
+        candidates = []
+        for idx in (NOSE, LEFT_EAR, RIGHT_EAR):
+            if idx < len(norm_landmarks):
+                lm = norm_landmarks[idx]
+                vis = float(getattr(lm, 'visibility', 1.0))
+                pres = float(getattr(lm, 'presence', 1.0))
+                if min(vis, pres) >= 0.18:
+                    x = 1.0 - float(lm.x) if mirrored else float(lm.x)
+                    y = float(lm.y)
+                    candidates.append((x, y))
+        if candidates:
+            tx = sum(c[0] for c in candidates) / len(candidates)
+            ty = sum(c[1] for c in candidates) / len(candidates)
+            # Apply slight vertical bias so head & hair are comfortably framed in avatar box
+            ty += float(self.cfg.get('face_follow_y_bias', 0.06))
+            tx = float(np.clip(tx, 0.0, 1.0))
+            ty = float(np.clip(ty, 0.0, 1.0))
+            a = float(np.clip(float(self.cfg.get('face_follow_smoothing', 0.20)), 0.02, 1.0))
+            if not self.valid:
+                self.cx = tx
+                self.cy = ty
+                self.valid = True
+            else:
+                self.cx = self.cx * (1.0 - a) + tx * a
+                self.cy = self.cy * (1.0 - a) + ty * a
+
+    def apply(self, frame, mask=None):
+        if not self.cfg.get('face_follow_enabled', True):
+            return frame, mask
+        if not self.valid or frame is None:
+            return frame, mask
+        h, w = frame.shape[:2]
+        zoom = max(1.0, float(self.cfg.get('face_follow_zoom', 1.22)))
+        if abs(zoom - 1.0) < 0.01:
+            return frame, mask
+        crop_w = max(160, int(w / zoom))
+        crop_h = max(120, int(h / zoom))
+        center_x = int(self.cx * w)
+        center_y = int(self.cy * h)
+        x0 = int(np.clip(center_x - crop_w // 2, 0, w - crop_w))
+        y0 = int(np.clip(center_y - crop_h // 2, 0, h - crop_h))
+        x1 = x0 + crop_w
+        y1 = y0 + crop_h
+
+        out_frame = cv2.resize(frame[y0:y1, x0:x1], (w, h), interpolation=cv2.INTER_LINEAR)
+        out_mask = None
+        if mask is not None:
+            out_mask = cv2.resize(mask[y0:y1, x0:x1], (mask.shape[1], mask.shape[0]), interpolation=cv2.INTER_NEAREST)
+        return out_frame, out_mask
 
 class PoseTracker:
     """
@@ -482,6 +553,8 @@ class PoseTracker:
         self.smoother = AdaptiveSmoother(base_alpha=smoothing_alpha)
         self.calibrator = SkeletonCalibrator(target_height_m=target_height_m, cfg=self.cfg)
         self.camera_x_tracker = CameraSpaceXTracker(cfg=self.cfg)
+        self.face_ptz = FaceFollowPTZ(cfg=self.cfg)
+        self.last_norm_landmarks = None
         self.start_time = time.time()
         self.frame_index = 0
         self.last_timestamp_ms = 0
@@ -507,6 +580,7 @@ class PoseTracker:
             self.cfg.update(cfg)
             self.calibrator.cfg = self.cfg
             self.camera_x_tracker.cfg = self.cfg
+            self.face_ptz.cfg = self.cfg
         if smoothing_alpha is not None:
             self.smoother.update_base_alpha(smoothing_alpha)
         if target_height_m is not None:
@@ -521,6 +595,7 @@ class PoseTracker:
         self.calibrator.reset()
         self.smoother.reset()
         self.camera_x_tracker.reset()
+        self.face_ptz.reset()
 
     def build_body_mask(self, norm_landmarks, width, height):
         """
@@ -636,10 +711,13 @@ class PoseTracker:
         if not result.pose_world_landmarks or not result.pose_world_landmarks[0]:
             self.smoother.reset()
             self.camera_x_tracker.reset()
+            self.face_ptz.reset()
+            self.last_norm_landmarks = None
             return False, None, None, None
 
         world_lm = result.pose_world_landmarks[0]
         norm_lm = result.pose_landmarks[0] if result.pose_landmarks else world_lm
+        self.last_norm_landmarks = norm_lm
 
         # Helper to extract joint tuple: (x, y, z, confidence)
         def get_joint(idx):

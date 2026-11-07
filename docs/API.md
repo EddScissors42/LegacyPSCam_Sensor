@@ -120,6 +120,9 @@ O `Kinect10.dll` implementa suporte duplo e busca primeiro o canal **V2 (`JMI2`)
   - `timestamp_ms` (uint64): Timestamp Unix
   - `coachX` (float32): Coordenada horizontal relativa do coach
 
+> [!NOTE]
+> No modo de rastreamento ao vivo, o campo `enabled` é mantido como `0` (`False`) porque o esqueleto gravado em `JDP1` e `JDP2` já contém o deslocamento lateral $X$ de seleção de dançarino. Ativar `enabled = 1` faria o `Kinect10.dll` somar `coachX` novamente via rotina `0x1020`, duplicando artificialmente o deslocamento lateral do jogador e projetando a cabeça para fora do enquadramento.
+
 ---
 
 ### Protocolo de Sincronização Seqlock (Lockless)

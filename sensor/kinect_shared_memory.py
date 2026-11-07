@@ -500,8 +500,10 @@ class KinectBridge:
         p1_ok = self.pose.write_pose(joints, tracked=tracked)
         p2_ok = self.pose_v2.write_poses(joints, tracked=tracked)
         i_ok = self.image.write_image_and_mask(frame_bgr, mask_binary, tracked=tracked)
-        hip_x = float(joints[0][0]) if joints and tracked else 0.0
-        c_ok = self.coach_x.write_coach_x(coach_x=hip_x, enabled=(tracked and joints is not None))
+        # CoachX offset is kept disabled during live tracking because the 20 joints in
+        # JDP1/JDP2 already contain camera-space X translation. Enabling CoachX causes
+        # Kinect10.dll to double-add hip_x to all joints, projecting the head way off to the door.
+        self.coach_x.write_coach_x(coach_x=0.0, enabled=False)
         return p1_ok and p2_ok and i_ok
 
     def write_empty(self):

@@ -24,15 +24,19 @@ DEFAULT_CONFIG = {
     "show_hud": True,
     "camera_x_slot_tracking": True,
     "camera_x_reverse_for_coach_selection": True,
-    "camera_x_range_m": 2.8,
-    "camera_x_deadzone": 0.02,
-    "camera_x_smoothing": 0.45,
+    "camera_x_range_m": 2.2,
+    "camera_x_deadzone": 0.025,
+    "camera_x_smoothing": 0.42,
     "coach_assist_enabled": True,
-    "coach_assist_multiplier": 1.50,
-    "coach_assist_max_m": 1.50,
+    "coach_assist_multiplier": 1.25,
+    "coach_assist_max_m": 1.20,
     "slot_snap_enabled": True,
-    "slot_snap_gain": 1.40,
-    "slot_snap_deadzone": 0.05
+    "slot_snap_gain": 1.25,
+    "slot_snap_deadzone": 0.06,
+    "face_follow_enabled": True,
+    "face_follow_zoom": 1.22,
+    "face_follow_smoothing": 0.20,
+    "face_follow_y_bias": 0.06
 }
 
 PRESETS_PSCAM = [
