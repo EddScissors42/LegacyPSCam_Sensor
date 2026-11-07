@@ -470,11 +470,11 @@ class LegacySensorGUI:
         sidebar_pad.pack(fill=tk.BOTH, expand=True)
 
         # 1.1 Brand Header (Removed "Just Dance PC")
-        lbl_brand = tk.Label(sidebar_pad, text="LEGACY SENSOR", font=(self.font_family, 15, "bold"),
+        lbl_brand = tk.Label(sidebar_pad, text="Legacy PSCam Sensor", font=(self.font_family, 15, "bold"),
                              fg=PALETTE["ps_blue"], bg=PALETTE["bg_sidebar"])
         lbl_brand.pack(anchor="w")
 
-        lbl_edition = tk.Label(sidebar_pad, text="LITE EDITION", font=(self.font_family, 8, "bold"),
+        lbl_edition = tk.Label(sidebar_pad, text="for Legacy Offline PC", font=(self.font_family, 8, "bold"),
                                fg=PALETTE["text_muted"], bg=PALETTE["bg_sidebar"])
         lbl_edition.pack(anchor="w", pady=(2, 16))
 
@@ -495,7 +495,7 @@ class LegacySensorGUI:
         self.card_pscam_bg = self.card_pscam.create_image(0, 0, anchor="nw", image=self.pill_active)
         self.card_pscam_icon = self.card_pscam.create_image(25, 28, anchor="center", image=self.icon_ps_act)
         self.card_pscam_title = self.card_pscam.create_text(
-            52, 19, text="PlayStation 4 Camera", anchor="w",
+            52, 19, text="PlayStation®Camera", anchor="w",
             fill=PALETTE["text_white"], font=(self.font_family, 9, "bold")
         )
         self.card_pscam_sub = self.card_pscam.create_text(
@@ -735,7 +735,7 @@ class LegacySensorGUI:
 
         self.lbl_status = tk.Label(
             footer_row,
-            text="● System ready  •  MediaPipe Tasks 60 FPS",
+            text="Made by Edd <3",
             font=(self.font_family, 8),
             fg=PALETTE["text_muted"],
             bg=PALETTE["bg_window"]
@@ -744,7 +744,7 @@ class LegacySensorGUI:
 
         lbl_version = tk.Label(
             footer_row,
-            text="Legacy Sensor Lite v1.6.2",
+            text="Legacy PSCam Sensor v0.5",
             font=(self.font_family, 8),
             fg=PALETTE["text_dim"],
             bg=PALETTE["bg_window"]
@@ -761,7 +761,7 @@ class LegacySensorGUI:
         self.pscam_card = tk.Frame(self.view_video, bg=PALETTE["bg_card"],
                                    highlightbackground=PALETTE["border_subtle"], highlightthickness=1, padx=16, pady=14)
 
-        lbl_ps_title = tk.Label(self.pscam_card, text="PLAYSTATION 4 CAMERA INTEGRATION (PSCam4Win)",
+        lbl_ps_title = tk.Label(self.pscam_card, text="PlayStation®Camera integration (PSCam4Win)",
                                 font=(self.font_family, 9, "bold"), fg=PALETTE["blue_dark"], bg=PALETTE["bg_card"])
         lbl_ps_title.pack(anchor="w")
 
@@ -788,7 +788,7 @@ class LegacySensorGUI:
         tk.Label(spec_badge, text="Optimized Auto Mode: 1280x800 @ 60 FPS (OV580 Stereo DirectShow)",
                  font=(self.font_family, 8, "bold"), fg=PALETTE["blue_dark"], bg=PALETTE["blue_pastel"]).pack(anchor="w")
         tk.Label(spec_badge,
-                 text="Resolution picker is hidden in this tab because the PS4 Camera operates in the driver's native format.",
+                 text="Resolution picker is hidden in this tab because the PlayStation®Camera operates in the driver's native format.",
                  font=(self.font_family, 7), fg=PALETTE["text_muted"], bg=PALETTE["blue_pastel"]).pack(anchor="w")
 
         # ---------------------------------------------------------------------
@@ -862,7 +862,7 @@ class LegacySensorGUI:
         self.var_face_follow = tk.BooleanVar(value=self.cfg.get("face_follow_enabled", True))
         chk_face = ttk.Checkbutton(
             self.display_card,
-            text="Auto-Frame Face in Just Dance (Dynamic Center & Zoom for Dancer Selection)",
+            text="[EXPERIMENTAL] Auto-Frame player's face in Just Dance",
             variable=self.var_face_follow,
             style="Modern.TCheckbutton"
         )
@@ -1270,7 +1270,7 @@ class LegacySensorGUI:
         cams = getattr(self, 'camera_list', [])
 
         if getattr(self, '_is_refreshing_cams', False) and not cams:
-            msg = "Searching for PlayStation Camera..." if mode == "pscam" else "Searching for webcams..."
+            msg = "Searching for PlayStation®Camera..." if mode == "pscam" else "Searching for webcams..."
             self.cb_cameras["values"] = [msg]
             self.cb_cameras.set(msg)
             return
@@ -1332,7 +1332,7 @@ class LegacySensorGUI:
             )
         elif state == "DISCONNECTED":
             self.lbl_pscam_info.configure(
-                text="PlayStation 4 Camera disconnected from USB port.",
+                text="PlayStation®Camera disconnected from USB port.",
                 fg=PALETTE["status_warn"]
             )
             if running:
@@ -1347,7 +1347,7 @@ class LegacySensorGUI:
                 )
         elif state == "DRIVER_STOPPED":
             self.lbl_pscam_info.configure(
-                text="PS4 Camera connected, but PSCam4Win driver is NOT running!",
+                text="PlayStation®Camera connected, but PSCam4Win driver is NOT running!",
                 fg=PALETTE["status_warn"]
             )
             self.btn_launch_pscam.configure(
@@ -1356,7 +1356,7 @@ class LegacySensorGUI:
             )
         elif state == "BOOTLOADER_UPLOADING":
             self.lbl_pscam_info.configure(
-                text="PS4 Camera detected! PSCam4Win uploading USB firmware...",
+                text="PlayStation®Camera detected! PSCam4Win uploading USB firmware...",
                 fg=PALETTE["ps_blue"]
             )
             self.btn_launch_pscam.configure(
@@ -1377,9 +1377,9 @@ class LegacySensorGUI:
             ps_cams = [c for c in cams if c.is_pscam]
             if ps_cams:
                 cam_idx = ps_cams[0].index
-                txt = f"Driver active and PS4 Camera connected (Index {cam_idx} • 60 FPS)"
+                txt = f"Driver active and PlayStation®Camera connected (Index {cam_idx} • 60 FPS)"
             else:
-                txt = f"Driver active and PS4 Camera connected ({vcam_count} virtual camera(s) active • 60 FPS)"
+                txt = f"Driver active and PlayStation®Camera connected ({vcam_count} virtual camera(s) active • 60 FPS)"
             self.lbl_pscam_info.configure(text=txt, fg=PALETTE["status_ok"])
             self.btn_launch_pscam.configure(
                 state="disabled", text="PSCam4Win Driver Active",
@@ -1629,9 +1629,9 @@ class LegacySensorGUI:
 
             if not ps_cams or not is_valid_pscam or cam_idx < 0:
                 messagebox.showwarning(
-                    "PlayStation Camera Not Connected",
-                    "PlayStation 4 Camera was not detected on this computer!\n\n"
-                    "• Ensure the PS4 Camera USB 3.0 cable is connected.\n"
+                    "PlayStation®Camera Not Connected",
+                    "PlayStation®Camera was not detected on this computer!\n\n"
+                    "• Ensure the PS4 Camera USB 3.0 Adapter is connected.\n"
                     "• Verify that the PSCam4Win driver is running in the Windows system tray.\n"
                 )
                 return
