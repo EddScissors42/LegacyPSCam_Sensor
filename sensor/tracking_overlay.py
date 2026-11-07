@@ -1,5 +1,5 @@
 """
-Tracking HUD, Player Silhouette & Skeleton Visualizer for Legacy Sensor Lite.
+Tracking HUD, Player Silhouette & Skeleton Visualizer for Legacy PSCam Sensor.
 Renders player silhouette shadow & contour, skeleton tracking overlay,
 performance metrics, and IPC connection status on OpenCV frames.
 """
@@ -116,7 +116,7 @@ class TrackingOverlay:
         cv2.addWeighted(overlay, 0.78, frame, 0.22, 0, frame)
 
         # 1. Top Left: Title & Mode
-        cv2.putText(frame, "LEGACY SENSOR LITE", (14, 24),
+        cv2.putText(frame, "LEGACY PSCAM SENSOR", (14, 24),
                     cv2.FONT_HERSHEY_DUPLEX, 0.65, (255, 255, 255), 1, cv2.LINE_AA)
         cam_sub = f"{camera_info_str} {'[MIRRORED]' if is_mirrored else ''}"
         cv2.putText(frame, cam_sub, (14, 43),

@@ -1,6 +1,6 @@
-# 🏛️ Arquitetura do Sistema — Legacy Sensor Lite
+# 🏛️ Arquitetura do Sistema — Legacy PSCam Sensor
 
-Este documento descreve detalhadamente a arquitetura do **Legacy Sensor Lite**, a separação de responsabilidades entre seus módulos, o fluxo de dados em tempo real e o relacionamento com o hardware da **PlayStation 4 Camera** e com o processo do **Just Dance PC**.
+Este documento descreve detalhadamente a arquitetura do **Legacy PSCam Sensor**, a separação de responsabilidades entre seus módulos, o fluxo de dados em tempo real e o relacionamento com o hardware da **PlayStation 4 Camera** e com o processo do **Just Dance PC**.
 
 ---
 
@@ -182,7 +182,7 @@ A PlayStation 4 Camera (modelos CUH-ZEY1 e CUH-ZEY2) utiliza o processador de im
 [ PSCam4Win.dll (Windows Camera Frame Server) ]
         │  2. Expõe Câmera Virtual DirectShow no Windows
         ▼
-[ LegacySensor_Lite (cv2.VideoCapture) ]
+[ LegacyPSCam_Sensor (cv2.VideoCapture) ]
         │  3. Captura YUY2 estéreo em 1280x800 @ 60 FPS
 ```
 

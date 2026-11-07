@@ -1,6 +1,6 @@
-# 🔌 Especificação da API e Protocolos IPC — Legacy Sensor Lite
+# 🔌 Especificação da API e Protocolos IPC — Legacy PSCam Sensor
 
-Como o **Legacy Sensor Lite** opera como um simulador de dispositivo de hardware em tempo real para o jogo **Just Dance PC**, sua API principal consiste no **contrato binário de comunicação entre processos (IPC)** via memória compartilhada do Windows, na **interface da DLL proxy do Kinect** e na **interface de linha de comando (CLI)**.
+Como o **Legacy PSCam Sensor** opera como um simulador de dispositivo de hardware em tempo real para o jogo **Just Dance PC**, sua API principal consiste no **contrato binário de comunicação entre processos (IPC)** via memória compartilhada do Windows, na **interface da DLL proxy do Kinect** e na **interface de linha de comando (CLI)**.
 
 ---
 
@@ -72,7 +72,7 @@ Offset 0x18 + (JointIndex * 16):
 
 O jogo Just Dance PC consome a imagem da câmera e a máscara de profundidade do jogador através de canais de memória mapeada do Windows para compor o HUD da dança e a silhueta ("sombrinha") do jogador no canto inferior da tela e na seleção de dançarinos.
 
-O `Kinect10.dll` implementa suporte duplo e busca primeiro o canal **V2 (`JMI2`)**, retrocedendo para o canal **V1 (`JMI1`)** se V2 não existir. O `LegacySensor_Lite` alimenta ambos simultaneamente:
+O `Kinect10.dll` implementa suporte duplo e busca primeiro o canal **V2 (`JMI2`)**, retrocedendo para o canal **V1 (`JMI1`)** se V2 não existir. O `LegacyPSCam_Sensor` alimenta ambos simultaneamente:
 
 #### Canal V1: `Local\LegacyWebcamKinectImage` (JMI1)
 - **Identificador (Tag):** `Local\LegacyWebcamKinectImage`
@@ -181,7 +181,7 @@ Quando o jogo inicializa o rastreamento via `NuiSkeletonTrackingEnable` ou abre 
   - Portanto, a `Kinect10.dll` **deve obrigatoriamente** manter a cadência padrão de 33 ms (`0x10002346: push 0x21; call Sleep`).
 - **Otimização de Timer no Python (Solução Real para os ~20 FPS):**
   - O motivo de o jogo parecer rodar em ~20 FPS com a DLL padrão em sistemas sem otimização é o agendador padrão do Windows (tick de 15,625 ms). Como 33 ms > 31,25 ms, o Windows adormecia a thread por 3 ticks (46,875 ms = **21,33 FPS**).
-  - O `LegacySensor_Lite` resolve isso sem tocar no binário da DLL: ao ativar `winmm.timeBeginPeriod(1)` e `ntdll.NtSetTimerResolution(10000, 1, ...)` no [tracking_session.py](file:///C:/Users/reydn/OneDrive/Documents/Projetos/LegacySensor_Lite/tracking_session.py), a precisão do Windows vai para 1,0 ms. O `Sleep(33)` da DLL agora acorda pontualmente a cada **33,6 ms (30 FPS cravados)**, proporcionando o máximo de fluidez visual permitido pela engine do Just Dance mantendo 100% da pontuação perfeita.
+  - O `LegacyPSCam_Sensor` resolve isso sem tocar no binário da DLL: ao ativar `winmm.timeBeginPeriod(1)` e `ntdll.NtSetTimerResolution(10000, 1, ...)` no [tracking_session.py](file:///C:/Users/reydn/OneDrive/Documents/Projetos/LegacyPSCam_Sensor/tracking_session.py), a precisão do Windows vai para 1,0 ms. O `Sleep(33)` da DLL agora acorda pontualmente a cada **33,6 ms (30 FPS cravados)**, proporcionando o máximo de fluidez visual permitido pela engine do Just Dance mantendo 100% da pontuação perfeita.
 
 ---
 

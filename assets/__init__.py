@@ -1,5 +1,5 @@
 """
-Legacy Sensor Lite - Assets and Visual Media Package.
+Legacy PSCam Sensor - Assets and Visual Media Package.
 """
 from pathlib import Path
 

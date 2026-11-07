@@ -1,6 +1,6 @@
-# Legacy Sensor Lite - Technical Documentation
+# Legacy PSCam Sensor - Technical Documentation
 
-Legacy Sensor Lite is a high-performance, ultra-low latency, and zero-bloatware body motion tracking sensor designed for Just Dance PC (Legacy Offline). It unifies support for standard USB/integrated webcams and the PlayStation 4 Camera (PS4 Camera via PSCam4Win driver at 1280x800 @ 60 FPS).
+Legacy PSCam Sensor is a high-performance, ultra-low latency, and zero-bloatware body motion tracking sensor designed for Just Dance PC (Legacy Offline). It unifies support for standard USB/integrated webcams and the PlayStation 4 Camera (PS4 Camera via PSCam4Win driver at 1280x800 @ 60 FPS).
 
 ---
 
@@ -8,7 +8,7 @@ Legacy Sensor Lite is a high-performance, ultra-low latency, and zero-bloatware 
 
 The original community emulator accumulated hundreds of megabytes of secondary bloatware (MP3 background music, coin systems, XP levels, gifts, opening videos, and telemetry) that made the application bulky (~632 MB) and slow to start.
 
-Legacy Sensor Lite was rebuilt from the ground up with a single goal:
+Legacy PSCam Sensor was rebuilt from the ground up with a single goal:
 > "Launch, pick your camera, and jump straight into dancing."
 
 All non-essential overhead has been removed while perfecting the core components:

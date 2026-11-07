@@ -1,5 +1,5 @@
 """
-Modern PlayStation-Themed UI for Legacy Sensor Lite.
+Modern PlayStation-Themed UI for Legacy PSCam Sensor.
 Features a horizontal split layout:
 - Left Sidebar: Rounded device switcher (PlayStation 4 Camera vs Standard Webcam) with custom icons.
 - Mini Credits: Bottom-left recognition for itsVexor (Legacy Sensor) & BumbleTree (PSCam4Win).
@@ -31,7 +31,7 @@ from sensor import tracking_session
 class LegacySensorGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("Legacy Sensor Lite")
+        self.root.title("Legacy PSCam Sensor")
         self.root.geometry("960x580")
         self.root.minsize(920, 550)
         self.root.configure(bg=PALETTE["bg_window"])
@@ -173,7 +173,7 @@ class LegacySensorGUI:
         sidebar_pad.pack(fill=tk.BOTH, expand=True)
 
         # 1.1 Brand Header
-        lbl_brand = tk.Label(sidebar_pad, text="Legacy Sensor Lite", font=(self.font_family, 15, "bold"),
+        lbl_brand = tk.Label(sidebar_pad, text="Legacy PSCam Sensor", font=(self.font_family, 15, "bold"),
                              fg=PALETTE["ps_blue"], bg=PALETTE["bg_sidebar"])
         lbl_brand.pack(anchor="w")
 
@@ -447,7 +447,7 @@ class LegacySensorGUI:
 
         lbl_version = tk.Label(
             footer_row,
-            text="Legacy Sensor Lite v0.5",
+            text="Legacy PSCam Sensor v0.5",
             font=(self.font_family, 8),
             fg=PALETTE["text_dim"],
             bg=PALETTE["bg_window"]

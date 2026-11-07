@@ -1,5 +1,5 @@
 """
-Camera Manager for Legacy Sensor Lite.
+Camera Manager for Legacy PSCam Sensor.
 Handles device discovery (Webcams & PlayStation Camera via PSCam4Win),
 preset negotiation, buffer control, and zero-latency frame streaming.
 """

@@ -1,5 +1,5 @@
 """
-Configuration Manager for Legacy Sensor Lite.
+Configuration Manager for Legacy PSCam Sensor.
 Saves and loads user preferences to/from config.json.
 """
 import json

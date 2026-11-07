@@ -1,4 +1,4 @@
-# Diretrizes do Projeto — Legacy Sensor Lite (Kinect Simulator para Just Dance PC)
+# Diretrizes do Projeto — Legacy PSCam Sensor (Kinect Simulator para Just Dance PC)
 
 Este documento define o contexto, a arquitetura, as convenções e as regras operacionais que todos os agentes de IA devem seguir rigorosamente ao manter ou implementar funcionalidades neste repositório.
 
@@ -6,7 +6,7 @@ Este documento define o contexto, a arquitetura, as convenções e as regras ope
 
 ## 🎯 Missão e Escopo do Projeto
 
-O objetivo do **Legacy Sensor Lite** é fornecer um sensor de movimento corporal de alto desempenho, ultraleve e direto ao ponto para o jogo **Just Dance PC (Legacy Offline)**, unificando o suporte a **Webcams USB/Integradas** e à **PlayStation Camera (PS4 Camera / OV580)**.
+O objetivo do **Legacy PSCam Sensor** é fornecer um sensor de movimento corporal de alto desempenho, ultraleve e direto ao ponto para o jogo **Just Dance PC (Legacy Offline)**, unificando o suporte a **Webcams USB/Integradas** e à **PlayStation Camera (PS4 Camera / OV580)**.
 
 ### Princípios Fundamentais (Invioláveis)
 1. **Zero Bloatware:** Sob nenhuma circunstância reintroduza componentes irrelevantes do emulador original (como arquivos de áudio/música de fundo MP3, sistemas de moedas/XP/níveis, animações de presentes, vídeos de abertura ou telemetria). O aplicativo deve permanecer enxuto, rápido e focado exclusivamente na dança.
@@ -15,7 +15,7 @@ O objetivo do **Legacy Sensor Lite** é fornecer um sensor de movimento corporal
    - `Local\LegacyWebcamKinectPose`: 344 bytes fixos contendo cabeçalho e as 20 articulações corporais.
    - `Local\LegacyWebcamKinectImage`: 1.305.632 bytes contendo cabeçalho de 32 bytes, frame de câmera 640x480 BGRA e máscara de segmentação do jogador 320x240 (player index mask) para a silhueta no HUD do jogo.
 4. **Isolamento de Responsabilidades:** O processamento matemático de visão computacional, o gerenciamento de câmera, a comunicação IPC e a interface gráfica devem permanecer desacoplados.
-5. **Identidade Visual Limpa (Sem Menções a "Simulador Kinect"):** Toda a interface do usuário, títulos de janelas, cabeçalhos e documentação externa devem apresentar o aplicativo como **Legacy Sensor Lite** (Sensor de Movimento para Just Dance PC), evitando termos legados como "simulador kinect" na UI.
+5. **Identidade Visual Limpa (Sem Menções a "Simulador Kinect"):** Toda a interface do usuário, títulos de janelas, cabeçalhos e documentação externa devem apresentar o aplicativo como **Legacy PSCam Sensor** (Sensor de Movimento para Just Dance PC), evitando termos legados como "simulador kinect" na UI.
 
 ---
 

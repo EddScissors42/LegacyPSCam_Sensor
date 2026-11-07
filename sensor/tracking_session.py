@@ -1,5 +1,5 @@
 """
-Tracking Session Runner for Legacy Sensor Lite.
+Tracking Session Runner for Legacy PSCam Sensor.
 Coordinates camera stream, MediaPipe pose processing, shared memory output,
 and OpenCV HUD preview window.
 """
@@ -97,7 +97,7 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
     # 4. Initialize Overlay
     overlay = TrackingOverlay(show_hud=show_hud)
 
-    window_name = "Legacy Sensor Lite"
+    window_name = "Legacy PSCam Sensor"
     cv2.namedWindow(window_name, cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_EXPANDED)
     cv2.resizeWindow(window_name, min(w, 1280), min(h, 800))
 

@@ -1,5 +1,5 @@
 """
-Comprehensive Test Suite for Legacy Sensor Lite.
+Comprehensive Test Suite for Legacy PSCam Sensor.
 Verifies config persistence, shared memory bridge, pose engine,
 hand anchor (3D & 2D), smoother, coordinate calibrator (X & Y inversion),
 high-frequency monotonic timestamps, overlay, and camera manager.
@@ -490,7 +490,7 @@ def test_project_structure():
 
 def run_all_tests():
     print("==========================================")
-    print("   RUNNING LEGACY SENSOR LITE TEST SUITE  ")
+    print("   RUNNING LEGACY PSCAM SENSOR TEST SUITE ")
     print("==========================================")
     test_project_structure()
     test_config()

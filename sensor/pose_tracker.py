@@ -1,5 +1,5 @@
 """
-Pose Tracking Engine for Legacy Sensor Lite.
+Pose Tracking Engine for Legacy PSCam Sensor.
 Uses MediaPipe Pose Tasks API with custom Hand Anchor Filtering,
 Adaptive Dynamic EMA Smoothing, Height Normalization, and 20-joint Kinect v1 mapping.
 """

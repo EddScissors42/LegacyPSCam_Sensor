@@ -1,4 +1,4 @@
-# 🛠️ Guia de Instalação e Configuração — Legacy Sensor Lite
+# 🛠️ Guia de Instalação e Configuração — Legacy PSCam Sensor
 
 Este documento apresenta o passo a passo completo para preparar o ambiente, instalar dependências, configurar o driver da **PlayStation 4 Camera**, vincular a DLL ao jogo **Just Dance PC** e executar a aplicação.
 
@@ -39,7 +39,7 @@ A PlayStation 4 Camera (modelos CUH-ZEY1 e CUH-ZEY2 com conector AUX modificado 
 
 ### Passo 2.2 — Instalar o Driver PSCam4Win
 O instalador oficial já está incluído na pasta `tools/`:
-1. Execute o arquivo [`tools/PSCam4Win-Setup.exe`](../tools/PSCam4Win-Setup.exe) (ou clique no botão **"Instalar Driver"** diretamente na interface do Legacy Sensor Lite).
+1. Execute o arquivo [`tools/PSCam4Win-Setup.exe`](../tools/PSCam4Win-Setup.exe) (ou clique no botão **"Instalar Driver"** diretamente na interface do Legacy PSCam Sensor).
 2. Conclua o assistente de instalação. Ele copiará os binários para `C:\Program Files\PSCam4Win`, registrará a DLL de câmera virtual e criará a inicialização automática em segundo plano.
 3. Após a inicialização do driver, a PS4 Camera receberá o firmware e aparecerá no Gerenciador de Dispositivos como **`USB Camera-OV580`** (`VID_05A9&PID_058B`).
 
@@ -55,7 +55,7 @@ Para que o jogo Just Dance PC consiga ler os movimentos gerados pelo simulador:
 4. Cole o `Kinect10.dll` na pasta do jogo, substituindo o existente se solicitado.
 
 > [!TIP]
-> Dentro do menu do Legacy Sensor Lite há um atalho conveniente: clique no botão **"📁 Abrir Pasta do Kinect10.dll"** para abrir a pasta de origem imediatamente no Windows Explorer.
+> Dentro do menu do Legacy PSCam Sensor há um atalho conveniente: clique no botão **"📁 Abrir Pasta do Kinect10.dll"** para abrir a pasta de origem imediatamente no Windows Explorer.
 
 ---
 

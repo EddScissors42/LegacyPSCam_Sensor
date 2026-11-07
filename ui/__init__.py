@@ -1,5 +1,5 @@
 """
-Legacy Sensor Lite - Modern PlayStation-Themed Tkinter User Interface Package.
+Legacy PSCam Sensor - Modern PlayStation-Themed Tkinter User Interface Package.
 """
 from .gui import LegacySensorGUI
 from .theme import PALETTE, CALIB_PRESETS, get_font_family

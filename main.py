@@ -1,5 +1,5 @@
 """
-Legacy Sensor Lite - Main Entry Point.
+Legacy PSCam Sensor - Main Entry Point.
 Supports Standard Webcams & PlayStation 4 Camera (PS4 Camera via PSCam4Win).
 """
 import sys
@@ -15,7 +15,7 @@ from sensor import ConfigManager, run_tracking_session
 from ui import LegacySensorGUI
 
 def run():
-    parser = argparse.ArgumentParser(description="Legacy Sensor Lite")
+    parser = argparse.ArgumentParser(description="Legacy PSCam Sensor")
     parser.add_argument("--start", action="store_true", help="Start tracking directly without opening GUI menu")
     parser.add_argument("--mode", choices=["pscam", "webcam"], help="Force camera mode")
     parser.add_argument("--camera", type=int, help="Camera index to use")

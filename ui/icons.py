@@ -1,5 +1,5 @@
 """
-High-Resolution Anti-Aliased Icon and Pill Generators for Legacy Sensor Lite UI.
+High-Resolution Anti-Aliased Icon and Pill Generators for Legacy PSCam Sensor UI.
 Renders supersampled Pillow graphics for sidebar navigation, top tabs, and rounded buttons.
 """
 import math

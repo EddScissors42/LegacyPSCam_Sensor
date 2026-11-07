@@ -1,6 +1,6 @@
-# ✨ Catálogo de Funcionalidades — Legacy Sensor Lite
+# ✨ Catálogo de Funcionalidades — Legacy PSCam Sensor
 
-Este documento descreve detalhadamente o estado atual de todas as funcionalidades do **Legacy Sensor Lite**, distinguindo com precisão o que está **Totalmente Implementado**, **Parcialmente Implementado** e **Planejado para o Futuro**.
+Este documento descreve detalhadamente o estado atual de todas as funcionalidades do **Legacy PSCam Sensor**, distinguindo com precisão o que está **Totalmente Implementado**, **Parcialmente Implementado** e **Planejado para o Futuro**.
 
 ---
 
@@ -130,7 +130,7 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
   - Ao mesmo tempo, o agendador padrão do Windows possui resolução de tick de 15,625 ms. Como `Sleep(33)` da DLL ultrapassa 2 ticks (31,25 ms), o Windows adormecia a thread por 3 ticks inteiros (`15,625 * 3 = 46,875 ms`), reduzindo a taxa real para apenas **21,33 FPS**.
 - **Solução Implementada:**
   - **Preservação da DLL Original a 30 FPS (`0x21` / 33 ms):** Mantém a compatibilidade perfeita do motor de pontuação do Just Dance PC, sem erros de "X".
-  - **Temporizador de Alta Resolução de 1 ms no Python (`set_high_resolution_timer`):** No [tracking_session.py](file:///C:/Users/reydn/OneDrive/Documents/Projetos/LegacySensor_Lite/sensor/tracking_session.py), ativamos `winmm.timeBeginPeriod(1)` e `ntdll.NtSetTimerResolution(10000, 1, ...)`. Com resolução de 1,0 ms no Windows, o `Sleep(33)` acorda exatamente a cada **33,6 ms**, elevando a taxa de 21 FPS para **30 FPS cravados**, que é o teto máximo e ótimo da engine do Just Dance.
+  - **Temporizador de Alta Resolução de 1 ms no Python (`set_high_resolution_timer`):** No [tracking_session.py](file:///C:/Users/reydn/OneDrive/Documents/Projetos/LegacyPSCam_Sensor/sensor/tracking_session.py), ativamos `winmm.timeBeginPeriod(1)` e `ntdll.NtSetTimerResolution(10000, 1, ...)`. Com resolução de 1,0 ms no Windows, o `Sleep(33)` acorda exatamente a cada **33,6 ms**, elevando a taxa de 21 FPS para **30 FPS cravados**, que é o teto máximo e ótimo da engine do Just Dance.
 
 ### 12. Seleção Dinâmica de Dançarinos nos 6 Slots com Ancoragem de Quadril (1.0m)
 - **Problema resolvido:** O jogo Just Dance PC travava o jogador automaticamente no Slot 4 (Dançarino Roxo), e passos laterais pelo ambiente físico não alteravam a seleção para outros slots (Slots 1 a 6).

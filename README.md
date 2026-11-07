@@ -1,6 +1,6 @@
-# Legacy Sensor Lite - Motion Tracking Sensor for Just Dance PC
+# Legacy PSCam Sensor - Motion Tracking Sensor for Just Dance PC
 
-Legacy Sensor Lite is a high-performance, lightweight motion tracking sensor for Just Dance PC (Legacy Offline), unifying support for Standard USB/Integrated Webcams and the PlayStation Camera (PS4 Camera at up to 60 FPS).
+Legacy PSCam Sensor is a high-performance, lightweight motion tracking sensor for Just Dance PC (Legacy Offline), unifying support for Standard USB/Integrated Webcams and the PlayStation Camera (PS4 Camera at up to 60 FPS).
 
 ---
 
@@ -33,7 +33,7 @@ Legacy Sensor Lite is a high-performance, lightweight motion tracking sensor for
 ### 1. Install DLL into Just Dance
 1. In the `Kinect for Legacy DLL` folder, copy `Kinect10.dll`.
 2. Paste it into the root directory of your Just Dance PC installation (where the game executable is located), replacing any existing file.
-(You can also click the "Open Kinect10.dll Folder" button directly inside the Legacy Sensor Lite launcher).
+(You can also click the "Open Kinect10.dll Folder" button directly inside the Legacy PSCam Sensor launcher).
 
 ### 2. Run the Sensor
 - Launch `LegacySensor.exe` (or run `python main.py`) to open the control panel and configure your camera.

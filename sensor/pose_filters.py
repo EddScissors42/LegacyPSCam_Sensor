@@ -1,5 +1,5 @@
 """
-Kinematic & Geometric Filters for Legacy Sensor Lite.
+Kinematic & Geometric Filters for Legacy PSCam Sensor.
 Provides Hand Anchor Extrapolation, Adaptive Dynamic EMA Smoothing,
 Multi-Tier Skeleton Height Calibration, Lateral Slot Selection, and FaceFollow PTZ.
 """

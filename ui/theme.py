@@ -1,5 +1,5 @@
 """
-Theme Palette, Typography, and Calibration Presets for Legacy Sensor Lite UI.
+Theme Palette, Typography, and Calibration Presets for Legacy PSCam Sensor UI.
 """
 import tkinter.font as tkfont
 

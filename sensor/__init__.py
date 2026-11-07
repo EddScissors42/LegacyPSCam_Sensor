@@ -1,5 +1,5 @@
 """
-Legacy Sensor Lite - Sensor & Tracking Engine Module.
+Legacy PSCam Sensor - Sensor & Tracking Engine Module.
 Unifies camera capture, MediaPipe AI tracking, IPC shared memory,
 and OpenCV HUD overlay.
 """

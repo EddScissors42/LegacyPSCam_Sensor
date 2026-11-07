@@ -1,6 +1,6 @@
-# 💻 Guia do Desenvolvedor — Legacy Sensor Lite
+# 💻 Guia do Desenvolvedor — Legacy PSCam Sensor
 
-Este documento é o guia técnico para desenvolvedores que desejam manter, refatorar ou adicionar novos recursos ao **Legacy Sensor Lite**. Ele define as convenções de código, diretrizes de segurança arquitetural, procedimentos de teste e boas práticas de engenharia.
+Este documento é o guia técnico para desenvolvedores que desejam manter, refatorar ou adicionar novos recursos ao **Legacy PSCam Sensor**. Ele define as convenções de código, diretrizes de segurança arquitetural, procedimentos de teste e boas práticas de engenharia.
 
 ---
 
