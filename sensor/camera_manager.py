@@ -280,7 +280,12 @@ class FrameBusReader:
         self.view_ptr = None
         self.slot = -1
         self.last_frame_id = -1
+        self.last_frame_time = 0.0
         self._connect()
+
+    @property
+    def is_connected(self) -> bool:
+        return self.view_ptr is not None
 
     def _connect(self):
         if os.name != 'nt':
@@ -317,14 +322,17 @@ class FrameBusReader:
         except Exception:
             pass
 
-    def read_frame(self):
+    def read_frame(self, only_new: bool = False):
+        """
+        Reads and decodes a YUY2 frame from the PSCam4Win FrameBus shared memory.
+        If only_new=True, skips YUY2->BGR conversion when frame_id has not advanced.
+        """
         if not self.view_ptr:
             self._connect()
             if not self.view_ptr:
                 return None
         try:
             import ctypes
-            import struct
             import numpy as np
 
             raw_hdr = ctypes.string_at(self.view_ptr, 64)
@@ -334,10 +342,13 @@ class FrameBusReader:
 
             # Seqlock check: even sequence number indicates consistent frame data
             if magic == 0x50533345 and (seq % 2 == 0) and w > 0 and h_dim > 0:
+                if only_new and frame_id == self.last_frame_id and self.last_frame_id != -1:
+                    return None
                 raw_pixels = ctypes.string_at(self.view_ptr + 4096, w * h_dim * 2)
                 yuy2 = np.frombuffer(raw_pixels, dtype=np.uint8).reshape((h_dim, w, 2))
                 bgr = cv2.cvtColor(yuy2, cv2.COLOR_YUV2BGR_YUY2)
                 self.last_frame_id = frame_id
+                self.last_frame_time = time.perf_counter()
                 return bgr
         except Exception:
             pass
@@ -432,19 +443,37 @@ class LatestFrameCamera:
         self.thread = threading.Thread(target=self._capture_loop, daemon=True, name="CameraCaptureThread")
         self.thread.start()
 
+    @staticmethod
+    def _is_black_frame(frame) -> bool:
+        """Fast strided luminance check (~250x faster than full-frame mean)."""
+        if frame is None or frame.size == 0:
+            return True
+        return float(frame[::16, ::16].mean()) < 1.0
+
     def _capture_loop(self):
         while self.running and self.cap and self.cap.isOpened():
-            ret, frame = self.cap.read()
+            ret = False
+            frame = None
 
-            # PS Camera Direct FrameBus Fallback:
-            # If the camera is a PS Camera and OpenCV returns an all-black frame (due to driver
-            # resolution negotiation mismatch) or direct FrameBus is active, pull the real frame
-            # directly from the PSCam4Win memory mapping.
-            if self.is_pscam:
-                is_black = (not ret) or (frame is None) or (float(frame.mean()) < 1.0)
-                if is_black or self.fb_reader:
-                    fb_frame = self.fb_reader.read_frame() if self.fb_reader else None
-                    if fb_frame is not None and float(fb_frame.mean()) > 1.0:
+            # 1. PS Camera Primary Path: Zero-latency direct FrameBus IPC reader
+            # Reads directly from PSCam4Win shared memory without blocking on DirectShow
+            # or re-converting unchanged frames.
+            if self.is_pscam and self.fb_reader is not None:
+                fb_frame = self.fb_reader.read_frame(only_new=True)
+                if fb_frame is not None and not self._is_black_frame(fb_frame):
+                    frame = fb_frame
+                    ret = True
+                elif self.fb_reader.is_connected and (time.perf_counter() - self.fb_reader.last_frame_time) < 0.15:
+                    # FrameBus is actively streaming; wait briefly for the next 60 Hz hardware tick
+                    time.sleep(0.0015)
+                    continue
+
+            # 2. Standard DirectShow Path (or fallback if FrameBus is inactive)
+            if not ret or frame is None:
+                ret, frame = self.cap.read()
+                if self.is_pscam and (not ret or self._is_black_frame(frame)) and self.fb_reader is not None:
+                    fb_frame = self.fb_reader.read_frame(only_new=False)
+                    if fb_frame is not None and not self._is_black_frame(fb_frame):
                         frame = fb_frame
                         ret = True
 

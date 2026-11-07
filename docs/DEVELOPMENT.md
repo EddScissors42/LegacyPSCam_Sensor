@@ -67,15 +67,15 @@ A suíte cobre 9 áreas fundamentais:
 
 | Teste | Módulo Testado | Critério de Sucesso |
 |---|---|---|
-| `test_project_structure` | `sensor/`, `ui/`, `assets/` | Integridade da estrutura modular, pacotes e importações unificadas. |
+| `test_project_structure` | `sensor/`, `ui/`, `assets/` | Integridade da estrutura modular (`pose_filters.py`, `theme.py`, `icons.py`) e importações unificadas. |
 | `test_config` | `sensor/config_manager.py` | Leitura, escrita, persistência e parsing de presets de resolução/FPS. |
 | `test_shared_memory` | `sensor/kinect_shared_memory.py` | Tamanho exato de 344 bytes, paridade seqlock, máscara e pacer de 33ms do Kinect10.dll. |
-| `test_hand_anchor` | `sensor/pose_tracker.py` | Extrapolação correta do antebraço em coordenadas 3D e 2D. |
-| `test_adaptive_smoother` | `sensor/pose_tracker.py` | Alpha baixo para jitter em repouso (< 0.002) vs alpha alto em alta velocidade (> 0.5). |
-| `test_calibrator` | `sensor/pose_tracker.py` | Validação de eixos do Kinect: `ShoulderRight` positivo no X e `ShoulderLeft` negativo no X. |
+| `test_hand_anchor` | `sensor/pose_filters.py` | Extrapolação correta do antebraço em coordenadas 3D e 2D. |
+| `test_adaptive_smoother` | `sensor/pose_filters.py` | Alpha baixo para jitter em repouso (< 0.002) vs alpha alto em alta velocidade (> 0.5). |
+| `test_calibrator` | `sensor/pose_filters.py` | Validação de eixos do Kinect: `ShoulderRight` positivo no X e `ShoulderLeft` negativo no X. |
 | `test_pose_tracker` | `sensor/pose_tracker.py` | Rajada de 5 frames com intervalo < 1ms sem disparar exceção de timestamp. |
 | `test_overlay` | `sensor/tracking_overlay.py` | Renderização do HUD, silhueta e esqueleto sem falhas numpy. |
-| `test_camera_manager` | `sensor/camera_manager.py` | Snapshot PnP ultrarrápido (< 3ms via `cfgmgr32.dll`), máquina de estados da PS4 Camera, enumeração OpenCV, leitor direto `FrameBusReader` e auto-crop de stereo Side-by-Side. |
+| `test_camera_manager` | `sensor/camera_manager.py` | Snapshot PnP ultrarrápido (< 3ms via `cfgmgr32.dll`), máquina de estados da PS4 Camera, enumeração OpenCV, leitor prioritário `FrameBusReader`, detecção rápida de quadro preto e auto-crop de stereo Side-by-Side. |
 
 ### Adicionando Novos Testes
 Ao criar novos recursos (como um novo algoritmo de suavização ou novo controle de GUI), adicione uma função `test_<funcionalidade>()` no arquivo `test_suite.py` e inclua sua execução na função principal `run_all_tests()`.

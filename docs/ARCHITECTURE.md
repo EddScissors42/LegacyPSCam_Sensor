@@ -15,15 +15,18 @@ LegacyPSCam_Sensor/
 ├── config.json                 # Gerenciamento e persistência das configurações locais
 ├── sensor/                     # Pacote do Motor de Rastreamento e Visão Computacional
 │   ├── __init__.py             # Exports unificados da API do sensor
-│   ├── camera_manager.py       # Descoberta, negociação DirectShow/MSMF e captura assíncrona
-│   ├── pose_tracker.py         # Motor MediaPipe Pose, Hand Anchor, Calibrador, EMA e Máscara
+│   ├── camera_manager.py       # Descoberta, negociação DirectShow/FrameBus IPC e captura assíncrona
+│   ├── pose_filters.py         # Filtros cinemáticos: Hand Anchor, EMA, Calibrador, Slot Tracker e PTZ
+│   ├── pose_tracker.py         # Motor MediaPipe Pose e geração de máscara corporal
 │   ├── kinect_shared_memory.py # Driver IPC com KinectBridge (JDP1 344B + JMI1/2 1.3MB + JXC1 28B)
 │   ├── tracking_session.py     # Orquestrador do loop de rastreamento e eventos de teclado
 │   ├── tracking_overlay.py     # Renderização visual do esqueleto, silhueta sombreada e HUD
 │   └── config_manager.py       # Gerenciamento e persistência das configurações (config.json)
 ├── ui/                         # Pacote da Interface Gráfica
-│   ├── __init__.py             # Exporta a classe LegacySensorGUI
-│   └── gui.py                  # Interface gráfica moderna dark em Tkinter / ttk
+│   ├── __init__.py             # Exporta a classe LegacySensorGUI, temas e geradores de ícones
+│   ├── theme.py                # Paleta de cores PlayStation Blue, tipografia e presets de calibração
+│   ├── icons.py                # Renderização vetorial/Pillow supersampled de ícones e pílulas
+│   └── gui.py                  # Controlador principal da interface gráfica em Tkinter / ttk
 ├── assets/                     # Recursos visuais e mídias
 │   ├── IconePSCAMERA.png       # Ícone da PlayStation 4 Camera
 │   └── models/                 # Modelos neurais locais
@@ -107,14 +110,17 @@ flowchart TD
 - **Responsabilidade:** Inicialização da aplicação, parsing de parâmetros da linha de comando (`--start`, `--mode`, `--camera`) e carregamento da GUI ou da sessão de rastreamento direto.
 - **Relações:** Instancia `ConfigManager` e aciona `gui.py` ou `tracking_session.py`.
 
-### 2. `gui.py` — Interface do Usuário (Painel de Controle)
-- **Responsabilidade:** Interface visual em Tkinter com layout horizontal moderno, cantos arredondados, abas de navegação superiores em cartões cinza selecionáveis com ícones de engrenagem e sliders, paleta oficial PlayStation Blue (`#00439C`) e ícones de alta resolução. Permite alternar entre a **PlayStation Camera** e **Webcam Padrão**, selecionar perfis simplificados de rastreamento (**Equilibrado**, **Competitivo**, **Ultra Estável**), conta com calibração de altura 100% automática e oferece gaveta retrátil de ajustes avançados de filtros.
+### 2. `ui/` (`gui.py`, `theme.py`, `icons.py`) — Interface do Usuário (Painel de Controle)
+- **Responsabilidade:** Interface visual modularizada em Tkinter:
+  - `ui/theme.py`: Define a paleta oficial PlayStation Blue (`#00439C`), presets de calibração (`CALIB_PRESETS`) e seleção de tipografia.
+  - `ui/icons.py`: Gera pílulas arredondadas anti-aliased (`make_pill_image`) e ícones supersampled em Pillow para a PlayStation 4 Camera, Webcam e abas superiores.
+  - `ui/gui.py`: Controla a janela `LegacySensorGUI`, alternância entre **PlayStation Camera** e **Webcam Padrão**, perfis simplificados de rastreamento (**Equilibrado**, **Competitivo**, **Ultra Estável**) e gaveta retrátil de ajustes avançados de filtros.
 - **Ciclo de Vida do Driver e Hotplug Reativo:** Monitora a cada 1.0 segundo o hardware PnP e o ciclo de vida da PS4 Camera (`NOT_INSTALLED`, `DISCONNECTED`, `DRIVER_STOPPED`, `BOOTLOADER_UPLOADING`, `WAITING_VCAM`, `READY`).
 - **Threading Não-Bloqueante:** Tanto a enumeração de câmeras do OpenCV quanto a sessão de rastreamento executam em threads dedicadas (`threading.Thread(daemon=True)`), mantendo a janela do Tkinter totalmente fluida e sem congelamentos na UI.
 
 ### 3. `camera_manager.py` — Gerenciamento de Câmera e Captura Assíncrona
 - **Classe `LatestFrameCamera`:** Executa um loop contínuo de captura de quadros em thread separada com um buffer atômico de profundidade 1. Isso elimina completamente o acúmulo de frames do DirectShow, garantindo que o MediaPipe receba sempre o quadro mais recente com latência zero.
-- **Leitor Direto de Memória Compartilhada `FrameBusReader` (PSCam4Win IPC):** Conecta-se diretamente aos canais mapeados em memória `Global\PSCam4Win{slot}.FrameBus` (escaneando slots 7, 6, 0..5). Bypassa problemas do Windows Camera Frame Server (cache de tipos de mídia que forçavam tela preta quando o DirectShow negociava 1280x400 em vez de 1280x800), recuperando quadros YUY2 a 60 FPS reais sem latência.
+- **Leitor Direto de Memória Compartilhada `FrameBusReader` (PSCam4Win IPC Prioritário):** Conecta-se diretamente aos canais mapeados em memória `Global\PSCam4Win{slot}.FrameBus` (escaneando slots 7, 6, 0..5). No modo PS Camera, a leitura prioritária (`only_new=True`) busca diretamente quadros novos (`frame_id != last_frame_id`) sem bloquear no `cap.read()` do DirectShow e sem reconverter frames YUY2 repetidos, além de usar amostragem com stride (`frame[::16, ::16].mean()`) para detecção instantânea de quadros pretos.
 - **Detecção e Recorte Automático de Stereo Side-by-Side (SBS):** Quando a PlayStation 4 Camera inicializa no modo padrão de fábrica Side-by-Side (`w >= 1.8 * h`, como 2560x800 ou 1280x400), o sistema detecta automaticamente a proporção estéreo e recorta o sensor esquerdo (`frame[:, :w//2]`), entregando uma visão limpa de 16:10 do dançarino sem duplicação de imagem ou seam estéreo.
 - **Snapshot Rápido de Hardware PnP (`get_hardware_snapshot`):** Utiliza diretamente a DLL nativa `cfgmgr32.dll` (`CM_Get_Device_ID_ListW`) com filtro de dispositivos presentes, retornando uma assinatura de hardware em menos de **3 milissegundos**, sem a sobrecarga de subprocessos como `pnputil`.
 - **Máquina de Estados da PS4 Camera (`get_ps4_camera_state`):** Rastreia os IDs de hardware USB (`VID_05A9&PID_0580` do bootloader e `VID_05A9&PID_058B` do sensor ativo) e a contagem de câmeras virtuais (`SWD\VCAMDEVAPI`) para determinar o status exato da câmera.

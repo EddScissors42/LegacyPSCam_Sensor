@@ -427,13 +427,23 @@ def test_camera_manager():
     assert len(cams) > 0
     print(f"  Cameras found: {[str(c) for c in cams]}")
 
-    # Test FrameBusReader lifecycle
+    # Test FrameBusReader lifecycle and only_new parameter
     fb = FrameBusReader()
     # It may or may not find a slot if driver is stopped, but it must not crash
     assert fb.slot in {-1, 0, 1, 2, 3, 4, 5, 6, 7}
+    assert isinstance(fb.is_connected, bool)
     fb.close()
     assert fb.h_map is None
+    assert not fb.is_connected
     print("  FrameBus direct IPC reader lifecycle verified")
+
+    # Test fast strided black-frame detection
+    from sensor.camera_manager import LatestFrameCamera
+    black_img = np.zeros((800, 1280, 3), dtype=np.uint8)
+    bright_img = np.full((800, 1280, 3), 120, dtype=np.uint8)
+    assert LatestFrameCamera._is_black_frame(black_img) is True
+    assert LatestFrameCamera._is_black_frame(bright_img) is False
+    print("  Fast strided black-frame detection verified")
 
     # Test Stereo Side-by-Side (SBS) auto-cropping logic
     dummy_sbs = np.zeros((800, 2560, 3), dtype=np.uint8)
@@ -451,19 +461,26 @@ def test_camera_manager():
 def test_project_structure():
     print("[TEST] Modular Project Structure (sensor/, ui/, assets/)...")
     assert (BASE_DIR / "sensor").is_dir(), "Directory sensor/ must exist"
+    assert (BASE_DIR / "sensor" / "pose_filters.py").exists(), "sensor/pose_filters.py must exist"
     assert (BASE_DIR / "ui").is_dir(), "Directory ui/ must exist"
+    assert (BASE_DIR / "ui" / "theme.py").exists(), "ui/theme.py must exist"
+    assert (BASE_DIR / "ui" / "icons.py").exists(), "ui/icons.py must exist"
     assert (BASE_DIR / "assets").is_dir(), "Directory assets/ must exist"
     assert (BASE_DIR / "assets" / "IconePSCAMERA.png").exists(), "Asset IconePSCAMERA.png must exist in assets/"
     assert (BASE_DIR / "models" / "pose_landmarker_lite.task").exists(), "models/pose_landmarker_lite.task must exist"
 
     import sensor
     assert hasattr(sensor, "PoseTracker")
+    assert hasattr(sensor, "HandAnchorFilter")
     assert hasattr(sensor, "CameraManager")
     assert hasattr(sensor, "KinectBridge")
     assert hasattr(sensor, "run_tracking_session")
 
     import ui
     assert hasattr(ui, "LegacySensorGUI")
+    assert hasattr(ui, "PALETTE")
+    assert hasattr(ui, "CALIB_PRESETS")
+    assert hasattr(ui, "generate_icons")
 
     import assets
     assert hasattr(assets, "ASSETS_DIR")

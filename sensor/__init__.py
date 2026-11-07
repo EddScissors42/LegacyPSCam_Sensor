@@ -4,11 +4,12 @@ Unifies camera capture, MediaPipe AI tracking, IPC shared memory,
 and OpenCV HUD overlay.
 """
 from .camera_manager import CameraManager, LatestFrameCamera, FrameBusReader
-from .pose_tracker import (
-    PoseTracker, HandAnchorFilter, AdaptiveSmoother, SkeletonCalibrator,
+from .pose_filters import (
+    HandAnchorFilter, AdaptiveSmoother, SkeletonCalibrator,
     CameraSpaceXTracker, apply_camera_space_translation, apply_slot_snap,
-    FaceFollowPTZ, KINECT_CONNECTIONS
+    FaceFollowPTZ, KINECT_CONNECTIONS, avg, lerp
 )
+from .pose_tracker import PoseTracker
 from .kinect_shared_memory import (
     KinectBridge, KinectSharedMemory, KinectMultiPoseSharedMemory, KinectImageSharedMemory, KinectCoachXSharedMemory,
     SHARED_NAME, SHARED_SIZE, MULTI_SHARED_NAME, MULTI_SHARED_SIZE, IMAGE_SHARED_NAME, IMAGE_SHARED_SIZE,
