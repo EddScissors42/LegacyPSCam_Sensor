@@ -1198,7 +1198,7 @@ class LegacySensorGUI:
             self.lbl_pscam_conn_title.configure(text="PlayStation Camera not connected")
             if running:
                 self.lbl_pscam_info.configure(
-                    text="Driver Online and Camera disconnected from USB Port",
+                    text="Driver Online but Camera still disconnected from USB Port",
                     fg=PALETTE["status_warn"]
                 )
                 self.btn_launch_pscam.configure(

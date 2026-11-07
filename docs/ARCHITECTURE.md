@@ -92,13 +92,15 @@ flowchart TD
     end
 
     subgraph UI_LAYER["Camada de Apresentação (ui/ e assets/)"]
-        GUI["ui.LegacySensorGUI\n(Tkinter / ttk Dark)"]
+        GUI_QT["ui.LegacySensorQtGUI\n(PySide6 / Qt 6 PS5-Themed)"]
+        GUI_TK["ui.LegacySensorTkGUI\n(Tkinter Fallback)"]
         OVERLAY["sensor.TrackingOverlay\n(Silhueta, Contorno e HUD)"]
         ASSETS["assets/\n(IconePSCAMERA.png)"]
         CAM_MGR -.->|Frame Espelhado| OVERLAY
         MASK_GEN -.->|Máscara Espelhada| OVERLAY
         CALIBRATOR -.->|Coordenadas 2D| OVERLAY
-        ASSETS -.-> GUI
+        ASSETS -.-> GUI_QT
+        ASSETS -.-> GUI_TK
     end
 ```
 
@@ -110,13 +112,17 @@ flowchart TD
 - **Responsabilidade:** Inicialização da aplicação, parsing de parâmetros da linha de comando (`--start`, `--mode`, `--camera`) e carregamento da GUI ou da sessão de rastreamento direto.
 - **Relações:** Instancia `ConfigManager` e aciona `gui.py` ou `tracking_session.py`.
 
-### 2. `ui/` (`gui.py`, `theme.py`, `icons.py`) — Interface do Usuário (Painel de Controle)
-- **Responsabilidade:** Interface visual modularizada em Tkinter:
+### 2. `ui/` (`gui_qt.py`, `gui.py`, `theme.py`, `icons.py`) — Interface do Usuário (Painel de Controle)
+- **Arquitetura Dual-Engine:** O pacote unifica uma interface moderna estilo console com fallback gracioso:
+  - `ui/gui_qt.py` (`LegacySensorQtGUI`): Interface principal construída sobre **PySide6 / Qt 6**, inspirada no design e transições do console PlayStation 5.
+    - **Transições Suaves em 60 FPS (`SlidingStackedWidget`):** Alternância entre as abas *"Video Settings"* e *"Calibration"* utilizando animações paralelas de translação horizontal (`QPropertyAnimation` na propriedade `pos`) com curva de desaceleração cúbica (`QEasingCurve.Type.OutCubic`).
+    - **Painel Sensível a Estado (State-Aware Video View):** Quando a câmera (PS Camera ou Webcam) está desconectada, o balão contextual é o **único elemento exibido**, acompanhado de status de diagnóstico e botão de ação dedicado. Ao conectar, o balão oculta-se suavemente dando lugar aos controles e opções adicionais.
+    - **Comunicação Concorrente Thread-Safe via Qt Signals:** A enumeração de câmeras e eventos do tracking emitem `cameras_refreshed_signal` e `tracking_finished_signal`, garantindo que atualizações de interface ocorram estritamente na thread do despachante Qt.
+  - `ui/gui.py` (`LegacySensorTkGUI`): Implementação clássica em Tkinter mantida como fallback para ambientes com restrição de dependências.
   - `ui/theme.py`: Define a paleta oficial PlayStation Blue (`#00439C`), presets de calibração (`CALIB_PRESETS`) e seleção de tipografia.
-  - `ui/icons.py`: Gera pílulas arredondadas anti-aliased (`make_pill_image`) e ícones supersampled em Pillow para a PlayStation 4 Camera, Webcam e abas superiores.
-  - `ui/gui.py`: Controla a janela `LegacySensorGUI`, alternância entre **PlayStation Camera** e **Webcam Padrão**, perfis simplificados de rastreamento (**Equilibrado**, **Competitivo**, **Ultra Estável**) e gaveta retrátil de ajustes avançados de filtros.
+  - `ui/icons.py`: Gera pílulas arredondadas anti-aliased (`make_pill_image`) e ícones supersampled em Pillow para a PlayStation 4 Camera, Webcam, status e abas superiores.
 - **Ciclo de Vida do Driver e Hotplug Reativo:** Monitora a cada 1.0 segundo o hardware PnP e o ciclo de vida da PS4 Camera (`NOT_INSTALLED`, `DISCONNECTED`, `DRIVER_STOPPED`, `BOOTLOADER_UPLOADING`, `WAITING_VCAM`, `READY`).
-- **Threading Não-Bloqueante:** Tanto a enumeração de câmeras do OpenCV quanto a sessão de rastreamento executam em threads dedicadas (`threading.Thread(daemon=True)`), mantendo a janela do Tkinter totalmente fluida e sem congelamentos na UI.
+- **Threading Não-Bloqueante:** Tanto a enumeração de câmeras do OpenCV quanto a sessão de rastreamento executam em threads dedicadas (`threading.Thread(daemon=True)`), mantendo a janela do Qt/Tkinter totalmente fluida e sem congelamentos na UI.
 
 ### 3. `camera_manager.py` — Gerenciamento de Câmera e Captura Assíncrona
 - **Classe `LatestFrameCamera`:** Executa um loop contínuo de captura de quadros em thread separada com um buffer atômico de profundidade 1. Isso elimina completamente o acúmulo de frames do DirectShow, garantindo que o MediaPipe receba sempre o quadro mais recente com latência zero.

@@ -42,7 +42,7 @@ All non-essential overhead has been removed while perfecting the core components
 
 - Operating System: Windows 10 or Windows 11 (64-bit).
 - Python: Version 3.10, 3.11, or 3.12 (64-bit).
-- Dependencies: `opencv-python`, `mediapipe`, `numpy`, `Pillow`.
+- Dependencies: `opencv-python`, `mediapipe`, `numpy`, `Pillow`, `PySide6`.
 - Hardware: USB webcam (720p/1080p recommended) or PlayStation 4 Camera (with AUX-to-USB3 adapter).
 - Drivers (for PS4 Camera): PSCam4Win (WinUSB user-mode driver + DirectShow virtual camera).
 
@@ -63,7 +63,10 @@ LegacyPSCam_Sensor/
 │   ├── kinect_shared_memory.py # Windows shared memory IPC driver (JDP1, JMI1/2, JXC1)
 │   └── config_manager.py       # config.json persistence
 ├── ui/                         # User Interface package
-│   └── gui.py                  # Dark PlayStation-themed control panel (Tkinter)
+│   ├── gui_qt.py               # Modern PlayStation 5-themed UI with fluid animations (PySide6 / Qt 6)
+│   ├── gui.py                  # Dark PlayStation-themed control panel (Tkinter fallback)
+│   ├── theme.py                # Palette, fonts, and calibration presets
+│   └── icons.py                # Supersampled icons and status badges
 ├── assets/                     # Visual assets and media
 │   └── IconePSCAMERA.png       # PS4 Camera icon
 ├── models/                     # Pre-trained neural network models

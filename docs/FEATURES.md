@@ -20,11 +20,11 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
 | **Filtro Hand Anchor** | ✅ Totalmente Implementado | `pose_tracker.py` | Extrapolação do vetor de antebraço para mãos velozes. |
 | **Suavização EMA Adaptativa** | ✅ Totalmente Implementado | `pose_tracker.py` | Filtro dinâmico sensível à velocidade (anti-jitter). |
 | **Calibração de Escala e Eixos** | ✅ Totalmente Implementado | `pose_tracker.py` | Centralização dos quadris e conversão de eixos para o Just Dance. |
-| **Interface Gráfica Gamer Moderna** | ✅ Totalmente Implementado | `gui.py` | Layout horizontal com cartões de seleção arredondados, abas estilo console com caixa cinza e ícones vetoriais (engrenagem e sliders), tema PlayStation Blue e mini créditos. |
-| **Cards Modernos de Desconexão e Ações** | ✅ Totalmente Implementado | `gui.py` / `icons.py` | Caixa visual com 'X' grande vermelho supersampleado, status de hardware/driver em tempo real e botões contextuais no estilo dos menus laterais ("Start PSCam4Win Driver" e "Search for Webcams"). |
-| **Perfis Simplificados e Auto-Altura** | ✅ Totalmente Implementado | `gui.py` / `config_manager.py` | 3 perfis estilo console (Equilibrado, Competitivo, Ultra Estável) e calibração de altura 100% automática. |
+| **Interface Gráfica PlayStation 5 (Qt 6 / PySide6)** | ✅ Totalmente Implementado | `ui/gui_qt.py` | UI inspirada no console PlayStation 5 com animações fluidas de deslizamento horizontal entre abas (`SlidingStackedWidget` com curvas cúbicas), cartões com sombras e cantos arredondados, painel sensível a estado e fallback para Tkinter. |
+| **Painel Sensível a Estado (Balão de Desconexão Único)** | ✅ Totalmente Implementado | `ui/gui_qt.py` / `icons.py` | Quando desconectado, o balão com 'X' grande e botão contextual é o **único elemento exibido**. Ao conectar, transita automaticamente para os controles de vídeo e opções adicionais. |
+| **Perfis Simplificados e Auto-Altura** | ✅ Totalmente Implementado | `ui/gui_qt.py` / `config_manager.py` | 3 perfis estilo console (Equilibrado, Competitivo, Ultra Estável) e calibração de altura 100% automática. |
 | **HUD de Jogo e Overlay OpenCV** | ✅ Totalmente Implementado | `tracking_overlay.py` | Renderização do esqueleto, silhueta e contadores reais de FPS. |
-| **Interface de Linha de Comando (CLI)**| ✅ Totalmente Implementado | `main.py` | Flags `--start`, `--mode` e `--camera`. |
+| **Interface de Linha de Comando (CLI)**| ✅ Totalmente Implementado | `main.py` | Flags `--start`, `--mode`, `--camera` e `--gui {qt,tkinter}`. |
 | **Rastreamento Multi-Jogador (2P)** | 🟡 Parcialmente Implementado | `pose_tracker.py` | O MediaPipe suporta `num_poses=2`, mas o Lite foca em 1P. |
 | **Auto-Framing / FaceFollow PTZ** | ✅ Totalmente Implementado | `pose_tracker.py` | Auto-framing digital com zoom suave (1.22x) e centralização dinâmica do rosto para a foto/avatar do dançarino no Just Dance. |
 | **Modo Headless (Sem Janela)** | ⏳ Planejado | `tracking_session.py` | Rastrear em background sem gastar GPU com janela gráfica. |

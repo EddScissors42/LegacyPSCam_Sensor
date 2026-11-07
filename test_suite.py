@@ -477,9 +477,22 @@ def test_project_structure():
 
     import ui
     assert hasattr(ui, "LegacySensorGUI")
+    assert hasattr(ui, "LegacySensorQtGUI")
+    assert hasattr(ui, "LegacySensorTkGUI")
+    assert hasattr(ui, "launch_app")
     assert hasattr(ui, "PALETTE")
     assert hasattr(ui, "CALIB_PRESETS")
     assert hasattr(ui, "generate_icons")
+
+    # Verify Qt GUI offscreen instantiation
+    if ui.HAS_QT:
+        import os
+        os.environ["QT_QPA_PLATFORM"] = "offscreen"
+        from PySide6.QtWidgets import QApplication
+        app = QApplication.instance() or QApplication([])
+        win = ui.LegacySensorQtGUI()
+        assert win.windowTitle() == "Legacy PSCam Sensor"
+        win.close()
 
     import assets
     assert hasattr(assets, "ASSETS_DIR")

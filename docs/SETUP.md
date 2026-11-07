@@ -22,10 +22,10 @@ Abra o prompt de comando (PowerShell ou CMD) na pasta do projeto e execute:
 ```powershell
 python -m pip install -r requirements.txt
 ```
-*(Ou manualmente: `python -m pip install opencv-python mediapipe numpy Pillow`)*
+*(Ou manualmente: `python -m pip install opencv-python mediapipe numpy Pillow PySide6`)*
 
 > [!NOTE]
-> As bibliotecas `tkinter`, `mmap`, `struct`, `json`, `threading` e `subprocess` já fazem parte da biblioteca padrão do Python e não requerem instalação via pip.
+> O pacote `PySide6` provê a interface gráfica de última geração baseada em Qt 6 com transições animadas inspiradas no PlayStation 5. Caso deseje executar em modo mínimo com Tkinter clássico, a biblioteca padrão do Python já inclui o `tkinter` nativamente.
 
 ---
 

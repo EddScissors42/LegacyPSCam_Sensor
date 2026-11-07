@@ -3,6 +3,16 @@ Legacy PSCam Sensor - Sensor & Tracking Engine Module.
 Unifies camera capture, MediaPipe AI tracking, IPC shared memory,
 and OpenCV HUD overlay.
 """
+# Python 3.15 lazy-import compatibility normalization for concurrent.futures
+try:
+    import concurrent.futures
+    import concurrent.futures.thread
+    import concurrent.futures.process
+    concurrent.futures.ThreadPoolExecutor = concurrent.futures.thread.ThreadPoolExecutor
+    concurrent.futures.ProcessPoolExecutor = concurrent.futures.process.ProcessPoolExecutor
+except Exception:
+    pass
+
 from .camera_manager import CameraManager, LatestFrameCamera, FrameBusReader
 from .pose_filters import (
     HandAnchorFilter, AdaptiveSmoother, SkeletonCalibrator,

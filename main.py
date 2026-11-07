@@ -12,13 +12,14 @@ if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
 from sensor import ConfigManager, run_tracking_session
-from ui import LegacySensorGUI
+from ui import launch_app, LegacySensorGUI
 
 def run():
     parser = argparse.ArgumentParser(description="Legacy PSCam Sensor")
     parser.add_argument("--start", action="store_true", help="Start tracking directly without opening GUI menu")
     parser.add_argument("--mode", choices=["pscam", "webcam"], help="Force camera mode")
     parser.add_argument("--camera", type=int, help="Camera index to use")
+    parser.add_argument("--gui", choices=["qt", "tkinter"], default="qt", help="Choose GUI backend (default: qt)")
     args = parser.parse_args()
 
     cfg_mgr = ConfigManager()
@@ -33,10 +34,7 @@ def run():
         print("[INFO] Starting direct tracking session (--start)...")
         run_tracking_session(cfg)
     else:
-        import tkinter as tk
-        root = tk.Tk()
-        app = LegacySensorGUI(root)
-        root.mainloop()
+        sys.exit(launch_app(backend=args.gui))
 
 if __name__ == "__main__":
     run()
