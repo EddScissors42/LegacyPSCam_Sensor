@@ -1,13 +1,13 @@
-# Legacy PSCam Sensor - Motion Tracking Sensor for Just Dance PC
+# Legacy PSCam Sensor - Motion Tracking Sensor for Just Dance: Legacy Offline
 
-Legacy PSCam Sensor is a high-performance, lightweight motion tracking sensor for Just Dance PC (Legacy Offline), unifying support for Standard USB/Integrated Webcams and the PlayStation Camera (PS4 Camera at up to 60 FPS).
+Legacy PSCam Sensor is a high-performance, lightweight motion tracking sensor for Just Dance PC (Legacy Offline), unifying support for Standard USB/Integrated Webcams and the PlayStation Camera.
 
 ---
 
 ## Key Features
 
-- Zero Bloatware: Purely focused on dancing. No background audio, no gift animations, no coin/XP systems. Instant startup and minimal CPU/RAM usage.
-- Native PlayStation Camera Support:
+- Simple GUI
+- Native* PlayStation Camera Support:
   - Optimized presets for PS4 Camera (1280x800 @ 60 FPS).
   - Automatic detection and lifecycle management for the PSCam4Win driver.
 - Standard and USB Webcam Support:
@@ -18,35 +18,33 @@ Legacy PSCam Sensor is a high-performance, lightweight motion tracking sensor fo
   - Dynamic Anti-Jitter Smoothing (EMA): Adaptive velocity-based filter eliminates resting jitter while preserving instantaneous response during fast steps.
   - Automatic Height and Scale Normalization: Calibrates body proportions directly into the coordinate space expected by Just Dance.
   - Full 6-Player Coach Slot Support: Lateral range tracking allows players to select any dancer slot across the room.
-  - Auto-Framing / FaceFollow PTZ: Smooth pan/tilt/zoom (1.22x) auto-centers and focuses the player's face for the dancer selection portrait box.
 - Direct Shared Memory IPC (Kinect Bridge):
   - Streams directly to Just Dance via Windows shared memory (`Local\LegacyWebcamKinectPose`, `Local\LegacyWebcamKinectImage`, and `Local\LegacyWebcamKinectCoachX`) using lockless seqlock protocol, consumed by `Kinect10.dll`.
   - Windows 1ms high-precision timer ensures a solid 30 FPS sync for in-game scoring and silhouette HUD.
 - Sleek HUD & Quick Controls:
   - Vibrant skeleton overlay, player silhouette shadow and neon contour, camera and tracking FPS counters.
-  - Hotkeys: [C] Recalibrate, [M] Mirror, [H] Toggle HUD, [ESC / Q] Exit.
 
 ---
 
 ## Getting Started
 
-### 1. Install DLL into Just Dance
+### 1. Install DLL into Legacy Offline PC
 1. In the `Kinect for Legacy DLL` folder, copy `Kinect10.dll`.
 2. Paste it into the root directory of your Just Dance PC installation (where the game executable is located), replacing any existing file.
 (You can also click the "Open Kinect10.dll Folder" button directly inside the Legacy PSCam Sensor launcher).
 
 ### 2. Run the Sensor
-- Launch `LegacySensor.exe` (or run `python main.py`) to open the control panel and configure your camera.
+- Launch `LegacySensor.exe` to open the control panel and configure your camera.
 
 ### 3. In the Configuration Menu
 1. Select your capture device:
-   - PlayStation 4 Camera: For 60 FPS tracking via PSCam4Win.
+   - PlayStation 4 Camera: For 60 FPS tracking via PSCam4Win using an PS Cam of course (lol).
    - Standard Webcam: For USB or built-in laptop cameras.
-2. Choose your device and resolution preset (e.g. 1280x800 @ 60 FPS or 640x480 @ 30 FPS).
+2. Choose your device and resolution preset
 3. Click "START TRACKING".
 
-### 4. In Just Dance PC
-1. Start Just Dance PC.
+### 4. In Legacy Offline PC
+1. Start Legacy.
 2. In the controller selection screen, select Kinect Sensor.
 3. Pick your song, step onto your dancer slot, and enjoy!
 
