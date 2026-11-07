@@ -21,10 +21,10 @@ O objetivo do **Legacy Sensor Lite** é fornecer um sensor de movimento corporal
 
 ## 🏛️ Arquitetura do Sistema
 
-O projeto é organizado nos seguintes módulos na pasta `LegacySensor_Lite/`:
+O projeto é organizado nos seguintes módulos na pasta `LegacyPSCam_Sensor/`:
 
 ```
-LegacySensor_Lite/
+LegacyPSCam_Sensor/
 ├── main.py                     # Ponto de entrada (CLI dispatcher e inicializador)
 ├── test_suite.py               # Suíte de testes automatizados (9/9 suítes integradas)
 ├── config.json                 # Gerenciamento e persistência das configurações locais
@@ -138,7 +138,7 @@ O sistema IPC opera com canais mapeados em memória Windows sob o protocolo seql
 Qualquer alteração realizada por um agente de IA deve ser validada executando:
 
 ```powershell
-python LegacySensor_Lite/test_suite.py
+python LegacyPSCam_Sensor/test_suite.py
 ```
 
 Todas as 9 suítes de teste integradas devem passar com sucesso (`9/9 PASSED`):

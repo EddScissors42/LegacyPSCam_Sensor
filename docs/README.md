@@ -59,7 +59,7 @@ Eliminamos todo o conteúdo extra mantendo e aperfeiçoando os pilares que realm
 ## 📂 Estrutura de Diretórios Resumida
 
 ```
-LegacySensor_Lite/
+LegacyPSCam_Sensor/
 ├── main.py                     # Ponto de entrada (CLI e despachante da aplicação)
 ├── test_suite.py               # 9 suítes completas de testes automatizados
 ├── config.json                 # Preferências salvas do usuário
@@ -89,7 +89,7 @@ LegacySensor_Lite/
 ## ⚡ Primeiros Passos
 
 1. **Copie a DLL para o Just Dance:**
-   Coloque o arquivo [`Kinect10.dll`](../LegacySensor_Lite/Kinect%20for%20Legacy%20DLL/Kinect10.dll) na pasta onde está o executável do seu Just Dance PC.
+   Coloque o arquivo [`Kinect10.dll`](../Kinect%20for%20Legacy%20DLL/Kinect10.dll) na pasta onde está o executável do seu Just Dance PC.
 2. **Execute o Sensor:**
    Dê um duplo clique em [`INICIAR_SENSOR.bat`](../LegacySensor_Lite/INICIAR_SENSOR.bat).
 3. **Selecione a Câmera:**

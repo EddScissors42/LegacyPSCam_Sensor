@@ -60,7 +60,7 @@ O arquivo mapeado `Local\LegacyWebcamKinectPose` deve ter exatamente **344 bytes
 Antes de aprovar qualquer modificação de código, execute a suíte de testes integrada:
 
 ```powershell
-python LegacySensor_Lite/test_suite.py
+python LegacyPSCam_Sensor/test_suite.py
 ```
 
 A suíte cobre 9 áreas fundamentais:
@@ -97,4 +97,4 @@ Ao criar novos recursos (como um novo algoritmo de suavização ou novo controle
 3. A função `parse_preset()` fará o parsing automático para `(640, 400, 120)`.
 4. O `camera_manager.py` tentará negociar essa taxa com o DirectShow do PSCam4Win.
 5. Atualize o arquivo `docs/FEATURES.md` documentando o novo preset.
-6. Execute `python LegacySensor_Lite/test_suite.py` para validar.
+6. Execute `python LegacyPSCam_Sensor/test_suite.py` para validar.

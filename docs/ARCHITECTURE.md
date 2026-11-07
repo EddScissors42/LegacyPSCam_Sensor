@@ -9,7 +9,7 @@ Este documento descreve detalhadamente a arquitetura do **Legacy Sensor Lite**, 
 O sistema é baseado em uma **arquitetura modular em pacotes**, onde cada etapa do processamento de vídeo, inteligência artificial, cinemática, interface de usuário e comunicação entre processos opera de forma isolada e desacoplada:
 
 ```
-LegacySensor_Lite/
+LegacyPSCam_Sensor/
 ├── main.py                     # Ponto de entrada (CLI dispatcher e inicializador)
 ├── test_suite.py               # Suíte de testes automatizados (9/9 suítes integradas)
 ├── config.json                 # Gerenciamento e persistência das configurações locais

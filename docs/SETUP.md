@@ -48,7 +48,7 @@ O instalador oficial já está incluído na pasta `tools/`:
 
 Para que o jogo Just Dance PC consiga ler os movimentos gerados pelo simulador:
 
-1. Localize a pasta `Kinect for Legacy DLL/` dentro de `LegacySensor_Lite/`.
+1. Localize a pasta `Kinect for Legacy DLL/` dentro de `LegacyPSCam_Sensor/`.
 2. Copie o arquivo **`Kinect10.dll`**.
 3. Abra a pasta raiz da sua instalação do **Just Dance PC** (onde fica o executável do jogo, por exemplo `JustDance.exe` ou a pasta do Legacy Offline).
 4. Cole o `Kinect10.dll` na pasta do jogo, substituindo o existente se solicitado.
