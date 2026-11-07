@@ -6,11 +6,10 @@ import sys
 import argparse
 from pathlib import Path
 
-# Setup paths for modular packages
+# Setup root package path
 BASE_DIR = Path(__file__).resolve().parent
-for sub in [BASE_DIR, BASE_DIR / "sensor", BASE_DIR / "ui"]:
-    if str(sub) not in sys.path:
-        sys.path.insert(0, str(sub))
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
 
 from sensor import ConfigManager, run_tracking_session
 from ui import LegacySensorGUI

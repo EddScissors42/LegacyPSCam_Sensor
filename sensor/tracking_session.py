@@ -6,18 +6,11 @@ and OpenCV HUD preview window.
 import time
 import cv2
 import ctypes
-try:
-    from .camera_manager import LatestFrameCamera, CameraManager
-    from .kinect_shared_memory import KinectBridge
-    from .pose_tracker import PoseTracker
-    from .tracking_overlay import TrackingOverlay
-    from .config_manager import parse_preset
-except (ImportError, ValueError):
-    from camera_manager import LatestFrameCamera, CameraManager
-    from kinect_shared_memory import KinectBridge
-    from pose_tracker import PoseTracker
-    from tracking_overlay import TrackingOverlay
-    from config_manager import parse_preset
+from sensor.camera_manager import LatestFrameCamera, CameraManager
+from sensor.kinect_shared_memory import KinectBridge
+from sensor.pose_tracker import PoseTracker
+from sensor.tracking_overlay import TrackingOverlay
+from sensor.config_manager import parse_preset
 
 def set_high_resolution_timer(enable=True):
     """

@@ -9,29 +9,23 @@ Features a horizontal split layout:
 """
 import os
 import subprocess
+import sys
 import threading
 import time
 import tkinter as tk
 from tkinter import ttk, messagebox
 from pathlib import Path
 
-try:
-    from .theme import PALETTE, CALIB_PRESETS, get_font_family
-    from .icons import make_pill_image, load_pscam_file_icon, generate_icons, generate_tab_icons
-except (ImportError, ValueError):
-    from theme import PALETTE, CALIB_PRESETS, get_font_family
-    from icons import make_pill_image, load_pscam_file_icon, generate_icons, generate_tab_icons
+BASE_DIR = Path(__file__).resolve().parent.parent
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
 
-try:
-    from sensor.config_manager import ConfigManager, PRESETS_PSCAM, PRESETS_WEBCAM
-    from sensor.camera_manager import CameraManager
-    from sensor.kinect_shared_memory import KinectBridge
-    from sensor import tracking_session
-except (ImportError, ValueError):
-    from config_manager import ConfigManager, PRESETS_PSCAM, PRESETS_WEBCAM
-    from camera_manager import CameraManager
-    from kinect_shared_memory import KinectBridge
-    import tracking_session
+from ui.theme import PALETTE, CALIB_PRESETS, get_font_family
+from ui.icons import make_pill_image, load_pscam_file_icon, generate_icons, generate_tab_icons
+from sensor.config_manager import ConfigManager, PRESETS_PSCAM, PRESETS_WEBCAM
+from sensor.camera_manager import CameraManager
+from sensor.kinect_shared_memory import KinectBridge
+from sensor import tracking_session
 
 
 class LegacySensorGUI:
@@ -178,8 +172,8 @@ class LegacySensorGUI:
         sidebar_pad = tk.Frame(self.sidebar, bg=PALETTE["bg_sidebar"], padx=18, pady=20)
         sidebar_pad.pack(fill=tk.BOTH, expand=True)
 
-        # 1.1 Brand Header (Removed "Just Dance PC")
-        lbl_brand = tk.Label(sidebar_pad, text="Legacy PSCam Sensor", font=(self.font_family, 15, "bold"),
+        # 1.1 Brand Header
+        lbl_brand = tk.Label(sidebar_pad, text="Legacy Sensor Lite", font=(self.font_family, 15, "bold"),
                              fg=PALETTE["ps_blue"], bg=PALETTE["bg_sidebar"])
         lbl_brand.pack(anchor="w")
 
@@ -453,7 +447,7 @@ class LegacySensorGUI:
 
         lbl_version = tk.Label(
             footer_row,
-            text="Legacy PSCam Sensor v0.5",
+            text="Legacy Sensor Lite v0.5",
             font=(self.font_family, 8),
             fg=PALETTE["text_dim"],
             bg=PALETTE["bg_window"]

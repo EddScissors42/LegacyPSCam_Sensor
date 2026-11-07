@@ -12,11 +12,10 @@ import time
 from pathlib import Path
 import numpy as np
 
-# Set path
+# Setup root package path
 BASE_DIR = Path(__file__).resolve().parent
-for p in [BASE_DIR, BASE_DIR / "sensor", BASE_DIR / "ui", BASE_DIR / "assets"]:
-    if str(p) not in sys.path:
-        sys.path.insert(0, str(p))
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
 
 from sensor.config_manager import ConfigManager, parse_preset, PRESETS_PSCAM, PRESETS_WEBCAM
 from sensor.kinect_shared_memory import (
@@ -485,6 +484,7 @@ def test_project_structure():
     import assets
     assert hasattr(assets, "ASSETS_DIR")
     assert assets.ICON_PSCAMERA_PATH.exists()
+    assert assets.MODEL_POSE_PATH.exists(), "Canonical pose model path must exist via assets.MODEL_POSE_PATH"
 
     print("  -> Modular Project Structure PASSED")
 

@@ -5,10 +5,7 @@ performance metrics, and IPC connection status on OpenCV frames.
 """
 import cv2
 import numpy as np
-try:
-    from .pose_tracker import KINECT_CONNECTIONS
-except (ImportError, ValueError):
-    from pose_tracker import KINECT_CONNECTIONS
+from sensor.pose_filters import KINECT_CONNECTIONS
 
 # Color Palette (BGR)
 COLOR_SPINE = (0, 230, 255)       # Yellow/Gold

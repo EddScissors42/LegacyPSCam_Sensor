@@ -28,8 +28,8 @@ LegacyPSCam_Sensor/
 │   ├── icons.py                # Renderização vetorial/Pillow supersampled de ícones e pílulas
 │   └── gui.py                  # Controlador principal da interface gráfica em Tkinter / ttk
 ├── assets/                     # Recursos visuais e mídias
-│   ├── IconePSCAMERA.png       # Ícone da PlayStation 4 Camera
-│   └── models/                 # Modelos neurais locais
+│   ├── __init__.py             # Caminhos unificados de ícones e modelo neural
+│   └── IconePSCAMERA.png       # Ícone da PlayStation 4 Camera
 ├── models/
 │   └── pose_landmarker_lite.task # Modelo pré-treinado do Google MediaPipe Pose
 ├── tools/

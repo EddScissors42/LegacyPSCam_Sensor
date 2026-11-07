@@ -41,7 +41,7 @@ All non-essential overhead has been removed while perfecting the core components
 
 - Operating System: Windows 10 or Windows 11 (64-bit).
 - Python: Version 3.10, 3.11, or 3.12 (64-bit).
-- Dependencies: `opencv-python`, `mediapipe`, `numpy`.
+- Dependencies: `opencv-python`, `mediapipe`, `numpy`, `Pillow`.
 - Hardware: USB webcam (720p/1080p recommended) or PlayStation 4 Camera (with AUX-to-USB3 adapter).
 - Drivers (for PS4 Camera): PSCam4Win (WinUSB user-mode driver + DirectShow virtual camera).
 

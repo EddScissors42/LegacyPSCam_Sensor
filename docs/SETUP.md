@@ -20,8 +20,9 @@ Este documento apresenta o passo a passo completo para preparar o ambiente, inst
 Abra o prompt de comando (PowerShell ou CMD) na pasta do projeto e execute:
 
 ```powershell
-python -m pip install opencv-python mediapipe numpy
+python -m pip install -r requirements.txt
 ```
+*(Ou manualmente: `python -m pip install opencv-python mediapipe numpy Pillow`)*
 
 > [!NOTE]
 > As bibliotecas `tkinter`, `mmap`, `struct`, `json`, `threading` e `subprocess` já fazem parte da biblioteca padrão do Python e não requerem instalação via pip.
