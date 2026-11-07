@@ -13,9 +13,11 @@ if str(BASE_DIR) not in sys.path:
 
 from sensor import ConfigManager, run_tracking_session
 from ui import launch_app, LegacySensorGUI
+from version import WINDOW_TITLE, VERSION_STRING, APP_NAME
 
 def run():
-    parser = argparse.ArgumentParser(description="Legacy PSCam Sensor")
+    parser = argparse.ArgumentParser(description=WINDOW_TITLE)
+    parser.add_argument("--version", action="version", version=f"{APP_NAME} {VERSION_STRING}")
     parser.add_argument("--start", action="store_true", help="Start tracking directly without opening GUI menu")
     parser.add_argument("--mode", choices=["pscam", "webcam"], help="Force camera mode")
     parser.add_argument("--camera", type=int, help="Camera index to use")

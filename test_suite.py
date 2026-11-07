@@ -465,7 +465,10 @@ def test_project_structure():
     assert (BASE_DIR / "ui" / "theme.py").exists(), "ui/theme.py must exist"
     assert (BASE_DIR / "ui" / "icons.py").exists(), "ui/icons.py must exist"
     assert (BASE_DIR / "assets").is_dir(), "Directory assets/ must exist"
-    assert (BASE_DIR / "assets" / "IconePSCAMERA.png").exists(), "Asset IconePSCAMERA.png must exist in assets/"
+    assert (BASE_DIR / "assets" / "icons").is_dir(), "Directory assets/icons/ must exist"
+    assert (BASE_DIR / "assets" / "icons" / "IconePSCAMERA.png").exists(), "Asset IconePSCAMERA.png must exist in assets/icons/"
+    assert (BASE_DIR / "assets" / "icons" / "settings.svg").exists(), "Asset settings.svg must exist in assets/icons/"
+    assert (BASE_DIR / "assets" / "icons" / "sliders.svg").exists(), "Asset sliders.svg must exist in assets/icons/"
     assert (BASE_DIR / "models" / "pose_landmarker_lite.task").exists(), "models/pose_landmarker_lite.task must exist"
 
     import sensor
@@ -487,13 +490,19 @@ def test_project_structure():
     # Verify Qt GUI offscreen instantiation, icons, and fonts
     if ui.HAS_QT:
         import os
+        import version
+        assert hasattr(version, "__version__")
+        assert version.STAGE == "Alpha"
+
         os.environ["QT_QPA_PLATFORM"] = "offscreen"
         from PySide6.QtWidgets import QApplication
         app = QApplication.instance() or QApplication([])
         win = ui.LegacySensorQtGUI()
-        assert win.windowTitle() == "Legacy PSCam Sensor"
+        assert win.windowTitle() == version.WINDOW_TITLE
         assert not win.pix_ps_act.isNull(), "PS Camera icon pixmap must not be null"
         assert not win.pix_web_act.isNull(), "Webcam icon pixmap must not be null"
+        assert not win.pix_gear_act.isNull(), "Settings icon pixmap must not be null"
+        assert not win.pix_slid_act.isNull(), "Sliders icon pixmap must not be null"
         assert not win.pix_status_err.isNull(), "Status X icon pixmap must not be null"
         assert win.font_title == "Kanit", f"Expected Kanit title font, got {win.font_title}"
         assert win.font_heading == "National Park", f"Expected National Park heading font, got {win.font_heading}"
@@ -502,7 +511,10 @@ def test_project_structure():
 
     import assets
     assert hasattr(assets, "ASSETS_DIR")
+    assert hasattr(assets, "ICONS_DIR")
     assert assets.ICON_PSCAMERA_PATH.exists()
+    assert assets.ICON_SETTINGS_PATH.exists()
+    assert assets.ICON_SLIDERS_PATH.exists()
     assert assets.MODEL_POSE_PATH.exists(), "Canonical pose model path must exist via assets.MODEL_POSE_PATH"
 
     print("  -> Modular Project Structure PASSED")

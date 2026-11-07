@@ -22,6 +22,7 @@ if str(BASE_DIR) not in sys.path:
 
 from ui.theme import PALETTE, CALIB_PRESETS, FONT_TITLE, FONT_HEADING, FONT_BODY, get_font_family, load_custom_fonts_win32
 from ui.icons import make_pill_image, load_pscam_file_icon, generate_icons, generate_tab_icons, generate_status_icons
+from version import WINDOW_TITLE, VERSION_STRING, APP_NAME
 from sensor.config_manager import ConfigManager, PRESETS_PSCAM, PRESETS_WEBCAM
 from sensor.camera_manager import CameraManager
 from sensor.kinect_shared_memory import KinectBridge
@@ -31,7 +32,7 @@ from sensor import tracking_session
 class LegacySensorGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("Legacy PSCam Sensor")
+        self.root.title(WINDOW_TITLE)
         self.root.geometry("960x580")
         self.root.minsize(920, 550)
         self.root.configure(bg=PALETTE["bg_window"])
@@ -457,7 +458,7 @@ class LegacySensorGUI:
 
         lbl_version = tk.Label(
             footer_row,
-            text="Legacy PSCam Sensor v0.5",
+            text=f"{APP_NAME} {VERSION_STRING}",
             font=(self.font_family, 8),
             fg=PALETTE["text_dim"],
             bg=PALETTE["bg_window"]

@@ -2,6 +2,7 @@
 High-Resolution Anti-Aliased Icon and Pill Generators for Legacy PSCam Sensor UI.
 Renders supersampled Pillow graphics for sidebar navigation, top tabs, and rounded buttons.
 Supports both pure PIL.Image outputs (for Qt6 / PySide6) and ImageTk.PhotoImage outputs (for Tkinter).
+Loads custom user SVG icons for 'settings' (Video Settings) and 'sliders' (Calibration) with vector fallback.
 """
 import math
 from pathlib import Path
@@ -28,7 +29,7 @@ def load_pscam_file_icon(png_path: Path, target_box=(38, 26), color=(255, 255, 2
     Loads user-provided IconePSCAMERA.png, converts dark background to transparent alpha,
     recolors the icon graphic to the target color, and scales it into target_box.
     """
-    if not png_path.exists():
+    if not png_path or not png_path.exists():
         return None
     try:
         import numpy as np
@@ -69,18 +70,20 @@ def load_pscam_file_icon(png_path: Path, target_box=(38, 26), color=(255, 255, 2
 def generate_icons_pil(target_box=(38, 26)):
     """
     Renders supersampled PIL.Image RGBA icons for the sidebar navigation:
-    1. PlayStation 4 Camera (loaded from IconePSCAMERA.png with vector fallback).
+    1. PlayStation 4 Camera (loaded from assets/icons/IconePSCAMERA.png with vector fallback).
     2. Generic round Webcam (circular head with lens aperture and stand).
     Returns (pil_ps_act, pil_ps_inact, pil_web_act, pil_web_inact).
     """
     base_dir = Path(__file__).resolve().parent
     png_candidates = [
+        base_dir.parent / "assets" / "icons" / "IconePSCAMERA.png",
         base_dir.parent / "assets" / "IconePSCAMERA.png",
+        base_dir / "assets" / "icons" / "IconePSCAMERA.png",
         base_dir / "assets" / "IconePSCAMERA.png",
         base_dir.parent / "IconePSCAMERA.png",
         base_dir / "IconePSCAMERA.png"
     ]
-    png_path = next((p for p in png_candidates if p.exists()), base_dir.parent / "assets" / "IconePSCAMERA.png")
+    png_path = next((p for p in png_candidates if p.exists()), base_dir.parent / "assets" / "icons" / "IconePSCAMERA.png")
 
     # 1. PS4 Camera Icon (from file or vector fallback)
     ps_file_act = load_pscam_file_icon(png_path, target_box=target_box, color=(255, 255, 255))
@@ -166,57 +169,131 @@ def generate_icons():
     )
 
 
+def render_svg_icon_pil(svg_path: Path, size: tuple = (18, 18), color_hex: str = "#0F172A"):
+    """
+    Renders an SVG file to a transparent, tinted PIL RGBA Image.
+    Uses Qt's QSvgRenderer for high-precision anti-aliasing.
+    """
+    if not svg_path or not Path(svg_path).exists():
+        return None
+    try:
+        from PySide6.QtGui import QImage, QPainter, QColor
+        from PySide6.QtCore import Qt
+        from PySide6.QtSvg import QSvgRenderer
+        from PySide6.QtWidgets import QApplication
+
+        if QApplication.instance() is None:
+            import os
+            os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+            QApplication([])
+
+        ren = QSvgRenderer(str(svg_path))
+        if not ren.isValid():
+            return None
+
+        w, h = size
+        scale = 2
+        qimg = QImage(w * scale, h * scale, QImage.Format.Format_RGBA8888)
+        qimg.fill(Qt.GlobalColor.transparent)
+        p = QPainter(qimg)
+        ren.render(p)
+        p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+        p.fillRect(qimg.rect(), QColor(color_hex))
+        p.end()
+
+        pil_raw = Image.frombytes("RGBA", (w * scale, h * scale), qimg.bits().tobytes())
+        return pil_raw.resize(size, Image.Resampling.LANCZOS)
+    except Exception:
+        return None
+
+
 def generate_tab_icons_pil(size=(18, 18)):
     """
     Renders supersampled PIL.Image RGBA icons for the top navigation tabs:
-    1. Gear icon for 'Video Settings'
-    2. Sliders icon (3 horizontal lines with adjustment knobs) for 'Calibration'
-    Returns (gear_act, gear_inact, sliders_act, sliders_inact).
+    1. Settings SVG icon for 'Video Settings'
+    2. Sliders SVG icon for 'Calibration'
+    Returns (settings_act, settings_inact, sliders_act, sliders_inact).
     """
-    scale = 4
-    w, h = size[0] * scale, size[1] * scale
+    base_dir = Path(__file__).resolve().parent
+    settings_candidates = [
+        base_dir.parent / "assets" / "icons" / "settings.svg",
+        base_dir.parent / "assets" / "settings.svg",
+        base_dir / "assets" / "icons" / "settings.svg",
+        base_dir / "assets" / "settings.svg",
+    ]
+    settings_path = next((p for p in settings_candidates if p.exists()), None)
 
-    def make_gear(color):
-        img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-        d = ImageDraw.Draw(img)
-        cx, cy = w / 2, h / 2
-        r_outer = w * 0.44
-        r_inner = w * 0.30
-        r_hole = w * 0.15
-        teeth = 8
-        for i in range(teeth):
-            angle = (2 * math.pi / teeth) * i
-            tw = 0.22
-            pts = [
-                (cx + r_inner * math.cos(angle - tw), cy + r_inner * math.sin(angle - tw)),
-                (cx + r_outer * math.cos(angle - tw * 0.65), cy + r_outer * math.sin(angle - tw * 0.65)),
-                (cx + r_outer * math.cos(angle + tw * 0.65), cy + r_outer * math.sin(angle + tw * 0.65)),
-                (cx + r_inner * math.cos(angle + tw), cy + r_inner * math.sin(angle + tw)),
-            ]
-            d.polygon(pts, fill=color)
-        d.ellipse([cx - r_inner, cy - r_inner, cx + r_inner, cy + r_inner], fill=color)
-        d.ellipse([cx - r_hole, cy - r_hole, cx + r_hole, cy + r_hole], fill=(0, 0, 0, 0))
-        return img.resize(size, Image.Resampling.LANCZOS)
+    sliders_candidates = [
+        base_dir.parent / "assets" / "icons" / "sliders.svg",
+        base_dir.parent / "assets" / "sliders.svg",
+        base_dir / "assets" / "icons" / "sliders.svg",
+        base_dir / "assets" / "sliders.svg",
+    ]
+    sliders_path = next((p for p in sliders_candidates if p.exists()), None)
 
-    def make_sliders(color):
-        img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-        d = ImageDraw.Draw(img)
-        line_w = int(2.2 * scale)
-        knob_r = int(3.5 * scale)
-        y_coords = [int(h * 0.23), int(h * 0.50), int(h * 0.77)]
-        knob_xs = [int(w * 0.34), int(w * 0.68), int(w * 0.44)]
-        x_left = int(w * 0.10)
-        x_right = int(w * 0.90)
-        for y, kx in zip(y_coords, knob_xs):
-            d.line([(x_left, y), (x_right, y)], fill=color, width=line_w)
-            d.ellipse([kx - knob_r, y - knob_r, kx + knob_r, y + knob_r], fill=color)
-            hole_r = int(1.6 * scale)
-            d.ellipse([kx - hole_r, y - hole_r, kx + hole_r, y + hole_r], fill=(0, 0, 0, 0))
-        return img.resize(size, Image.Resampling.LANCZOS)
+    col_act = "#0F172A"
+    col_inact = "#64748B"
 
-    col_act = (15, 23, 42, 255)       # Dark charcoal (#0F172A)
-    col_inact = (100, 116, 139, 255)  # Muted slate (#64748B)
-    return make_gear(col_act), make_gear(col_inact), make_sliders(col_act), make_sliders(col_inact)
+    set_act = render_svg_icon_pil(settings_path, size=size, color_hex=col_act)
+    set_inact = render_svg_icon_pil(settings_path, size=size, color_hex=col_inact)
+    slid_act = render_svg_icon_pil(sliders_path, size=size, color_hex=col_act)
+    slid_inact = render_svg_icon_pil(sliders_path, size=size, color_hex=col_inact)
+
+    # Procedural vector fallbacks if SVGs cannot be loaded/rendered
+    if set_act is None or set_inact is None or slid_act is None or slid_inact is None:
+        scale = 4
+        w, h = size[0] * scale, size[1] * scale
+
+        def make_gear(color):
+            img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+            d = ImageDraw.Draw(img)
+            cx, cy = w / 2, h / 2
+            r_outer = w * 0.44
+            r_inner = w * 0.30
+            r_hole = w * 0.15
+            teeth = 8
+            for i in range(teeth):
+                angle = (2 * math.pi / teeth) * i
+                tw = 0.22
+                pts = [
+                    (cx + r_inner * math.cos(angle - tw), cy + r_inner * math.sin(angle - tw)),
+                    (cx + r_outer * math.cos(angle - tw * 0.65), cy + r_outer * math.sin(angle - tw * 0.65)),
+                    (cx + r_outer * math.cos(angle + tw * 0.65), cy + r_outer * math.sin(angle + tw * 0.65)),
+                    (cx + r_inner * math.cos(angle + tw), cy + r_inner * math.sin(angle + tw)),
+                ]
+                d.polygon(pts, fill=color)
+            d.ellipse([cx - r_inner, cy - r_inner, cx + r_inner, cy + r_inner], fill=color)
+            d.ellipse([cx - r_hole, cy - r_hole, cx + r_hole, cy + r_hole], fill=(0, 0, 0, 0))
+            return img.resize(size, Image.Resampling.LANCZOS)
+
+        def make_sliders(color):
+            img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+            d = ImageDraw.Draw(img)
+            line_w = int(2.2 * scale)
+            knob_r = int(3.5 * scale)
+            y_coords = [int(h * 0.23), int(h * 0.50), int(h * 0.77)]
+            knob_xs = [int(w * 0.34), int(w * 0.68), int(w * 0.44)]
+            x_left = int(w * 0.10)
+            x_right = int(w * 0.90)
+            for y, kx in zip(y_coords, knob_xs):
+                d.line([(x_left, y), (x_right, y)], fill=color, width=line_w)
+                d.ellipse([kx - knob_r, y - knob_r, kx + knob_r, y + knob_r], fill=color)
+                hole_r = int(1.6 * scale)
+                d.ellipse([kx - hole_r, y - hole_r, kx + hole_r, y + hole_r], fill=(0, 0, 0, 0))
+            return img.resize(size, Image.Resampling.LANCZOS)
+
+        col_act_tuple = (15, 23, 42, 255)
+        col_inact_tuple = (100, 116, 139, 255)
+        if set_act is None:
+            set_act = make_gear(col_act_tuple)
+        if set_inact is None:
+            set_inact = make_gear(col_inact_tuple)
+        if slid_act is None:
+            slid_act = make_sliders(col_act_tuple)
+        if slid_inact is None:
+            slid_inact = make_sliders(col_inact_tuple)
+
+    return set_act, set_inact, slid_act, slid_inact
 
 
 def generate_tab_icons():

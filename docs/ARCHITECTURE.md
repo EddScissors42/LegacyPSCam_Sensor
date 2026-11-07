@@ -22,14 +22,20 @@ LegacyPSCam_Sensor/
 │   ├── tracking_session.py     # Orquestrador do loop de rastreamento e eventos de teclado
 │   ├── tracking_overlay.py     # Renderização visual do esqueleto, silhueta sombreada e HUD
 │   └── config_manager.py       # Gerenciamento e persistência das configurações (config.json)
+├── version.py                  # Versionamento centralizado e metadados de build (v0.1.2 Alpha)
 ├── ui/                         # Pacote da Interface Gráfica
-│   ├── __init__.py             # Exporta a classe LegacySensorGUI, temas e geradores de ícones
-│   ├── theme.py                # Paleta de cores PlayStation Blue, tipografia e presets de calibração
-│   ├── icons.py                # Renderização vetorial/Pillow supersampled de ícones e pílulas
-│   └── gui.py                  # Controlador principal da interface gráfica em Tkinter / ttk
+│   ├── __init__.py             # Exporta as classes LegacySensorGUI / Qt / Tkinter e launch_app
+│   ├── theme.py                # Paleta de cores PlayStation Blue, carregamento de fontes e presets
+│   ├── icons.py                # Renderização vetorial e de SVGs personalizados (settings/sliders)
+│   ├── gui_qt.py               # Interface moderna estilo console em PySide6 / Qt 6
+│   └── gui.py                  # Interface clássica em Tkinter (fallback)
 ├── assets/                     # Recursos visuais e mídias
-│   ├── __init__.py             # Caminhos unificados de ícones e modelo neural
-│   └── IconePSCAMERA.png       # Ícone da PlayStation 4 Camera
+│   ├── __init__.py             # Caminhos canônicos de ícones, fontes e modelos
+│   ├── icons/                  # Ícones customizados do sistema
+│   │   ├── IconePSCAMERA.png   # Ícone da PlayStation 4 Camera
+│   │   ├── settings.svg        # Ícone vetorial da aba Configurações de Vídeo
+│   │   └── sliders.svg         # Ícone vetorial da aba Calibração
+│   └── fonts/                  # Fontes TTF empacotadas (Kanit, National Park, Inter Tight)
 ├── models/
 │   └── pose_landmarker_lite.task # Modelo pré-treinado do Google MediaPipe Pose
 ├── tools/
@@ -95,7 +101,7 @@ flowchart TD
         GUI_QT["ui.LegacySensorQtGUI\n(PySide6 / Qt 6 PS5-Themed)"]
         GUI_TK["ui.LegacySensorTkGUI\n(Tkinter Fallback)"]
         OVERLAY["sensor.TrackingOverlay\n(Silhueta, Contorno e HUD)"]
-        ASSETS["assets/\n(IconePSCAMERA.png)"]
+        ASSETS["assets/icons/\n(PSCam, Settings, Sliders)"]
         CAM_MGR -.->|Frame Espelhado| OVERLAY
         MASK_GEN -.->|Máscara Espelhada| OVERLAY
         CALIBRATOR -.->|Coordenadas 2D| OVERLAY

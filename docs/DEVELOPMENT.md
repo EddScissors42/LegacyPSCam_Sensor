@@ -19,6 +19,25 @@ O projeto segue estritamente as convenções padrão do ecossistema Python (PEP 
 
 ---
 
+## 🏷️ Padrão Oficial de Versionamento e Título da Aplicação
+
+O projeto adota uma convenção estrita de versionamento semântico pragmático centralizada em `version.py`:
+
+```python
+__version__ = "0.1.2"
+STAGE = "Alpha"
+VERSION_STRING = f"v{__version__} ({STAGE})"
+WINDOW_TITLE = f"Legacy PSCam Sensor {VERSION_STRING}"
+```
+
+### Regras Obrigatórias de Incremento de Versão:
+1. **Mudanças Pequenas (Bugfixes, ajustes de UI, novos assets/ícones):** Altere estritamente o **terceiro dígito** (`0.1.1` ➔ `0.1.2`).
+2. **Grandes Mudanças / Refatorações Significativas:** Altere o **segundo dígito** (`0.1.2` ➔ `0.2.0`).
+3. **Sempre atualizar:** Sempre que fizer uma modificação, incremente a versão em `version.py`.
+4. **Título da Janela e Rodapé:** O título da janela principal (Qt e Tkinter) deve obrigatoriamente exibir o número da versão acompanhado de `(Alpha)` (ex.: `"Legacy PSCam Sensor v0.1.2 (Alpha)"`).
+
+---
+
 ## 🛡️ Regras Inegociáveis de Segurança e Estabilidade
 
 Qualquer desenvolvedor ou agente deve respeitar quatro regras de ouro para não quebrar a pontuação do jogo nem causar travamentos:

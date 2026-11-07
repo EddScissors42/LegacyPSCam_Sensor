@@ -55,6 +55,7 @@ from ui.icons import (
     generate_status_icons_pil
 )
 from assets import ICON_PSCAMERA_PATH
+from version import WINDOW_TITLE, VERSION_STRING, APP_NAME
 from sensor.config_manager import ConfigManager, PRESETS_PSCAM, PRESETS_WEBCAM
 from sensor.camera_manager import CameraManager
 from sensor.kinect_shared_memory import KinectBridge
@@ -365,7 +366,7 @@ class LegacySensorQtGUI(QMainWindow):
         if parent is not None and not isinstance(parent, QWidget):
             parent = None
         super().__init__(parent)
-        self.setWindowTitle("Legacy PSCam Sensor")
+        self.setWindowTitle(WINDOW_TITLE)
         self.resize(960, 580)
         self.setMinimumSize(920, 550)
         if ICON_PSCAMERA_PATH.exists():
@@ -797,7 +798,7 @@ class LegacySensorQtGUI(QMainWindow):
         lbl_author.setStyleSheet(
             f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['text_muted']}; background: transparent;"
         )
-        lbl_ver = QLabel("Legacy PSCam Sensor v0.5", self.content_widget)
+        lbl_ver = QLabel(f"{APP_NAME} {VERSION_STRING}", self.content_widget)
         lbl_ver.setStyleSheet(
             f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['text_dim']}; background: transparent;"
         )

@@ -53,6 +53,7 @@ All non-essential overhead has been removed while perfecting the core components
 ```
 LegacyPSCam_Sensor/
 ├── main.py                     # CLI launcher and entry point
+├── version.py                  # Official versioning & build metadata (v0.1.2 Alpha)
 ├── test_suite.py               # 9 complete automated test suites
 ├── config.json                 # Saved user preferences
 ├── sensor/                     # Tracking Engine and AI package
@@ -63,12 +64,13 @@ LegacyPSCam_Sensor/
 │   ├── kinect_shared_memory.py # Windows shared memory IPC driver (JDP1, JMI1/2, JXC1)
 │   └── config_manager.py       # config.json persistence
 ├── ui/                         # User Interface package
-│   ├── gui_qt.py               # Modern PlayStation 5-themed UI with fluid animations (PySide6 / Qt 6)
-│   ├── gui.py                  # Dark PlayStation-themed control panel (Tkinter fallback)
+│   ├── gui_qt.py               # Modern PlayStation-themed UI with fluid animations (PySide6 / Qt 6)
+│   ├── gui.py                  # PlayStation-themed control panel (Tkinter fallback)
 │   ├── theme.py                # Palette, fonts, and calibration presets
-│   └── icons.py                # Supersampled icons and status badges
+│   └── icons.py                # Supersampled icons, SVGs, and status badges
 ├── assets/                     # Visual assets and media
-│   └── IconePSCAMERA.png       # PS4 Camera icon
+│   ├── icons/                  # Custom icons (IconePSCAMERA.png, settings.svg, sliders.svg)
+│   └── fonts/                  # Bundled typography (Kanit, National Park, Inter Tight)
 ├── models/                     # Pre-trained neural network models
 │   └── pose_landmarker_lite.task # Google MediaPipe Pose model
 ├── tools/                      # Setup utilities
