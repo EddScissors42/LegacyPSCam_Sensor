@@ -289,6 +289,19 @@ class KinectImageSharedMemory:
         self.seq_v2 = 0
         self.seq = 0
         self.is_connected = False
+
+        # Pre-allocated reusable buffers & zero-copy memoryviews to eliminate
+        # ~150 MB/s of per-frame heap allocations and .tobytes() copies at 60 FPS
+        self._resized_bgr = np.empty((IMAGE_H, IMAGE_W, 3), dtype=np.uint8)
+        self._bgra_buf = np.empty((IMAGE_H, IMAGE_W, 4), dtype=np.uint8)
+        self._small_mask = np.empty((MASK_H, MASK_W), dtype=np.uint8)
+        self._v1_mask = np.empty((MASK_H, MASK_W), dtype=np.uint8)
+        self._v2_mask = np.empty((MASK_H, MASK_W), dtype=np.uint8)
+
+        self._bgra_view = memoryview(self._bgra_buf)
+        self._v1_mask_view = memoryview(self._v1_mask)
+        self._v2_mask_view = memoryview(self._v2_mask)
+
         self._init_shared_memory()
 
     def _init_shared_memory(self):
@@ -311,7 +324,8 @@ class KinectImageSharedMemory:
 
     def write_image_and_mask(self, frame_bgr, mask_binary, tracked=True):
         """
-        Writes 640x480 BGRA camera frame and 320x240 player index mask to both JMI1 and JMI2 channels.
+        Writes 640x480 BGRA camera frame and 320x240 player index mask to both JMI1 and JMI2 channels
+        using pre-allocated buffers and zero-copy memoryviews.
         In JMI1, player pixels must be >= 64 (0x40 in Kinect10.dll) -> written as 255.
         In JMI2, player pixels correspond to player index -> written as 1 (Player 1).
         """
@@ -322,33 +336,36 @@ class KinectImageSharedMemory:
             ts_ms = int(time.time() * 1000)
             tracked_val = 1 if tracked else 0
 
-            # 1. Prepare 640x480 BGRA buffer
+            # 1. Prepare 640x480 BGRA buffer in-place (zero heap allocation)
             if frame_bgr is not None:
                 if frame_bgr.shape[0] != IMAGE_H or frame_bgr.shape[1] != IMAGE_W:
-                    resized_bgr = cv2.resize(frame_bgr, (IMAGE_W, IMAGE_H), interpolation=cv2.INTER_LINEAR)
+                    cv2.resize(frame_bgr, (IMAGE_W, IMAGE_H), dst=self._resized_bgr, interpolation=cv2.INTER_LINEAR)
+                    src_bgr = self._resized_bgr
                 else:
-                    resized_bgr = frame_bgr
-                bgra_bytes = cv2.cvtColor(resized_bgr, cv2.COLOR_BGR2BGRA).tobytes()
+                    src_bgr = frame_bgr
+                cv2.cvtColor(src_bgr, cv2.COLOR_BGR2BGRA, dst=self._bgra_buf)
+                bgra_payload = self._bgra_view
             else:
-                bgra_bytes = ZERO_BGRA_BYTES
+                bgra_payload = ZERO_BGRA_BYTES
 
-            # 2. Prepare 320x240 masks for both V1 and V2
+            # 2. Prepare 320x240 masks for both V1 and V2 in-place (SIMD threshold, zero allocation)
             if mask_binary is not None and tracked_val == 1:
                 if mask_binary.shape[0] != MASK_H or mask_binary.shape[1] != MASK_W:
-                    small_mask = cv2.resize(mask_binary, (MASK_W, MASK_H), interpolation=cv2.INTER_NEAREST)
+                    cv2.resize(mask_binary, (MASK_W, MASK_H), dst=self._small_mask, interpolation=cv2.INTER_NEAREST)
+                    src_mask = self._small_mask
                 else:
-                    small_mask = mask_binary
+                    src_mask = mask_binary
 
                 # JMI1 expects values >= 0x40 (64) for player -> 255
-                v1_mask = np.where(small_mask > 64, np.uint8(255), np.uint8(0))
-                v1_mask_bytes = v1_mask.tobytes()
+                cv2.threshold(src_mask, 64, 255, cv2.THRESH_BINARY, dst=self._v1_mask)
+                v1_mask_payload = self._v1_mask_view
 
                 # JMI2 expects player index: 1 for Player 1 -> 1
-                v2_mask = np.where(small_mask > 64, np.uint8(1), np.uint8(0))
-                v2_mask_bytes = v2_mask.tobytes()
+                cv2.threshold(src_mask, 64, 1, cv2.THRESH_BINARY, dst=self._v2_mask)
+                v2_mask_payload = self._v2_mask_view
             else:
-                v1_mask_bytes = ZERO_MASK_BYTES
-                v2_mask_bytes = ZERO_MASK_BYTES
+                v1_mask_payload = ZERO_MASK_BYTES
+                v2_mask_payload = ZERO_MASK_BYTES
 
             # 3. Write JMI1 channel (Local\LegacyWebcamKinectImage)
             if self.mm_v1 is not None:
@@ -364,8 +381,8 @@ class KinectImageSharedMemory:
                     IMAGE_H,
                     ts_ms
                 ))
-                self.mm_v1.write(bgra_bytes)
-                self.mm_v1.write(v1_mask_bytes)
+                self.mm_v1.write(bgra_payload)
+                self.mm_v1.write(v1_mask_payload)
                 self.seq_v1 += 1
                 self.mm_v1.seek(8)
                 self.mm_v1.write(struct.pack('<I', self.seq_v1))
@@ -386,8 +403,8 @@ class KinectImageSharedMemory:
                     IMAGE_H,
                     ts_ms
                 ))
-                self.mm_v2.write(bgra_bytes)
-                self.mm_v2.write(v2_mask_bytes)
+                self.mm_v2.write(bgra_payload)
+                self.mm_v2.write(v2_mask_payload)
                 self.seq_v2 += 1
                 self.mm_v2.seek(8)
                 self.mm_v2.write(struct.pack('<I', self.seq_v2))
