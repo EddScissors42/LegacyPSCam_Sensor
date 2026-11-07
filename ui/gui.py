@@ -21,7 +21,7 @@ if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
 from ui.theme import PALETTE, CALIB_PRESETS, get_font_family
-from ui.icons import make_pill_image, load_pscam_file_icon, generate_icons, generate_tab_icons
+from ui.icons import make_pill_image, load_pscam_file_icon, generate_icons, generate_tab_icons, generate_status_icons
 from sensor.config_manager import ConfigManager, PRESETS_PSCAM, PRESETS_WEBCAM
 from sensor.camera_manager import CameraManager
 from sensor.kinect_shared_memory import KinectBridge
@@ -83,6 +83,12 @@ class LegacySensorGUI:
         except Exception as e:
             print(f"[WARN] Failed to render tab icons: {e}")
             self.icon_gear_act = self.icon_gear_inact = self.icon_sliders_act = self.icon_sliders_inact = None
+
+        try:
+            self.icon_status_err, self.icon_status_ok, self.icon_status_warn = generate_status_icons()
+        except Exception as e:
+            print(f"[WARN] Failed to render status badge icons: {e}")
+            self.icon_status_err = self.icon_status_ok = self.icon_status_warn = None
 
         # Generate rounded pill backgrounds for the menu selection cards (radius 12)
         try:
@@ -464,35 +470,61 @@ class LegacySensorGUI:
         self.pscam_card = tk.Frame(self.view_video, bg=PALETTE["bg_card"],
                                    highlightbackground=PALETTE["border_subtle"], highlightthickness=1, padx=16, pady=14)
 
-        lbl_ps_title = tk.Label(self.pscam_card, text="PlayStation®Camera integration (PSCam4Win)",
+        lbl_ps_title = tk.Label(self.pscam_card, text="PLAYSTATION®CAMERA INTEGRATION",
                                 font=(self.font_family, 9, "bold"), fg=PALETTE["blue_dark"], bg=PALETTE["bg_card"])
-        lbl_ps_title.pack(anchor="w")
+        lbl_ps_title.pack(anchor="w", pady=(0, 10))
 
-        self.lbl_pscam_info = tk.Label(self.pscam_card, text="Checking driver and hardware...",
-                                       font=(self.font_family, 8), fg=PALETTE["text_muted"], bg=PALETTE["bg_card"])
-        self.lbl_pscam_info.pack(anchor="w", pady=(3, 10))
+        # Connection status card (styled matching lateral menu cards)
+        self.pscam_status_box = tk.Frame(
+            self.pscam_card,
+            bg=PALETTE["input_bg"],
+            highlightbackground=PALETTE["border_subtle"],
+            highlightthickness=1,
+            padx=14, pady=12
+        )
+        self.pscam_status_box.pack(fill=tk.X)
 
-        # Launch Button & Spec Row
-        ctrl_row = tk.Frame(self.pscam_card, bg=PALETTE["bg_card"])
-        ctrl_row.pack(fill=tk.X, pady=(0, 10))
+        self.lbl_pscam_icon = tk.Label(self.pscam_status_box, image=self.icon_status_err, bg=PALETTE["input_bg"])
+        self.lbl_pscam_icon.pack(side=tk.LEFT, padx=(0, 14))
 
+        ps_text_col = tk.Frame(self.pscam_status_box, bg=PALETTE["input_bg"])
+        ps_text_col.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        self.lbl_pscam_conn_title = tk.Label(
+            ps_text_col, text="PlayStation Camera not connected",
+            font=(self.font_family, 10, "bold"), fg=PALETTE["text_main"], bg=PALETTE["input_bg"], anchor="w"
+        )
+        self.lbl_pscam_conn_title.pack(anchor="w")
+
+        self.lbl_pscam_info = tk.Label(
+            ps_text_col, text="Driver Offline and Camera disconnected from USB Port",
+            font=(self.font_family, 8), fg=PALETTE["text_muted"], bg=PALETTE["input_bg"], anchor="w"
+        )
+        self.lbl_pscam_info.pack(anchor="w", pady=(2, 0))
+
+        # Launch Driver Button (styled like lateral menu action buttons)
         self.btn_launch_pscam = tk.Button(
-            ctrl_row, text="Start PSCam4Win Driver", font=(self.font_family, 8, "bold"),
-            bg=PALETTE["ps_blue"], fg="#ffffff", activebackground=PALETTE["ps_blue_hover"],
-            activeforeground="#ffffff", relief="flat", bd=0, cursor="hand2", padx=12, pady=6,
+            self.pscam_card,
+            text="Start PSCam4Win Driver",
+            font=(self.font_family, 8, "bold"),
+            bg=PALETTE["blue_pastel"],
+            fg=PALETTE["blue_dark"],
+            activebackground=PALETTE["blue_pastel_hover"],
+            activeforeground=PALETTE["blue_dark"],
+            relief="flat",
+            bd=0,
+            cursor="hand2",
             command=self._launch_pscam_tray
         )
-        self.btn_launch_pscam.pack(side=tk.LEFT)
+        self.btn_launch_pscam.pack(fill=tk.X, ipady=6, pady=(10, 0))
 
-        # Spec Badge inside PS Card
-        spec_badge = tk.Frame(self.pscam_card, bg=PALETTE["blue_pastel"], padx=10, pady=8)
-        spec_badge.pack(fill=tk.X)
-
-        tk.Label(spec_badge, text="Optimized Auto Mode: 1280x800 @ 60 FPS (OV580 Stereo DirectShow)",
+        # Spec Badge inside PS Card (Visible when camera is ready)
+        self.pscam_spec_badge = tk.Frame(self.pscam_card, bg=PALETTE["blue_pastel"], padx=12, pady=10)
+        tk.Label(self.pscam_spec_badge, text="Optimized Auto Mode: 1280x800 @ 60 FPS (OV580 Stereo DirectShow)",
                  font=(self.font_family, 8, "bold"), fg=PALETTE["blue_dark"], bg=PALETTE["blue_pastel"]).pack(anchor="w")
-        tk.Label(spec_badge,
+        tk.Label(self.pscam_spec_badge,
                  text="Resolution picker is hidden in this tab because the PlayStation®Camera operates in the driver's native format.",
-                 font=(self.font_family, 7), fg=PALETTE["text_muted"], bg=PALETTE["blue_pastel"]).pack(anchor="w")
+                 font=(self.font_family, 7), fg=PALETTE["text_muted"], bg=PALETTE["blue_pastel"]).pack(anchor="w", pady=(2, 0))
 
         # ---------------------------------------------------------------------
         # Card B: Standard Webcam Picker (Visible ONLY in 'webcam' mode)
@@ -504,8 +536,53 @@ class LegacySensorGUI:
                                  font=(self.font_family, 9, "bold"), fg=PALETTE["blue_dark"], bg=PALETTE["bg_card"])
         lbl_web_title.pack(anchor="w", pady=(0, 10))
 
+        # Status box when no webcam is connected (styled matching lateral menu cards)
+        self.webcam_status_box = tk.Frame(
+            self.webcam_card,
+            bg=PALETTE["input_bg"],
+            highlightbackground=PALETTE["border_subtle"],
+            highlightthickness=1,
+            padx=14, pady=12
+        )
+
+        self.lbl_webcam_icon = tk.Label(self.webcam_status_box, image=self.icon_status_err, bg=PALETTE["input_bg"])
+        self.lbl_webcam_icon.pack(side=tk.LEFT, padx=(0, 14))
+
+        web_text_col = tk.Frame(self.webcam_status_box, bg=PALETTE["input_bg"])
+        web_text_col.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        self.lbl_webcam_conn_title = tk.Label(
+            web_text_col, text="Webcam not connected",
+            font=(self.font_family, 10, "bold"), fg=PALETTE["text_main"], bg=PALETTE["input_bg"], anchor="w"
+        )
+        self.lbl_webcam_conn_title.pack(anchor="w")
+
+        self.lbl_webcam_info = tk.Label(
+            web_text_col, text="Camera disconnected from USB Port",
+            font=(self.font_family, 8), fg=PALETTE["text_muted"], bg=PALETTE["input_bg"], anchor="w"
+        )
+        self.lbl_webcam_info.pack(anchor="w", pady=(2, 0))
+
+        # Search Webcams Action Button (styled like lateral menu action buttons)
+        self.btn_refresh_webcam = tk.Button(
+            self.webcam_card,
+            text="Search for Webcams",
+            font=(self.font_family, 8, "bold"),
+            bg=PALETTE["blue_pastel"],
+            fg=PALETTE["blue_dark"],
+            activebackground=PALETTE["blue_pastel_hover"],
+            activeforeground=PALETTE["blue_dark"],
+            relief="flat",
+            bd=0,
+            cursor="hand2",
+            command=self._refresh_cameras
+        )
+
+        # Controls box when webcam is connected
+        self.webcam_controls_box = tk.Frame(self.webcam_card, bg=PALETTE["bg_card"])
+
         # Device selection row
-        dev_row = tk.Frame(self.webcam_card, bg=PALETTE["bg_card"])
+        dev_row = tk.Frame(self.webcam_controls_box, bg=PALETTE["bg_card"])
         dev_row.pack(fill=tk.X, pady=(0, 8))
 
         tk.Label(dev_row, text="Device:", font=(self.font_family, 8, "bold"),
@@ -524,7 +601,7 @@ class LegacySensorGUI:
         btn_refresh.pack(side=tk.RIGHT)
 
         # Preset selection row
-        preset_row = tk.Frame(self.webcam_card, bg=PALETTE["bg_card"])
+        preset_row = tk.Frame(self.webcam_controls_box, bg=PALETTE["bg_card"])
         preset_row.pack(fill=tk.X, pady=(0, 6))
 
         tk.Label(preset_row, text="Resolution / FPS:", font=(self.font_family, 8, "bold"),
@@ -976,6 +1053,15 @@ class LegacySensorGUI:
             msg = "Searching for PlayStation®Camera..." if mode == "pscam" else "Searching for webcams..."
             self.cb_cameras["values"] = [msg]
             self.cb_cameras.set(msg)
+            if mode == "webcam":
+                self.webcam_controls_box.pack_forget()
+                self.lbl_webcam_conn_title.configure(text="Searching for webcams...")
+                self.lbl_webcam_info.configure(text="Scanning USB video capture devices...")
+                self.btn_refresh_webcam.configure(state="disabled", text="Searching...")
+                if not self.webcam_status_box.winfo_ismapped():
+                    self.webcam_status_box.pack(fill=tk.X)
+                if not self.btn_refresh_webcam.winfo_ismapped():
+                    self.btn_refresh_webcam.pack(fill=tk.X, ipady=6, pady=(10, 0))
             return
 
         if mode == "pscam":
@@ -997,9 +1083,16 @@ class LegacySensorGUI:
                 self.cfg["camera_index"] = -1
         else:
             webcams = [c for c in cams if not c.is_pscam]
-            if not webcams:
+            if not webcams and not any(c.is_pscam for c in cams):
                 webcams = cams
+
             if webcams:
+                # Webcams detected: show controls, hide disconnected box and search button
+                self.webcam_status_box.pack_forget()
+                self.btn_refresh_webcam.pack_forget()
+                if not self.webcam_controls_box.winfo_ismapped():
+                    self.webcam_controls_box.pack(fill=tk.X)
+
                 values = [str(c) for c in webcams]
                 self.cb_cameras["values"] = values
                 current_idx = self.cfg.get("camera_index", 0)
@@ -1011,6 +1104,18 @@ class LegacySensorGUI:
                 self.cb_cameras.set(str(selected))
                 self.cfg["camera_index"] = selected.index
             else:
+                # No webcams detected: show disconnected card with large X and action button
+                self.webcam_controls_box.pack_forget()
+                if self.icon_status_err:
+                    self.lbl_webcam_icon.configure(image=self.icon_status_err)
+                self.lbl_webcam_conn_title.configure(text="Webcam not connected")
+                self.lbl_webcam_info.configure(text="Camera disconnected from USB Port")
+                self.btn_refresh_webcam.configure(state="normal", text="Search for Webcams")
+                if not self.webcam_status_box.winfo_ismapped():
+                    self.webcam_status_box.pack(fill=tk.X)
+                if not self.btn_refresh_webcam.winfo_ismapped():
+                    self.btn_refresh_webcam.pack(fill=tk.X, ipady=6, pady=(10, 0))
+
                 self.cb_cameras["values"] = ["No webcam found"]
                 self.cb_cameras.set("No webcam found")
                 self.cfg["camera_index"] = -1
@@ -1025,39 +1130,67 @@ class LegacySensorGUI:
         vcam_count = ps4_info.get("vcam_count", 0)
 
         if state == "NOT_INSTALLED":
+            if self.icon_status_err:
+                self.lbl_pscam_icon.configure(image=self.icon_status_err)
+            self.lbl_pscam_conn_title.configure(text="PlayStation Camera not connected")
             self.lbl_pscam_info.configure(
-                text="PSCam4Win not detected in C:\\Program Files\\PSCam4Win.",
+                text="Driver Not Installed and Camera disconnected from USB Port",
                 fg=PALETTE["status_err"]
             )
             self.btn_launch_pscam.configure(
                 state="disabled", text="Driver Not Installed",
                 bg=PALETTE["input_bg"], fg=PALETTE["text_muted"]
             )
+            self.pscam_spec_badge.pack_forget()
+            if not self.btn_launch_pscam.winfo_ismapped():
+                self.btn_launch_pscam.pack(fill=tk.X, ipady=6, pady=(10, 0))
+
         elif state == "DISCONNECTED":
-            self.lbl_pscam_info.configure(
-                text="PlayStation®Camera disconnected from USB port.",
-                fg=PALETTE["status_warn"]
-            )
+            if self.icon_status_err:
+                self.lbl_pscam_icon.configure(image=self.icon_status_err)
+            self.lbl_pscam_conn_title.configure(text="PlayStation Camera not connected")
             if running:
+                self.lbl_pscam_info.configure(
+                    text="Driver Online and Camera disconnected from USB Port",
+                    fg=PALETTE["status_warn"]
+                )
                 self.btn_launch_pscam.configure(
                     state="disabled", text="PSCam4Win Driver Active",
-                    bg=PALETTE["blue_pastel"], fg=PALETTE["blue_dark"]
+                    bg=PALETTE["blue_pastel"], fg=PALETTE["text_muted"]
                 )
             else:
+                self.lbl_pscam_info.configure(
+                    text="Driver Offline and Camera disconnected from USB Port",
+                    fg=PALETTE["text_muted"]
+                )
                 self.btn_launch_pscam.configure(
                     state="normal", text="Start PSCam4Win Driver",
-                    bg=PALETTE["ps_blue"], fg="#ffffff"
+                    bg=PALETTE["blue_pastel"], fg=PALETTE["blue_dark"]
                 )
+            self.pscam_spec_badge.pack_forget()
+            if not self.btn_launch_pscam.winfo_ismapped():
+                self.btn_launch_pscam.pack(fill=tk.X, ipady=6, pady=(10, 0))
+
         elif state == "DRIVER_STOPPED":
+            if self.icon_status_warn:
+                self.lbl_pscam_icon.configure(image=self.icon_status_warn)
+            self.lbl_pscam_conn_title.configure(text="PlayStation Camera detected")
             self.lbl_pscam_info.configure(
-                text="PlayStation®Camera connected, but PSCam4Win driver is NOT running!",
+                text="Camera connected, but PSCam4Win Driver is Offline",
                 fg=PALETTE["status_warn"]
             )
             self.btn_launch_pscam.configure(
                 state="normal", text="Start PSCam4Win Driver",
-                bg=PALETTE["ps_blue"], fg="#ffffff"
+                bg=PALETTE["blue_pastel"], fg=PALETTE["blue_dark"]
             )
+            self.pscam_spec_badge.pack_forget()
+            if not self.btn_launch_pscam.winfo_ismapped():
+                self.btn_launch_pscam.pack(fill=tk.X, ipady=6, pady=(10, 0))
+
         elif state == "BOOTLOADER_UPLOADING":
+            if self.icon_status_warn:
+                self.lbl_pscam_icon.configure(image=self.icon_status_warn)
+            self.lbl_pscam_conn_title.configure(text="PlayStation Camera initializing")
             self.lbl_pscam_info.configure(
                 text="PlayStation®Camera detected! PSCam4Win uploading USB firmware...",
                 fg=PALETTE["ps_blue"]
@@ -1066,7 +1199,14 @@ class LegacySensorGUI:
                 state="disabled", text="Uploading Firmware...",
                 bg=PALETTE["blue_pastel"], fg=PALETTE["blue_dark"]
             )
+            self.pscam_spec_badge.pack_forget()
+            if not self.btn_launch_pscam.winfo_ismapped():
+                self.btn_launch_pscam.pack(fill=tk.X, ipady=6, pady=(10, 0))
+
         elif state == "WAITING_VCAM":
+            if self.icon_status_warn:
+                self.lbl_pscam_icon.configure(image=self.icon_status_warn)
+            self.lbl_pscam_conn_title.configure(text="PlayStation Camera initializing")
             self.lbl_pscam_info.configure(
                 text="Hardware ready! Initializing DirectShow virtual camera (60 FPS)...",
                 fg=PALETTE["ps_blue"]
@@ -1075,7 +1215,14 @@ class LegacySensorGUI:
                 state="disabled", text="PSCam4Win Driver Active",
                 bg=PALETTE["blue_pastel"], fg=PALETTE["blue_dark"]
             )
+            self.pscam_spec_badge.pack_forget()
+            if not self.btn_launch_pscam.winfo_ismapped():
+                self.btn_launch_pscam.pack(fill=tk.X, ipady=6, pady=(10, 0))
+
         elif state == "READY":
+            if self.icon_status_ok:
+                self.lbl_pscam_icon.configure(image=self.icon_status_ok)
+            self.lbl_pscam_conn_title.configure(text="PlayStation Camera connected")
             cams = getattr(self, "camera_list", [])
             ps_cams = [c for c in cams if c.is_pscam]
             if ps_cams:
@@ -1084,10 +1231,9 @@ class LegacySensorGUI:
             else:
                 txt = f"Driver active and PlayStation®Camera connected ({vcam_count} virtual camera(s) active • 60 FPS)"
             self.lbl_pscam_info.configure(text=txt, fg=PALETTE["status_ok"])
-            self.btn_launch_pscam.configure(
-                state="disabled", text="PSCam4Win Driver Active",
-                bg=PALETTE["blue_pastel"], fg=PALETTE["blue_dark"]
-            )
+            self.btn_launch_pscam.pack_forget()
+            if not self.pscam_spec_badge.winfo_ismapped():
+                self.pscam_spec_badge.pack(fill=tk.X, pady=(10, 0))
 
     def _schedule_periodic_check(self):
         try:
@@ -1102,8 +1248,9 @@ class LegacySensorGUI:
 
         # 1. State machine quick evaluation (< 3ms)
         ps4_info = CameraManager.get_ps4_camera_state()
-        if self._last_pscam_state != ps4_info.get("state"):
-            self._last_pscam_state = ps4_info.get("state")
+        state_key = (ps4_info.get("state"), ps4_info.get("running"))
+        if self._last_pscam_state != state_key:
+            self._last_pscam_state = state_key
             self._apply_pscam_state(ps4_info)
 
         # 2. Hardware snapshot quick check (< 3ms) for automatic hotplug

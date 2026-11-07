@@ -21,6 +21,7 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
 | **Suavização EMA Adaptativa** | ✅ Totalmente Implementado | `pose_tracker.py` | Filtro dinâmico sensível à velocidade (anti-jitter). |
 | **Calibração de Escala e Eixos** | ✅ Totalmente Implementado | `pose_tracker.py` | Centralização dos quadris e conversão de eixos para o Just Dance. |
 | **Interface Gráfica Gamer Moderna** | ✅ Totalmente Implementado | `gui.py` | Layout horizontal com cartões de seleção arredondados, abas estilo console com caixa cinza e ícones vetoriais (engrenagem e sliders), tema PlayStation Blue e mini créditos. |
+| **Cards Modernos de Desconexão e Ações** | ✅ Totalmente Implementado | `gui.py` / `icons.py` | Caixa visual com 'X' grande vermelho supersampleado, status de hardware/driver em tempo real e botões contextuais no estilo dos menus laterais ("Start PSCam4Win Driver" e "Search for Webcams"). |
 | **Perfis Simplificados e Auto-Altura** | ✅ Totalmente Implementado | `gui.py` / `config_manager.py` | 3 perfis estilo console (Equilibrado, Competitivo, Ultra Estável) e calibração de altura 100% automática. |
 | **HUD de Jogo e Overlay OpenCV** | ✅ Totalmente Implementado | `tracking_overlay.py` | Renderização do esqueleto, silhueta e contadores reais de FPS. |
 | **Interface de Linha de Comando (CLI)**| ✅ Totalmente Implementado | `main.py` | Flags `--start`, `--mode` e `--camera`. |
@@ -156,6 +157,14 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
     - Rastreia dinamicamente os pontos faciais (`NOSE`, `LEFT_EAR`, `RIGHT_EAR`) com filtro EMA (`alpha = 0.20`) e deslocamento vertical (`y_bias = 0.06`).
     - Recorta e redimensiona suavemente o frame e a máscara enviados ao Just Dance (`Local\LegacyWebcamKinectImage`), mantendo o rosto do jogador focado, nítido e perfeitamente centralizado no quadrado de seleção de dançarinos.
     - Pode ser ativado ou desativado livremente pelo usuário na aba de configurações de vídeo da interface gráfica.
+
+### 14. Cards Modernos de Status de Conexão com Ações Contextuais
+- **Melhoria de UX/UI:** Quando nenhuma PlayStation Camera ou Webcam USB estiver conectada, a interface gráfica substitui os seletores estáticos por um card visual destacado, concebido com a mesma linguagem estética dos botões e painéis laterais.
+- **Componentes Visuais:**
+  - **Ícones de Status Supersampleados (Pillow 4x LANCZOS):** Badge circular vermelho com "X" nítido e em negrito para desconexão/erro, badge âmbar para estados transitórios de firmware/driver, e badge verde com checkmark para conexão ativa.
+  - **Diagnóstico em Tempo Real:** Exibe o status preciso do hardware e do serviço, como `"Driver Offline and Camera disconnected from USB Port"` ou `"Driver Online and Camera disconnected from USB Port"`.
+  - **Botão de Ação Direto:** Botão plano estilizado com `PALETTE["blue_pastel"]` e texto em azul PlayStation (`PALETTE["blue_dark"]`) permitindo inicializar o PSCam4Win (`"Start PSCam4Win Driver"`) ou reescanear portas USB (`"Search for Webcams"`).
+  - **Ocultamento Inteligente:** O seletor de resolução/dispositivo é automaticamente ocultado quando nenhuma câmera estiver disponível, e o badge de especificações nativas (1280x800 @ 60 FPS) surge no lugar do botão de driver assim que a PS4 Camera estiver pronta (`READY`).
 
 ---
 

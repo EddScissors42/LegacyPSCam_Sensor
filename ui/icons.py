@@ -217,3 +217,59 @@ def generate_tab_icons():
     col_act = (15, 23, 42, 255)       # Dark charcoal
     col_inact = (100, 116, 139, 255)  # Muted slate
     return make_gear(col_act), make_gear(col_inact), make_sliders(col_act), make_sliders(col_inact)
+
+
+def generate_status_icons(size=(38, 38)):
+    """
+    Renders supersampled status badges for device connection status:
+    1. Error: Red circular badge with a large, crisp X.
+    2. OK: Green circular badge with a crisp checkmark.
+    3. Warn: Amber circular badge with an exclamation mark.
+    """
+    scale = 4
+    w, h = size[0] * scale, size[1] * scale
+    pad = int(1.5 * scale)
+
+    # 1. Error (Large X badge)
+    img_err = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    d_err = ImageDraw.Draw(img_err)
+    d_err.ellipse([pad, pad, w - pad, h - pad], fill=(254, 226, 226, 255), outline=(252, 165, 165, 255), width=int(1.2 * scale))
+    cx, cy = w / 2, h / 2
+    r = int(7.5 * scale)
+    lw = int(3.2 * scale)
+    d_err.line([(cx - r, cy - r), (cx + r, cy + r)], fill=(220, 38, 38, 255), width=lw)
+    d_err.line([(cx - r, cy + r), (cx + r, cy - r)], fill=(220, 38, 38, 255), width=lw)
+    cr = lw / 2.0
+    for px, py in [(cx - r, cy - r), (cx + r, cy + r), (cx - r, cy + r), (cx + r, cy - r)]:
+        d_err.ellipse([px - cr, py - cr, px + cr, py + cr], fill=(220, 38, 38, 255))
+    icon_err = ImageTk.PhotoImage(img_err.resize(size, Image.Resampling.LANCZOS))
+
+    # 2. OK (Checkmark badge)
+    img_ok = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    d_ok = ImageDraw.Draw(img_ok)
+    d_ok.ellipse([pad, pad, w - pad, h - pad], fill=(209, 250, 229, 255), outline=(134, 239, 172, 255), width=int(1.2 * scale))
+    lw = int(3.2 * scale)
+    pts = [
+        (cx - int(7 * scale), cy + int(0.5 * scale)),
+        (cx - int(2 * scale), cy + int(5.5 * scale)),
+        (cx + int(7.5 * scale), cy - int(4.5 * scale))
+    ]
+    d_ok.line(pts, fill=(5, 150, 105, 255), width=lw, joint="curve")
+    cr = lw / 2.0
+    d_ok.ellipse([pts[0][0] - cr, pts[0][1] - cr, pts[0][0] + cr, pts[0][1] + cr], fill=(5, 150, 105, 255))
+    d_ok.ellipse([pts[2][0] - cr, pts[2][1] - cr, pts[2][0] + cr, pts[2][1] + cr], fill=(5, 150, 105, 255))
+    icon_ok = ImageTk.PhotoImage(img_ok.resize(size, Image.Resampling.LANCZOS))
+
+    # 3. Warn (! badge)
+    img_warn = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    d_warn = ImageDraw.Draw(img_warn)
+    d_warn.ellipse([pad, pad, w - pad, h - pad], fill=(254, 243, 199, 255), outline=(252, 211, 77, 255), width=int(1.2 * scale))
+    lw = int(3.2 * scale)
+    d_warn.line([(cx, cy - int(7 * scale)), (cx, cy + int(1.5 * scale))], fill=(217, 119, 6, 255), width=lw)
+    cr = lw / 2.0
+    d_warn.ellipse([cx - cr, cy - int(7 * scale) - cr, cx + cr, cy - int(7 * scale) + cr], fill=(217, 119, 6, 255))
+    d_warn.ellipse([cx - cr, cy + int(1.5 * scale) - cr, cx + cr, cy + int(1.5 * scale) + cr], fill=(217, 119, 6, 255))
+    d_warn.ellipse([cx - cr, cy + int(4.5 * scale) - cr, cx + cr, cy + int(4.5 * scale) + cr], fill=(217, 119, 6, 255))
+    icon_warn = ImageTk.PhotoImage(img_warn.resize(size, Image.Resampling.LANCZOS))
+
+    return icon_err, icon_ok, icon_warn
