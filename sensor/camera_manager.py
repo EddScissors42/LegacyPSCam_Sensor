@@ -176,15 +176,48 @@ class CameraManager:
             return False, "PSCam4Win is not installed in C:\\Program Files\\PSCam4Win."
         if CameraManager.is_pscam_running():
             return True, "PSCam4Win is already running."
+
+        # Strategy 1: Launch with RunAsInvoker to bypass embedded UAC manifest requirement
+        # without requiring Legacy PSCam Sensor to run as Administrator
         try:
+            env = os.environ.copy()
+            env['__COMPAT_LAYER'] = 'RunAsInvoker'
             subprocess.Popen(
                 [str(PSCAM_TRAY_PATH)],
+                cwd=str(PSCAM_TRAY_PATH.parent),
+                env=env,
                 creationflags=subprocess.DETACHED_PROCESS if os.name == 'nt' else 0
             )
             time.sleep(1.0)
-            return True, "PSCam4Win Tray started successfully!"
-        except Exception as e:
-            return False, f"Failed to start PSCam4Win: {e}"
+            if CameraManager.is_pscam_running():
+                return True, "PSCam4Win Tray started successfully!"
+        except Exception:
+            pass
+
+        # Strategy 2: Fallback to ShellExecuteW with 'runas' verb
+        # Windows prompts UAC elevation ONLY for the driver, leaving the app un-elevated
+        if os.name == 'nt':
+            try:
+                import ctypes
+                ret = ctypes.windll.shell32.ShellExecuteW(
+                    None,
+                    "runas",
+                    str(PSCAM_TRAY_PATH),
+                    None,
+                    str(PSCAM_TRAY_PATH.parent),
+                    1  # SW_SHOWNORMAL
+                )
+                if ret > 32:
+                    time.sleep(1.0)
+                    return True, "PSCam4Win Tray started successfully!"
+                elif ret == 5:
+                    return False, "Launch cancelled: Administrator elevation was denied in Windows UAC."
+                else:
+                    return False, f"Failed to start PSCam4Win (ShellExecute code {ret})."
+            except Exception as e:
+                return False, f"Failed to start PSCam4Win: {e}"
+
+        return False, "Failed to start PSCam4Win: elevation required."
 
     @staticmethod
     def get_windows_camera_names():

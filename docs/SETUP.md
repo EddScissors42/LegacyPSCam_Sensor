@@ -86,7 +86,23 @@ python main.py --mode webcam --camera 0
 
 ---
 
-## 5. Como Jogar no Just Dance PC
+## 5. Permissões de Usuário e Inicialização do Driver (Sem Modo Administrador)
+
+Por padrão, o executável do driver PSCam4Win (`PSCam4WinTray.exe`) possui uma flag interna em seu manifesto exigindo privilégios de Administrador. Se o **Legacy PSCam Sensor** for aberto como usuário padrão (sem "Executar como Administrador"), o Windows anteriormente retornava o erro `[WinError 740] A operação solicitada requer elevação`.
+
+### Soluções e Workarounds Nativos:
+1. **Camada de Compatibilidade Automática (`RunAsInvoker` — Padrão do Sensor):**
+   - O código do Legacy PSCam injeta automaticamente `__COMPAT_LAYER = 'RunAsInvoker'` ao disparar o driver. O Windows ignora a exigência de elevação do manifesto e inicializa o PSCam4Win com as credenciais do seu usuário normal, **sem necessidade de rodar o Legacy PSCam como administrador e sem janelas do UAC**.
+2. **Fallback com ShellExecute (`runas`):**
+   - Se o sistema bloquear a injeção de compatibilidade por diretiva, o sensor recorre à API `ShellExecuteW("runas")`, que solicita a confirmação do UAC **exclusivamente para o driver**, mantendo o Legacy PSCam sem privilégios elevados.
+3. **Workaround Silencioso (Agendador de Tarefas do Windows):**
+   - Para inicialização 100% silenciosa com privilégios elevados permanentes, você pode criar uma tarefa no Agendador do Windows com o nome `PSCam4Win` marcada com *"Executar com privilégios mais altos"*. Qualquer processo pode acioná-la via `schtasks /run /tn "PSCam4Win"`.
+4. **Iniciar com o Windows (Recomendado):**
+   - Configure o PSCam4Win para iniciar junto com o Windows (na pasta `shell:startup` ou Registro de inicialização). Dessa forma, o driver já estará pronto na bandeja do sistema sempre que você abrir o Legacy PSCam Sensor.
+
+---
+
+## 6. Como Jogar no Just Dance PC
 
 1. Com o rastreador ativo (janela com esqueleto e contadores de FPS visível), abra o **Just Dance PC**.
 2. Na tela de seleção de controle do jogo, escolha a opção **Kinect Sensor**.
