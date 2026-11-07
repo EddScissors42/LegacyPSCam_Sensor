@@ -172,18 +172,18 @@ class CameraManager:
     @staticmethod
     def launch_pscam_tray():
         if not CameraManager.is_pscam_installed():
-            return False, "PSCam4Win não está instalado em C:\\Program Files\\PSCam4Win."
+            return False, "PSCam4Win is not installed in C:\\Program Files\\PSCam4Win."
         if CameraManager.is_pscam_running():
-            return True, "PSCam4Win já está em execução."
+            return True, "PSCam4Win is already running."
         try:
             subprocess.Popen(
                 [str(PSCAM_TRAY_PATH)],
                 creationflags=subprocess.DETACHED_PROCESS if os.name == 'nt' else 0
             )
             time.sleep(1.0)
-            return True, "PSCam4Win Tray iniciado com sucesso!"
+            return True, "PSCam4Win Tray started successfully!"
         except Exception as e:
-            return False, f"Falha ao iniciar PSCam4Win: {e}"
+            return False, f"Failed to start PSCam4Win: {e}"
 
     @staticmethod
     def get_windows_camera_names():
@@ -254,7 +254,7 @@ class CameraManager:
                 cap.release()
 
                 if ret or w > 0:
-                    name = pnp_names[idx] if idx < len(pnp_names) else f"Dispositivo de Vídeo #{idx}"
+                    name = pnp_names[idx] if idx < len(pnp_names) else f"Video Device #{idx}"
                     name = re.sub(r'[\s\xa0]+', ' ', name).strip()
                     is_ps = any(k in name.lower() for k in ["ps4", "playstation", "ov580", "pscam"]) or (w == 1280 and h in (400, 800) and CameraManager.is_pscam_running())
                     if is_ps and "ps4" not in name.lower() and "playstation" not in name.lower():
@@ -262,7 +262,7 @@ class CameraManager:
                     cameras.append(CameraInfo(idx, f"{name} ({w}x{h})", is_pscam=is_ps))
 
         if not cameras:
-            cameras.append(CameraInfo(0, "Câmera Padrão (Índice 0)", False))
+            cameras.append(CameraInfo(0, "Default Camera (Index 0)", False))
 
         return cameras
 

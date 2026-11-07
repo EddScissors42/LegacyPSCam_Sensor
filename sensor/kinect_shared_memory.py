@@ -123,10 +123,10 @@ class KinectSharedMemory:
             self.mm = mmap.mmap(-1, SHARED_SIZE, tagname=self.tagname)
             self.is_connected = True
             self.write_empty()
-            print(f"[OK] Memória Compartilhada Pose: {self.tagname} ({SHARED_SIZE} bytes)")
+            print(f"[OK] Shared Memory Pose: {self.tagname} ({SHARED_SIZE} bytes)")
         except Exception as e:
             self.is_connected = False
-            print(f"[ERRO] Falha ao inicializar memória de pose {self.tagname}: {e}")
+            print(f"[ERROR] Failed to initialize pose shared memory {self.tagname}: {e}")
 
     def write_pose(self, joints, tracked=True):
         if not self.is_connected or self.mm is None:
@@ -158,7 +158,7 @@ class KinectSharedMemory:
             self.mm.flush()
             return True
         except Exception as e:
-            print(f"[WARN] Erro ao gravar pose: {e}")
+            print(f"[WARN] Error writing pose: {e}")
             return False
 
     def write_empty(self):
@@ -194,10 +194,10 @@ class KinectMultiPoseSharedMemory:
             self.mm = mmap.mmap(-1, MULTI_SHARED_SIZE, tagname=self.tagname)
             self.is_connected = True
             self.write_empty()
-            print(f"[OK] Memória Compartilhada Pose V2: {self.tagname} ({MULTI_SHARED_SIZE} bytes)")
+            print(f"[OK] Shared Memory Pose V2: {self.tagname} ({MULTI_SHARED_SIZE} bytes)")
         except Exception as e:
             self.is_connected = False
-            print(f"[ERRO] Falha ao inicializar memória de pose V2 {self.tagname}: {e}")
+            print(f"[ERROR] Failed to initialize pose V2 shared memory {self.tagname}: {e}")
 
     def write_poses(self, players, tracked=True):
         if not self.is_connected or self.mm is None:
@@ -240,7 +240,7 @@ class KinectMultiPoseSharedMemory:
             self.mm.flush()
             return True
         except Exception as e:
-            print(f"[WARN] Erro ao gravar pose V2 na memória compartilhada: {e}")
+            print(f"[WARN] Error writing pose V2 to shared memory: {e}")
             return False
 
     def write_empty(self):
@@ -295,15 +295,15 @@ class KinectImageSharedMemory:
         try:
             self.mm_v1 = mmap.mmap(-1, IMAGE_SHARED_SIZE, tagname=IMAGE_SHARED_NAME)
             self.mm = self.mm_v1
-            print(f"[OK] Memória Compartilhada Imagem/Máscara V1: {IMAGE_SHARED_NAME} ({IMAGE_SHARED_SIZE} bytes)")
+            print(f"[OK] Shared Memory Image/Mask V1: {IMAGE_SHARED_NAME} ({IMAGE_SHARED_SIZE} bytes)")
         except Exception as e:
-            print(f"[ERRO] Falha ao inicializar memória de imagem V1: {e}")
+            print(f"[ERROR] Failed to initialize image memory V1: {e}")
 
         try:
             self.mm_v2 = mmap.mmap(-1, IMAGE_SHARED_SIZE, tagname=MULTI_IMAGE_SHARED_NAME)
-            print(f"[OK] Memória Compartilhada Imagem/Máscara V2: {MULTI_IMAGE_SHARED_NAME} ({IMAGE_SHARED_SIZE} bytes)")
+            print(f"[OK] Shared Memory Image/Mask V2: {MULTI_IMAGE_SHARED_NAME} ({IMAGE_SHARED_SIZE} bytes)")
         except Exception as e:
-            print(f"[WARN] Falha ao inicializar memória de imagem V2: {e}")
+            print(f"[WARN] Failed to initialize image memory V2: {e}")
 
         self.is_connected = (self.mm_v1 is not None or self.mm_v2 is not None)
         if self.is_connected:
@@ -395,7 +395,7 @@ class KinectImageSharedMemory:
 
             return True
         except Exception as e:
-            print(f"[WARN] Erro ao gravar imagem na memória compartilhada: {e}")
+            print(f"[WARN] Error writing image to shared memory: {e}")
             return False
 
     def write_empty(self):
@@ -437,10 +437,10 @@ class KinectCoachXSharedMemory:
             self.is_connected = True
             self.seq = 0
             self.write_coach_x(coach_x=0.0, enabled=False)
-            print(f"[OK] Memória Compartilhada CoachX: {self.tagname} ({COACHX_SHARED_SIZE} bytes)")
+            print(f"[OK] Shared Memory CoachX: {self.tagname} ({COACHX_SHARED_SIZE} bytes)")
         except Exception as e:
             self.is_connected = False
-            print(f"[ERRO] Falha ao inicializar CoachX {self.tagname}: {e}")
+            print(f"[ERROR] Failed to initialize CoachX {self.tagname}: {e}")
 
     def write_coach_x(self, coach_x=0.0, enabled=False):
         if not self.is_connected or self.mm is None:
@@ -465,7 +465,7 @@ class KinectCoachXSharedMemory:
             self.mm.flush()
             return True
         except Exception as e:
-            print(f"[WARN] Erro ao gravar CoachX na memória compartilhada: {e}")
+            print(f"[WARN] Error writing CoachX to shared memory: {e}")
             return False
 
     def close(self):
@@ -516,4 +516,4 @@ class KinectBridge:
         self.pose_v2.close()
         self.image.close()
         self.coach_x.close()
-        print("[INFO] Todas as memórias compartilhadas IPC foram encerradas.")
+        print("[INFO] All IPC shared memory channels closed.")

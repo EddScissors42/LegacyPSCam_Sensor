@@ -17,9 +17,9 @@ from ui import LegacySensorGUI
 
 def run():
     parser = argparse.ArgumentParser(description="Legacy Sensor Lite")
-    parser.add_argument("--start", action="store_true", help="Inicia o rastreamento diretamente sem abrir o menu GUI")
-    parser.add_argument("--mode", choices=["pscam", "webcam"], help="Força o modo de câmera")
-    parser.add_argument("--camera", type=int, help="Índice da câmera a utilizar")
+    parser.add_argument("--start", action="store_true", help="Start tracking directly without opening GUI menu")
+    parser.add_argument("--mode", choices=["pscam", "webcam"], help="Force camera mode")
+    parser.add_argument("--camera", type=int, help="Camera index to use")
     args = parser.parse_args()
 
     cfg_mgr = ConfigManager()
@@ -31,7 +31,7 @@ def run():
         cfg["camera_index"] = args.camera
 
     if args.start:
-        print("[INFO] Iniciando rastreamento direto (--start)...")
+        print("[INFO] Starting direct tracking session (--start)...")
         run_tracking_session(cfg)
     else:
         import tkinter as tk

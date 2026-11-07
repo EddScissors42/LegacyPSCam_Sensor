@@ -70,33 +70,33 @@ PALETTE = {
 CALIB_PRESETS = {
     "balanced": {
         "id": "balanced",
-        "title": "Equilibrado",
-        "icon": "⭐",
-        "tag": "RECOMENDADO",
-        "subtitle": "Fluidez & Precisão",
-        "desc": "Equilíbrio padrão ideal para a maioria das músicas. Movimentos fluidos e sem tremidos.",
+        "title": "Balanced",
+        "icon": "★",
+        "tag": "RECOMMENDED",
+        "subtitle": "Smooth & Precise",
+        "desc": "Ideal default balance for most songs. Smooth movement without jitters.",
         "smoothing_alpha": 0.55,
         "detection_confidence": 0.50,
         "specs": "EMA 0.55 • Conf 0.50",
     },
     "competitive": {
         "id": "competitive",
-        "title": "Competitivo",
+        "title": "Competitive",
         "icon": "⚡",
-        "tag": "RESPOSTA RÁPIDA",
-        "subtitle": "Latência Mínima",
-        "desc": "Resposta instantânea para coreografias velozes, extremas e movimentos rápidos de braços.",
+        "tag": "FAST RESPONSE",
+        "subtitle": "Lowest Latency",
+        "desc": "Instant response for fast choreographies, extreme routines, and rapid arm gestures.",
         "smoothing_alpha": 0.75,
         "detection_confidence": 0.45,
         "specs": "EMA 0.75 • Conf 0.45",
     },
     "stable": {
         "id": "stable",
-        "title": "Ultra Estável",
-        "icon": "🛡️",
+        "title": "Ultra Stable",
+        "icon": "🛡",
         "tag": "ANTI-JITTER",
-        "subtitle": "Máxima Filtragem",
-        "desc": "Filtragem intensiva contra ruído visual. Recomendado para ambientes com iluminação fraca.",
+        "subtitle": "Maximum Filtering",
+        "desc": "Intensive filtering against visual noise. Recommended for dimly lit rooms.",
         "smoothing_alpha": 0.35,
         "detection_confidence": 0.40,
         "specs": "EMA 0.35 • Conf 0.40",
@@ -168,7 +168,7 @@ def load_pscam_file_icon(png_path: Path, target_box=(38, 26), color=(255, 255, 2
         canvas.paste(resized, ((bw - new_w) // 2, (bh - new_h) // 2))
         return canvas
     except Exception as e:
-        print(f"[WARN] Falha ao processar IconePSCAMERA.png: {e}")
+        print(f"[WARN] Failed to process IconePSCAMERA.png: {e}")
         return None
 
 def generate_icons():
@@ -372,13 +372,13 @@ class LegacySensorGUI:
         try:
             self.icon_ps_act, self.icon_ps_inact, self.icon_web_act, self.icon_web_inact = generate_icons()
         except Exception as e:
-            print(f"[WARN] Falha ao renderizar ícones Pillow: {e}")
+            print(f"[WARN] Failed to render Pillow icons: {e}")
             self.icon_ps_act = self.icon_ps_inact = self.icon_web_act = self.icon_web_inact = None
 
         try:
             self.icon_gear_act, self.icon_gear_inact, self.icon_sliders_act, self.icon_sliders_inact = generate_tab_icons()
         except Exception as e:
-            print(f"[WARN] Falha ao renderizar ícones das abas: {e}")
+            print(f"[WARN] Failed to render tab icons: {e}")
             self.icon_gear_act = self.icon_gear_inact = self.icon_sliders_act = self.icon_sliders_inact = None
 
         # Generate rounded pill backgrounds for the menu selection cards (radius 12)
@@ -388,7 +388,7 @@ class LegacySensorGUI:
             self.pill_inactive = make_pill_image(w, h, fill=(248, 250, 252, 255), outline=(226, 232, 240, 255), radius=12)
             self.pill_hover = make_pill_image(w, h, fill=(241, 245, 249, 255), outline=(203, 213, 225, 255), radius=12)
         except Exception as e:
-            print(f"[WARN] Falha ao renderizar pills arredondados: {e}")
+            print(f"[WARN] Failed to render rounded pills: {e}")
             self.pill_active = self.pill_inactive = self.pill_hover = None
 
         # Generate rounded gray pill backgrounds for top navigation tabs (radius 10)
@@ -406,7 +406,7 @@ class LegacySensorGUI:
             self.pill_tab_vid_hover = make_pill_image(w_vid, h_tab, fill=(241, 245, 249, 255), outline=(203, 213, 225, 255), radius=10)
             self.pill_tab_cal_hover = make_pill_image(w_cal, h_tab, fill=(241, 245, 249, 255), outline=(203, 213, 225, 255), radius=10)
         except Exception as e:
-            print(f"[WARN] Falha ao renderizar pills das abas: {e}")
+            print(f"[WARN] Failed to render tab pills: {e}")
             self.pill_tab_vid_act = self.pill_tab_vid_inact = self.pill_tab_vid_hover = None
             self.pill_tab_cal_act = self.pill_tab_cal_inact = self.pill_tab_cal_hover = None
 
@@ -482,7 +482,7 @@ class LegacySensorGUI:
         tk.Frame(sidebar_pad, height=1, bg=PALETTE["border_subtle"]).pack(fill=tk.X, pady=(0, 16))
 
         # 1.2 Device Navigation Section Title
-        lbl_nav_title = tk.Label(sidebar_pad, text="DISPOSITIVO DE CAPTURA", font=(self.font_family, 8, "bold"),
+        lbl_nav_title = tk.Label(sidebar_pad, text="CAPTURE DEVICE", font=(self.font_family, 8, "bold"),
                                  fg=PALETTE["blue_dark"], bg=PALETTE["bg_sidebar"])
         lbl_nav_title.pack(anchor="w", pady=(0, 10))
 
@@ -519,7 +519,7 @@ class LegacySensorGUI:
         self.card_pscam.bind("<Enter>", on_pscam_enter)
         self.card_pscam.bind("<Leave>", on_pscam_leave)
 
-        # 1.4 Webcam Convencional Rounded Navigation Card
+        # 1.4 Standard Webcam Rounded Navigation Card
         self.card_webcam = tk.Canvas(
             sidebar_pad, width=234, height=56, bg=PALETTE["bg_sidebar"],
             highlightthickness=0, cursor="hand2"
@@ -528,11 +528,11 @@ class LegacySensorGUI:
         self.card_webcam_bg = self.card_webcam.create_image(0, 0, anchor="nw", image=self.pill_inactive)
         self.card_webcam_icon = self.card_webcam.create_image(25, 28, anchor="center", image=self.icon_web_inact)
         self.card_webcam_title = self.card_webcam.create_text(
-            52, 19, text="Webcam Convencional", anchor="w",
+            52, 19, text="Standard Webcam", anchor="w",
             fill=PALETTE["text_main"], font=(self.font_family, 9, "bold")
         )
         self.card_webcam_sub = self.card_webcam.create_text(
-            52, 37, text="USB ou Integrada", anchor="w",
+            52, 37, text="USB or Integrated", anchor="w",
             fill=PALETTE["text_muted"], font=(self.font_family, 8)
         )
 
@@ -555,7 +555,7 @@ class LegacySensorGUI:
         # 1.5 Quick Action DLL Link
         btn_dll = tk.Button(
             sidebar_pad,
-            text="📁 Abrir Pasta do Kinect10.dll",
+            text="Open Kinect10.dll Folder",
             font=(self.font_family, 8, "bold"),
             bg=PALETTE["blue_pastel"],
             fg=PALETTE["blue_dark"],
@@ -570,7 +570,7 @@ class LegacySensorGUI:
 
         lbl_dll_tip = tk.Label(
             sidebar_pad,
-            text="Copie o Kinect10.dll para a pasta\ndo jogo para habilitar a captura.",
+            text="Copy Kinect10.dll to the game\nfolder to enable motion capture.",
             font=(self.font_family, 7),
             fg=PALETTE["text_muted"],
             bg=PALETTE["bg_sidebar"],
@@ -581,13 +581,13 @@ class LegacySensorGUI:
         # Spacer
         tk.Frame(sidebar_pad, bg=PALETTE["bg_sidebar"]).pack(fill=tk.BOTH, expand=True)
 
-        # 1.6 Mini Créditos aos autores originais (acima da Ponte IPC Pronta)
+        # 1.6 Mini Credits to original authors
         credits_box = tk.Frame(sidebar_pad, bg=PALETTE["bg_sidebar"])
         credits_box.pack(fill=tk.X, pady=(0, 8))
 
         lbl_cred1 = tk.Label(
             credits_box,
-            text="Legacy Sensor original por itsVexor",
+            text="Original Legacy Sensor by itsVexor",
             font=(self.font_family, 7),
             fg=PALETTE["text_muted"],
             bg=PALETTE["bg_sidebar"],
@@ -598,7 +598,7 @@ class LegacySensorGUI:
 
         lbl_cred2 = tk.Label(
             credits_box,
-            text="PSCam4Win por BumbleTree",
+            text="PSCam4Win by BumbleTree",
             font=(self.font_family, 7),
             fg=PALETTE["text_muted"],
             bg=PALETTE["bg_sidebar"],
@@ -614,7 +614,7 @@ class LegacySensorGUI:
 
         self.lbl_ipc_badge = tk.Label(
             status_box,
-            text="● Ponte IPC Pronta",
+            text="● IPC Bridge Ready",
             font=(self.font_family, 8, "bold"),
             fg=PALETTE["status_ok"],
             bg=PALETTE["status_ok_bg"]
@@ -623,7 +623,7 @@ class LegacySensorGUI:
 
         lbl_ipc_detail = tk.Label(
             status_box,
-            text="JDP1 (Pose) & JMI1 (Silhueta)",
+            text="JDP1 (Pose) & JMI1 (Silhouette)",
             font=(self.font_family, 7),
             fg=PALETTE["text_muted"],
             bg=PALETTE["status_ok_bg"]
@@ -651,7 +651,7 @@ class LegacySensorGUI:
         self.card_tab_vid_bg = self.card_tab_video.create_image(0, 0, anchor="nw", image=self.pill_tab_vid_act)
         self.card_tab_vid_icon = self.card_tab_video.create_image(22, 21, anchor="center", image=self.icon_gear_act)
         self.card_tab_vid_txt = self.card_tab_video.create_text(
-            42, 21, text="Configuração de Vídeo", anchor="w",
+            42, 21, text="Video Settings", anchor="w",
             fill="#0F172A", font=(self.font_family, 9, "bold")
         )
 
@@ -680,7 +680,7 @@ class LegacySensorGUI:
         self.card_tab_cal_bg = self.card_tab_calib.create_image(0, 0, anchor="nw", image=self.pill_tab_cal_inact)
         self.card_tab_cal_icon = self.card_tab_calib.create_image(22, 21, anchor="center", image=self.icon_sliders_inact)
         self.card_tab_cal_txt = self.card_tab_calib.create_text(
-            42, 21, text="Calibração", anchor="w",
+            42, 21, text="Calibration", anchor="w",
             fill="#64748B", font=(self.font_family, 9, "bold")
         )
 
@@ -716,7 +716,7 @@ class LegacySensorGUI:
 
         self.btn_start = tk.Button(
             bottom_area,
-            text="▶ INICIAR RASTREAMENTO",
+            text="START TRACKING",
             font=(self.font_family, 11, "bold"),
             bg=PALETTE["ps_blue"],
             fg="#ffffff",
@@ -735,7 +735,7 @@ class LegacySensorGUI:
 
         self.lbl_status = tk.Label(
             footer_row,
-            text="● Sistema pronto  •  MediaPipe Tasks 60 FPS",
+            text="● System ready  •  MediaPipe Tasks 60 FPS",
             font=(self.font_family, 8),
             fg=PALETTE["text_muted"],
             bg=PALETTE["bg_window"]
@@ -761,11 +761,11 @@ class LegacySensorGUI:
         self.pscam_card = tk.Frame(self.view_video, bg=PALETTE["bg_card"],
                                    highlightbackground=PALETTE["border_subtle"], highlightthickness=1, padx=16, pady=14)
 
-        lbl_ps_title = tk.Label(self.pscam_card, text="INTEGRAÇÃO PLAYSTATION 4 CAMERA (PSCam4Win)",
+        lbl_ps_title = tk.Label(self.pscam_card, text="PLAYSTATION 4 CAMERA INTEGRATION (PSCam4Win)",
                                 font=(self.font_family, 9, "bold"), fg=PALETTE["blue_dark"], bg=PALETTE["bg_card"])
         lbl_ps_title.pack(anchor="w")
 
-        self.lbl_pscam_info = tk.Label(self.pscam_card, text="Verificando driver e hardware...",
+        self.lbl_pscam_info = tk.Label(self.pscam_card, text="Checking driver and hardware...",
                                        font=(self.font_family, 8), fg=PALETTE["text_muted"], bg=PALETTE["bg_card"])
         self.lbl_pscam_info.pack(anchor="w", pady=(3, 10))
 
@@ -774,7 +774,7 @@ class LegacySensorGUI:
         ctrl_row.pack(fill=tk.X, pady=(0, 10))
 
         self.btn_launch_pscam = tk.Button(
-            ctrl_row, text="▶ Iniciar Driver PSCam4Win", font=(self.font_family, 8, "bold"),
+            ctrl_row, text="Start PSCam4Win Driver", font=(self.font_family, 8, "bold"),
             bg=PALETTE["ps_blue"], fg="#ffffff", activebackground=PALETTE["ps_blue_hover"],
             activeforeground="#ffffff", relief="flat", bd=0, cursor="hand2", padx=12, pady=6,
             command=self._launch_pscam_tray
@@ -785,10 +785,10 @@ class LegacySensorGUI:
         spec_badge = tk.Frame(self.pscam_card, bg=PALETTE["blue_pastel"], padx=10, pady=8)
         spec_badge.pack(fill=tk.X)
 
-        tk.Label(spec_badge, text="⚡ Modo Automático Otimizado: 1280x800 @ 60 FPS (OV580 Stereo DirectShow)",
+        tk.Label(spec_badge, text="Optimized Auto Mode: 1280x800 @ 60 FPS (OV580 Stereo DirectShow)",
                  font=(self.font_family, 8, "bold"), fg=PALETTE["blue_dark"], bg=PALETTE["blue_pastel"]).pack(anchor="w")
         tk.Label(spec_badge,
-                 text="A seleção de resolução fica oculta nesta aba pois a PS4 Camera opera no formato nativo do driver.",
+                 text="Resolution picker is hidden in this tab because the PS4 Camera operates in the driver's native format.",
                  font=(self.font_family, 7), fg=PALETTE["text_muted"], bg=PALETTE["blue_pastel"]).pack(anchor="w")
 
         # ---------------------------------------------------------------------
@@ -797,7 +797,7 @@ class LegacySensorGUI:
         self.webcam_card = tk.Frame(self.view_video, bg=PALETTE["bg_card"],
                                     highlightbackground=PALETTE["border_subtle"], highlightthickness=1, padx=16, pady=14)
 
-        lbl_web_title = tk.Label(self.webcam_card, text="CONFIGURAÇÃO DE VÍDEO DA WEBCAM",
+        lbl_web_title = tk.Label(self.webcam_card, text="WEBCAM VIDEO SETTINGS",
                                  font=(self.font_family, 9, "bold"), fg=PALETTE["blue_dark"], bg=PALETTE["bg_card"])
         lbl_web_title.pack(anchor="w", pady=(0, 10))
 
@@ -805,7 +805,7 @@ class LegacySensorGUI:
         dev_row = tk.Frame(self.webcam_card, bg=PALETTE["bg_card"])
         dev_row.pack(fill=tk.X, pady=(0, 8))
 
-        tk.Label(dev_row, text="Dispositivo:", font=(self.font_family, 8, "bold"),
+        tk.Label(dev_row, text="Device:", font=(self.font_family, 8, "bold"),
                  fg=PALETTE["text_main"], bg=PALETTE["bg_card"], width=14, anchor="w").pack(side=tk.LEFT)
 
         self.cb_cameras = ttk.Combobox(dev_row, state="readonly", style="Modern.TCombobox")
@@ -824,7 +824,7 @@ class LegacySensorGUI:
         preset_row = tk.Frame(self.webcam_card, bg=PALETTE["bg_card"])
         preset_row.pack(fill=tk.X, pady=(0, 6))
 
-        tk.Label(preset_row, text="Resolução / FPS:", font=(self.font_family, 8, "bold"),
+        tk.Label(preset_row, text="Resolution / FPS:", font=(self.font_family, 8, "bold"),
                  fg=PALETTE["text_main"], bg=PALETTE["bg_card"], width=14, anchor="w").pack(side=tk.LEFT)
 
         self.cb_preset = ttk.Combobox(preset_row, state="readonly", style="Modern.TCombobox")
@@ -837,14 +837,14 @@ class LegacySensorGUI:
                                      highlightbackground=PALETTE["border_subtle"], highlightthickness=1, padx=16, pady=12)
         self.display_card.pack(fill=tk.X, pady=(10, 0))
 
-        tk.Label(self.display_card, text="OPÇÕES ADICIONAIS DE EXIBIÇÃO",
+        tk.Label(self.display_card, text="ADDITIONAL DISPLAY OPTIONS",
                  font=(self.font_family, 9, "bold"), fg=PALETTE["blue_dark"], bg=PALETTE["bg_card"]).pack(anchor="w", pady=(0, 6))
 
         self.var_mirror = tk.BooleanVar(value=self.cfg.get("mirror_horizontal", True))
         # Ocultado temporariamente da interface a pedido do usuário (preservado internamente como ativo)
         self.chk_mirror = ttk.Checkbutton(
             self.display_card,
-            text="Espelhar Imagem Horizontalmente (Modo Espelho para Dançar)",
+            text="Mirror Image Horizontally (Dance Mirror Mode)",
             variable=self.var_mirror,
             style="Modern.TCheckbutton"
         )
@@ -853,7 +853,7 @@ class LegacySensorGUI:
         self.var_hud = tk.BooleanVar(value=self.cfg.get("show_hud", True))
         chk_hud = ttk.Checkbutton(
             self.display_card,
-            text="Exibir HUD com Métricas na Janela de Rastreamento (FPS, IPC e Atalhos)",
+            text="Display HUD Overlay in Tracking Window (FPS, IPC & Shortcuts)",
             variable=self.var_hud,
             style="Modern.TCheckbutton"
         )
@@ -873,7 +873,7 @@ class LegacySensorGUI:
         # 1. Header
         lbl_head = tk.Label(
             calib_wrapper,
-            text="PERFIL DE RASTREAMENTO E MOVIMENTO",
+            text="TRACKING & MOTION PROFILE",
             font=(self.font_family, 9, "bold"),
             fg=PALETTE["blue_dark"],
             bg=PALETTE["bg_card"]
@@ -882,7 +882,7 @@ class LegacySensorGUI:
 
         lbl_sub = tk.Label(
             calib_wrapper,
-            text="Selecione o perfil que melhor se adapta ao seu estilo de jogo e à qualidade da sua câmera.",
+            text="Select the profile that best fits your playstyle and camera setup.",
             font=(self.font_family, 8),
             fg=PALETTE["text_muted"],
             bg=PALETTE["bg_card"]
@@ -964,7 +964,7 @@ class LegacySensorGUI:
 
             lbl_ind = tk.Label(
                 bot_row,
-                text="○ Selecionar",
+                text="○ Select",
                 font=(self.font_family, 7, "bold"),
                 fg=PALETTE["text_dim"],
                 bg=PALETTE["bg_card"]
@@ -1026,7 +1026,7 @@ class LegacySensorGUI:
 
         lbl_auto_h_title = tk.Label(
             h_text_col,
-            text="Calibração de Altura Automática (1,75 m padrão)",
+            text="Automatic Height Calibration (1.75m default)",
             font=(self.font_family, 8, "bold"),
             fg=PALETTE["blue_dark"],
             bg=PALETTE["input_bg"]
@@ -1035,7 +1035,7 @@ class LegacySensorGUI:
 
         lbl_auto_h_desc = tk.Label(
             h_text_col,
-            text="O sensor normaliza dinamicamente as proporções do corpo para a convenção métrica do Kinect v1 do Just Dance. Não requer ajustes manuais.",
+            text="The sensor dynamically normalizes body proportions to the Just Dance Kinect v1 metric convention. No manual adjustment needed.",
             font=(self.font_family, 7),
             fg=PALETTE["text_muted"],
             bg=PALETTE["input_bg"]
@@ -1045,7 +1045,7 @@ class LegacySensorGUI:
         # 4. Collapsible Advanced Settings (Sliders EMA and Confidence)
         self.btn_toggle_adv = tk.Button(
             calib_wrapper,
-            text="⚙️ Mostrar Ajustes Avançados de Filtro ▼",
+            text="Show Advanced Filter Settings ▼",
             font=(self.font_family, 8, "bold"),
             bg=PALETTE["blue_pastel"],
             fg=PALETTE["blue_dark"],
@@ -1086,7 +1086,7 @@ class LegacySensorGUI:
 
         tk.Label(
             self.adv_calib_box,
-            text="Filtro EMA: valores menores reduzem tremedeiras; valores maiores dão resposta instantânea.",
+            text="EMA Filter: lower values reduce jitter; higher values provide instantaneous response.",
             font=(self.font_family, 7), fg=PALETTE["text_muted"], bg=PALETTE["bg_card"]
         ).pack(anchor="w", pady=(0, 8))
 
@@ -1106,7 +1106,7 @@ class LegacySensorGUI:
 
         tk.Label(
             self.adv_calib_box,
-            text="Limiar mínimo de confiança aceito pela rede neural MediaPipe Pose.",
+            text="Minimum confidence threshold accepted by the MediaPipe Pose neural network.",
             font=(self.font_family, 7), fg=PALETTE["text_muted"], bg=PALETTE["bg_card"]
         ).pack(anchor="w", pady=(0, 10))
 
@@ -1116,7 +1116,7 @@ class LegacySensorGUI:
 
         btn_reset = tk.Button(
             adv_actions,
-            text="↺ Restaurar Perfil Recomendado (Equilibrado)",
+            text="↺ Reset to Recommended Profile (Balanced)",
             font=(self.font_family, 8, "bold"),
             bg=PALETTE["blue_pastel"],
             fg=PALETTE["blue_dark"],
@@ -1261,7 +1261,7 @@ class LegacySensorGUI:
         cams = getattr(self, 'camera_list', [])
 
         if getattr(self, '_is_refreshing_cams', False) and not cams:
-            msg = "Buscando PlayStation Camera..." if mode == "pscam" else "Buscando webcams..."
+            msg = "Searching for PlayStation Camera..." if mode == "pscam" else "Searching for webcams..."
             self.cb_cameras["values"] = [msg]
             self.cb_cameras.set(msg)
             return
@@ -1280,8 +1280,8 @@ class LegacySensorGUI:
                 self.cb_cameras.set(str(selected))
                 self.cfg["camera_index"] = selected.index
             else:
-                self.cb_cameras["values"] = ["⚠️ PS Camera não conectada"]
-                self.cb_cameras.set("⚠️ PS Camera não conectada")
+                self.cb_cameras["values"] = ["PS Camera not connected"]
+                self.cb_cameras.set("PS Camera not connected")
                 self.cfg["camera_index"] = -1
         else:
             webcams = [c for c in cams if not c.is_pscam]
@@ -1299,8 +1299,8 @@ class LegacySensorGUI:
                 self.cb_cameras.set(str(selected))
                 self.cfg["camera_index"] = selected.index
             else:
-                self.cb_cameras["values"] = ["⚠️ Nenhuma webcam encontrada"]
-                self.cb_cameras.set("⚠️ Nenhuma webcam encontrada")
+                self.cb_cameras["values"] = ["No webcam found"]
+                self.cb_cameras.set("No webcam found")
                 self.cfg["camera_index"] = -1
 
     def _update_pscam_status(self):
@@ -1314,53 +1314,53 @@ class LegacySensorGUI:
 
         if state == "NOT_INSTALLED":
             self.lbl_pscam_info.configure(
-                text="❌ PSCam4Win não detectado em C:\\Program Files\\PSCam4Win.",
+                text="PSCam4Win not detected in C:\\Program Files\\PSCam4Win.",
                 fg=PALETTE["status_err"]
             )
             self.btn_launch_pscam.configure(
-                state="disabled", text="Driver Não Instalado",
+                state="disabled", text="Driver Not Installed",
                 bg=PALETTE["input_bg"], fg=PALETTE["text_muted"]
             )
         elif state == "DISCONNECTED":
             self.lbl_pscam_info.configure(
-                text="⚠️ PlayStation 4 Camera desconectada da porta USB.",
+                text="PlayStation 4 Camera disconnected from USB port.",
                 fg=PALETTE["status_warn"]
             )
             if running:
                 self.btn_launch_pscam.configure(
-                    state="disabled", text="✔ Driver PSCam4Win Ativo",
+                    state="disabled", text="PSCam4Win Driver Active",
                     bg=PALETTE["blue_pastel"], fg=PALETTE["blue_dark"]
                 )
             else:
                 self.btn_launch_pscam.configure(
-                    state="normal", text="▶ Iniciar Driver PSCam4Win",
+                    state="normal", text="Start PSCam4Win Driver",
                     bg=PALETTE["ps_blue"], fg="#ffffff"
                 )
         elif state == "DRIVER_STOPPED":
             self.lbl_pscam_info.configure(
-                text="⚠️ PS4 Camera conectada, mas o driver PSCam4Win NÃO está aberto!",
+                text="PS4 Camera connected, but PSCam4Win driver is NOT running!",
                 fg=PALETTE["status_warn"]
             )
             self.btn_launch_pscam.configure(
-                state="normal", text="▶ Iniciar Driver PSCam4Win",
+                state="normal", text="Start PSCam4Win Driver",
                 bg=PALETTE["ps_blue"], fg="#ffffff"
             )
         elif state == "BOOTLOADER_UPLOADING":
             self.lbl_pscam_info.configure(
-                text="⏳ PS4 Camera detectada! PSCam4Win carregando firmware USB...",
+                text="PS4 Camera detected! PSCam4Win uploading USB firmware...",
                 fg=PALETTE["ps_blue"]
             )
             self.btn_launch_pscam.configure(
-                state="disabled", text="⏳ Carregando Firmware...",
+                state="disabled", text="Uploading Firmware...",
                 bg=PALETTE["blue_pastel"], fg=PALETTE["blue_dark"]
             )
         elif state == "WAITING_VCAM":
             self.lbl_pscam_info.configure(
-                text="⏳ Hardware pronto! Inicializando câmera virtual DirectShow (60 FPS)...",
+                text="Hardware ready! Initializing DirectShow virtual camera (60 FPS)...",
                 fg=PALETTE["ps_blue"]
             )
             self.btn_launch_pscam.configure(
-                state="disabled", text="✔ Driver PSCam4Win Ativo",
+                state="disabled", text="PSCam4Win Driver Active",
                 bg=PALETTE["blue_pastel"], fg=PALETTE["blue_dark"]
             )
         elif state == "READY":
@@ -1368,12 +1368,12 @@ class LegacySensorGUI:
             ps_cams = [c for c in cams if c.is_pscam]
             if ps_cams:
                 cam_idx = ps_cams[0].index
-                txt = f"✔ Driver ativo e PS4 Camera conectada (Índice {cam_idx} • 60 FPS)"
+                txt = f"Driver active and PS4 Camera connected (Index {cam_idx} • 60 FPS)"
             else:
-                txt = f"✔ Driver ativo e PS4 Camera conectada ({vcam_count} câmera virtual ativa • 60 FPS)"
+                txt = f"Driver active and PS4 Camera connected ({vcam_count} virtual camera(s) active • 60 FPS)"
             self.lbl_pscam_info.configure(text=txt, fg=PALETTE["status_ok"])
             self.btn_launch_pscam.configure(
-                state="disabled", text="✔ Driver PSCam4Win Ativo",
+                state="disabled", text="PSCam4Win Driver Active",
                 bg=PALETTE["blue_pastel"], fg=PALETTE["blue_dark"]
             )
 
@@ -1420,7 +1420,7 @@ class LegacySensorGUI:
             try:
                 cams = CameraManager.enumerate_cameras()
             except Exception as e:
-                print(f"[WARN] Falha na enumeração assíncrona de câmeras: {e}")
+                print(f"[WARN] Failed during asynchronous camera enumeration: {e}")
                 cams = []
             try:
                 if self.root.winfo_exists():
@@ -1492,7 +1492,7 @@ class LegacySensorGUI:
                 w["sub"].configure(fg=PALETTE["blue_dark"], bg=bg_c)
                 w["desc"].configure(fg=PALETTE["text_main"], bg=bg_c)
                 w["specs"].configure(fg=PALETTE["ps_blue"], bg=bg_c)
-                w["ind"].configure(text="✔ Ativo", fg=PALETTE["ps_blue"], bg=bg_c)
+                w["ind"].configure(text="Active", fg=PALETTE["ps_blue"], bg=bg_c)
             else:
                 bg_c = PALETTE["bg_card"]
                 w["frame"].configure(bg=bg_c, highlightbackground=PALETTE["border_subtle"], highlightthickness=1)
@@ -1503,12 +1503,12 @@ class LegacySensorGUI:
                 w["sub"].configure(fg=PALETTE["blue_dark"], bg=bg_c)
                 w["desc"].configure(fg=PALETTE["text_muted"], bg=bg_c)
                 w["specs"].configure(fg=PALETTE["text_dim"], bg=bg_c)
-                w["ind"].configure(text="○ Selecionar", fg=PALETTE["text_dim"], bg=bg_c)
+                w["ind"].configure(text="○ Select", fg=PALETTE["text_dim"], bg=bg_c)
 
         if hasattr(self, "lbl_calib_mode_badge"):
             if self.current_calib_preset == "custom":
                 self.lbl_calib_mode_badge.configure(
-                    text="● Modo Manual / Personalizado Ativo",
+                    text="● Custom / Manual Mode Active",
                     fg=PALETTE["status_warn"]
                 )
             else:
@@ -1517,10 +1517,10 @@ class LegacySensorGUI:
     def _toggle_advanced_calib(self):
         self.is_adv_calib_open = not self.is_adv_calib_open
         if self.is_adv_calib_open:
-            self.btn_toggle_adv.configure(text="⚙️ Ocultar Ajustes Avançados ▲")
+            self.btn_toggle_adv.configure(text="Hide Advanced Settings ▲")
             self.adv_calib_box.pack(fill=tk.X, pady=(8, 0))
         else:
-            self.btn_toggle_adv.configure(text="⚙️ Mostrar Ajustes Avançados de Filtro ▼")
+            self.btn_toggle_adv.configure(text="Show Advanced Filter Settings ▼")
             self.adv_calib_box.pack_forget()
 
     def _check_if_custom_preset(self):
@@ -1549,8 +1549,8 @@ class LegacySensorGUI:
         self._check_if_custom_preset()
 
     def _update_smooth_label(self, alpha):
-        desc = "Alta Suavização" if alpha < 0.40 else "Equilibrado (Padrão)" if alpha <= 0.70 else "Resposta Rápida"
-        self.lbl_smooth.configure(text=f"Suavização Anti-Jitter (EMA): {alpha:.2f}  ({desc})")
+        desc = "High Smoothing" if alpha < 0.40 else "Balanced (Default)" if alpha <= 0.70 else "Fast Response"
+        self.lbl_smooth.configure(text=f"Anti-Jitter Smoothing (EMA): {alpha:.2f}  ({desc})")
 
     def _on_conf_changed(self, val):
         conf = float(val)
@@ -1559,7 +1559,7 @@ class LegacySensorGUI:
         self._check_if_custom_preset()
 
     def _update_conf_label(self, conf):
-        self.lbl_conf.configure(text=f"Confiança Mínima de Detecção: {conf:.2f}")
+        self.lbl_conf.configure(text=f"Minimum Detection Confidence: {conf:.2f}")
 
     def _reset_calib_defaults(self):
         self._select_calib_preset("balanced")
@@ -1575,7 +1575,7 @@ class LegacySensorGUI:
         if dll_dir.exists():
             subprocess.Popen(f'explorer "{dll_dir}"')
         else:
-            messagebox.showerror("Erro", f"Diretório não encontrado: {dll_dir}")
+            messagebox.showerror("Error", f"Directory not found: {dll_dir}")
 
     def _save_current_settings(self):
         self.cfg["mirror_horizontal"] = self.var_mirror.get()
@@ -1607,7 +1607,7 @@ class LegacySensorGUI:
             if CameraManager.is_pscam_installed() and not CameraManager.is_pscam_running():
                 ok, msg = CameraManager.launch_pscam_tray()
                 if not ok:
-                    messagebox.showerror("Erro ao Iniciar Driver", msg)
+                    messagebox.showerror("Driver Launch Error", msg)
                     return
                 time.sleep(1.2)
                 self._refresh_cameras()
@@ -1618,19 +1618,19 @@ class LegacySensorGUI:
 
             if not ps_cams or not is_valid_pscam or cam_idx < 0:
                 messagebox.showwarning(
-                    "PlayStation Camera Não Conectada",
-                    "A PlayStation 4 Camera não foi detectada no computador!\n\n"
-                    "• Certifique-se de que o cabo USB 3.0 da PS4 Camera está conectado.\n"
-                    "• Verifique se o driver PSCam4Win está em execução na bandeja do Windows.\n"
+                    "PlayStation Camera Not Connected",
+                    "PlayStation 4 Camera was not detected on this computer!\n\n"
+                    "• Ensure the PS4 Camera USB 3.0 cable is connected.\n"
+                    "• Verify that the PSCam4Win driver is running in the Windows system tray.\n"
                 )
                 return
         else:
             cam_idx = self.cfg.get("camera_index", -1)
             if cam_idx < 0 or not getattr(self, 'camera_list', []):
                 messagebox.showwarning(
-                    "Nenhuma Câmera Conectada",
-                    "Nenhuma webcam foi detectada no computador.\n\n"
-                    "Por favor, conecte uma câmera antes de iniciar o rastreamento."
+                    "No Camera Connected",
+                    "No webcam was detected on this computer.\n\n"
+                    "Please connect a camera before starting tracking."
                 )
                 return
 
@@ -1638,7 +1638,7 @@ class LegacySensorGUI:
 
         self.is_tracking_active = True
         self.btn_start.configure(
-            text="● RASTREAMENTO EM EXECUÇÃO...",
+            text="TRACKING IN PROGRESS...",
             bg=PALETTE["status_err"],
             state="disabled"
         )
@@ -1660,7 +1660,7 @@ class LegacySensorGUI:
     def _on_tracking_finished(self, success=True, err_msg=""):
         self.is_tracking_active = False
         self.btn_start.configure(
-            text="▶ INICIAR RASTREAMENTO",
+            text="START TRACKING",
             bg=PALETTE["ps_blue"],
             state="normal"
         )
@@ -1668,13 +1668,13 @@ class LegacySensorGUI:
         self._refresh_cameras()
 
         if not success:
-            detail = f"\n\nDetalhes: {err_msg}" if err_msg else ""
+            detail = f"\n\nDetails: {err_msg}" if err_msg else ""
             messagebox.showerror(
-                "Falha ao Iniciar Rastreamento",
-                f"Não foi possível iniciar o rastreamento com o dispositivo selecionado.{detail}\n\n"
-                "• Verifique se a câmera está conectada à porta USB.\n"
-                "• Confirme se o driver PSCam4Win está ativo.\n"
-                "• Certifique-se de que nenhum outro app (OBS, Discord, etc.) esteja bloqueando a câmera."
+                "Tracking Initialization Failed",
+                f"Could not start tracking with the selected device.{detail}\n\n"
+                "• Check if camera is connected to USB.\n"
+                "• Verify that PSCam4Win driver is active.\n"
+                "• Make sure no other application (OBS, Discord, etc.) is locking the camera."
             )
 
     def _on_close_window(self):

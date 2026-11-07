@@ -1,98 +1,87 @@
-# 🕺 Legacy Sensor Lite — Documentação Geral do Projeto
+# Legacy Sensor Lite - Technical Documentation
 
-O **Legacy Sensor Lite** é um sensor de movimento corporal de alta precisão, latência ultrabaixa e zero bloatware projetado para o jogo **Just Dance PC (Legacy Offline)**. Ele unifica o suporte para **Webcams USB/Integradas** e para a **PlayStation 4 Camera** (PS4 Camera via driver PSCam4Win em 1280x800 @ 60 FPS estáveis).
-
----
-
-## 🎯 Objetivo do Projeto
-
-O emulador original da comunidade acumulou centenas de megabytes de recursos secundários (como músicas de menu em MP3, sistemas de moedas, XP, presentes, vídeos e telemetria) que tornavam o aplicativo pesado (~632 MB) e lento para inicializar.
-
-O **Legacy Sensor Lite** foi reconstruído do zero com um único propósito:
-> **"Abrir, selecionar a câmera e ir direto dançar."**
-
-Eliminamos todo o conteúdo extra mantendo e aperfeiçoando os pilares que realmente importam:
-1. **Rastreamento de corpo anatômico** via MediaPipe Pose Tasks API com Hand Anchor Filter.
-2. **Taxa de quadros de 60 FPS** com suporte dedicado à PlayStation 4 Camera.
-3. **Ponte de memória compartilhada completa (Pose + Imagem/Máscara)** com protocolo seqlock atômico lido pelo `Kinect10.dll` do Just Dance PC.
-4. **Prévia com Silhueta ("Sombrinha") e Contorno Neon**, restaurando o feedback visual clássico tanto na janela do sensor quanto no menu de seleção e HUD do Just Dance PC.
+Legacy Sensor Lite is a high-performance, ultra-low latency, and zero-bloatware body motion tracking sensor designed for Just Dance PC (Legacy Offline). It unifies support for standard USB/integrated webcams and the PlayStation 4 Camera (PS4 Camera via PSCam4Win driver at 1280x800 @ 60 FPS).
 
 ---
 
-## 🚀 Funcionalidades Principais
+## Project Goal
 
-| Recurso | Descrição | Status |
+The original community emulator accumulated hundreds of megabytes of secondary bloatware (MP3 background music, coin systems, XP levels, gifts, opening videos, and telemetry) that made the application bulky (~632 MB) and slow to start.
+
+Legacy Sensor Lite was rebuilt from the ground up with a single goal:
+> "Launch, pick your camera, and jump straight into dancing."
+
+All non-essential overhead has been removed while perfecting the core components:
+1. Anatomical body tracking via Google MediaPipe Pose with the Hand Anchor Filter.
+2. 60 FPS support dedicated to the PlayStation 4 Camera and high-speed webcams.
+3. Complete Windows shared memory IPC bridge (Pose + Image/Mask) using atomic seqlock consumed by `Kinect10.dll` in Just Dance PC.
+4. Player silhouette shadow and neon contour, restoring visual feedback in both the sensor preview window and the in-game Just Dance HUD and dancer selection screen.
+
+---
+
+## Key Features
+
+| Feature | Description | Status |
 |---|---|---|
-| **Rastreamento Esquelético (20 Joints)** | Converte a pose do corpo humano para o formato binário de 20 articulações consumido pelo Just Dance PC. | Implementado |
-| **Silhueta e Contorno Neon ("Sombrinha")** | Gera máscara de segmentação anatômica em tempo real, renderizando a sombrinha neon e alimentando o Just Dance PC. | Implementado |
-| **Ponte de Imagem e Profundidade (JMI1)** | Buffer `Local\LegacyWebcamKinectImage` (1.3 MB) transmitindo imagem BGRA e máscara do jogador ao jogo. | Implementado |
-| **Suporte à PlayStation 4 Camera** | Presets otimizados para a PS4 Camera em **1280x800 @ 60 FPS** (YUY2/NV12 nativo sem conversões pesadas). | Implementado |
-| **Hotplug e Auto-Detecção em Tempo Real** | Detecção instantânea de conexões e desconexões de câmeras via PnP Win32 (< 3ms) sem congelar o menu. | Implementado |
-| **Suporte a Webcams USB/Integradas** | Detecção de câmeras plug-and-play em 640x480, 720p HD e 1080p. | Implementado |
-| **Filtro Hand Anchor** | Extrapolação do vetor de antebraço para manter o rastreamento das mãos mesmo durante giros e passos velozes. | Implementado |
-| **Suavização Adaptativa Anti-Jitter** | Filtro EMA dinâmico: elimina tremedeiras em poses estáticas e zera a latência em movimentos rápidos. | Implementado |
-| **Memória Compartilhada Windows (IPC)** | Buffers `Local\LegacyWebcamKinectPose` e `Local\LegacyWebcamKinectImage` com protocolo seqlock sem travar o jogo. | Implementado |
-| **Otimização de Timer (30 FPS Fixos)** | Temporizador de alta precisão (1 ms) no Windows, elevando o HUD e esqueleto de 21 FPS para 30 FPS cravados sem quebrar a pontuação. | Implementado |
-| **Perfis Simplificados e Auto-Altura** | Cartões interativos (Equilibrado, Competitivo, Ultra Estável) e normalização de altura 100% automática. | Implementado |
-| **Menu Dark Moderno em Tkinter** | Interface leve com seletor de câmera, perfis simplificados, abas com ícones vetoriais e início rápido. | Implementado |
-| **HUD de Jogo em OpenCV** | Visualização da silhueta sombreada, contorno e esqueleto desenhados com contadores reais de FPS. | Implementado |
+| Skeletal Tracking (20 Joints) | Maps human body pose to the exact 20-joint binary format consumed by Just Dance PC. | Implemented |
+| Silhouette & Neon Contour | Real-time anatomical segmentation mask rendering player shadow and feeding Just Dance PC. | Implemented |
+| Image & Depth Bridge (JMI1 & JMI2) | `Local\LegacyWebcamKinectImage` buffer (1.3 MB) streaming BGRA frame and player mask to the game. | Implemented |
+| PlayStation 4 Camera Support | Presets optimized for PS4 Camera at 1280x800 @ 60 FPS (native YUY2/NV12 DirectShow). | Implemented |
+| Real-time Hotplug Detection | Instant PnP Win32 connection/disconnection polling (< 3ms) without freezing the UI. | Implemented |
+| Hand Anchor Filter | Forearm vector extrapolation preventing lost tracking during rapid hand movements and routines. | Implemented |
+| Dynamic Anti-Jitter EMA Filter | Velocity-dependent adaptive smoothing eliminating resting jitter while preserving instant response. | Implemented |
+| Multi-Tier Auto-Height Calibration | Automatic height and metric normalization for full-body, flexible-torso, and desk setups. | Implemented |
+| 6-Player Coach Selection Support | Expanded lateral tracking range allowing selection of all dancer slots (Slots 1 to 6). | Implemented |
+| High-Resolution Windows Timer (1ms) | Python timer synchronization ensuring `Sleep(33)` in `Kinect10.dll` delivers solid 30 FPS. | Implemented |
 
 ---
 
-## 🛠️ Tecnologias Utilizadas
+## System Requirements
 
-- **Linguagem:** Python 3.10+ (testado e otimizado para Python 3.12 e 3.15).
-- **Visão Computacional & IA:**
-  - `opencv-python`: Captura de vídeo DirectShow/MSMF e renderização de HUD.
-  - `mediapipe` (v1.2+ Tasks API): Inferência da rede neural `pose_landmarker_lite.task`.
-  - `numpy`: Operações matemáticas de cinemática e buffers de vídeo.
-- **Interface Gráfica:**
-  - `tkinter` / `ttk`: Interface nativa estilizada com paleta escura (sem dependências de frameworks pesados).
-- **Comunicação Interprocesso (IPC):**
-  - Módulos `mmap` e `struct` da biblioteca padrão do Python.
-  - `Kinect10.dll`: DLL proxy de 32 bits (Win32) que alimenta o processo do Just Dance PC.
-- **Integração de Hardware:**
-  - `PSCam4Win`: Driver em modo usuário (WinUSB + DirectShow Virtual Camera) para PlayStation 4 Camera (sensor OmniVision OV580 + OV9713).
+- Operating System: Windows 10 or Windows 11 (64-bit).
+- Python: Version 3.10, 3.11, or 3.12 (64-bit).
+- Dependencies: `opencv-python`, `mediapipe`, `numpy`.
+- Hardware: USB webcam (720p/1080p recommended) or PlayStation 4 Camera (with AUX-to-USB3 adapter).
+- Drivers (for PS4 Camera): PSCam4Win (WinUSB user-mode driver + DirectShow virtual camera).
 
 ---
 
-## 📂 Estrutura de Diretórios Resumida
+## Directory Overview
 
 ```
 LegacyPSCam_Sensor/
-├── main.py                     # Ponto de entrada (CLI e despachante da aplicação)
-├── test_suite.py               # 9 suítes completas de testes automatizados
-├── config.json                 # Preferências salvas do usuário
-├── sensor/                     # Pacote do Motor de Rastreamento e IA
-│   ├── camera_manager.py       # Descoberta de câmeras e captura assíncrona
-│   ├── pose_tracker.py         # Motor MediaPipe, Hand Anchor, Calibrador e EMA
-│   ├── tracking_session.py     # Orquestrador do loop de rastreamento e eventos
-│   ├── tracking_overlay.py     # Renderização visual do esqueleto, HUD e silhueta
-│   ├── kinect_shared_memory.py # Driver IPC de memória compartilhada (JDP1, JMI1/2, JXC1)
-│   └── config_manager.py       # Leitura e persistência de config.json
-├── ui/                         # Pacote da Interface Gráfica
-│   └── gui.py                  # Painel de controle e configurações (Tkinter dark)
-├── assets/                     # Recursos visuais e mídias
-│   ├── IconePSCAMERA.png       # Ícone da PlayStation 4 Camera
-│   └── models/                 # Modelos neurais locais
-├── models/
-│   └── pose_landmarker_lite.task # Modelo pré-treinado do Google MediaPipe
-├── tools/
-│   ├── PSCam4Win-Setup.exe       # Instalador oficial do driver da PS4 Camera
-│   └── get_cameras.ps1           # Helper de enumeração de dispositivos
+├── main.py                     # CLI launcher and entry point
+├── test_suite.py               # 9 complete automated test suites
+├── config.json                 # Saved user preferences
+├── sensor/                     # Tracking Engine and AI package
+│   ├── camera_manager.py       # Camera discovery and async capture
+│   ├── pose_tracker.py         # MediaPipe engine, Hand Anchor, Calibrator & EMA
+│   ├── tracking_session.py     # Tracking loop orchestrator and hotkeys
+│   ├── tracking_overlay.py     # Skeleton, HUD, and silhouette renderer
+│   ├── kinect_shared_memory.py # Windows shared memory IPC driver (JDP1, JMI1/2, JXC1)
+│   └── config_manager.py       # config.json persistence
+├── ui/                         # User Interface package
+│   └── gui.py                  # Dark PlayStation-themed control panel (Tkinter)
+├── assets/                     # Visual assets and media
+│   └── IconePSCAMERA.png       # PS4 Camera icon
+├── models/                     # Pre-trained neural network models
+│   └── pose_landmarker_lite.task # Google MediaPipe Pose model
+├── tools/                      # Setup utilities
+│   ├── PSCam4Win-Setup.exe     # Official PSCam4Win driver installer
+│   └── get_cameras.ps1         # WinRT camera enumeration script
 └── Kinect for Legacy DLL/
-    └── Kinect10.dll              # DLL de 32 bits a ser colocada no Just Dance PC
+    └── Kinect10.dll            # 32-bit proxy DLL for Just Dance PC root folder
 ```
 
 ---
 
-## ⚡ Primeiros Passos
+## Quick Steps
 
-1. **Copie a DLL para o Just Dance:**
-   Coloque o arquivo [`Kinect10.dll`](../Kinect%20for%20Legacy%20DLL/Kinect10.dll) na pasta onde está o executável do seu Just Dance PC.
-2. **Execute o Sensor:**
-   Dê um duplo clique em [`INICIAR_SENSOR.bat`](../LegacySensor_Lite/INICIAR_SENSOR.bat).
-3. **Selecione a Câmera:**
-   Escolha **PlayStation Camera** (se estiver usando a PS4 Camera conectada) ou **Webcam Padrão**.
-4. **Inicie o Jogo:**
-   Clique em **▶ INICIAR RASTREAMENTO**, abra o Just Dance PC e selecione o controle **Kinect**.
+1. Copy DLL to Just Dance:
+   Place `Kinect10.dll` from `Kinect for Legacy DLL/` into the directory where your Just Dance PC executable is installed.
+2. Run the Sensor:
+   Launch `LegacySensor.exe` or execute `python main.py`.
+3. Select Camera:
+   Choose PlayStation 4 Camera (if connected) or Standard Webcam.
+4. Start Tracking:
+   Click START TRACKING, launch Just Dance PC, and select Kinect as your controller.

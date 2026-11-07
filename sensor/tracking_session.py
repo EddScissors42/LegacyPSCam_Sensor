@@ -52,10 +52,10 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
     show_hud = config.get("show_hud", True)
 
     print(f"\n==========================================")
-    print(f"  INICIANDO SESSÃO DE RASTREAMENTO")
-    print(f"  Modo: {'PlayStation Camera' if mode == 'pscam' else 'Webcam Padrão'}")
-    print(f"  Câmera: {cam_idx} | Resolução: {w}x{h} @ {target_fps} FPS")
-    print(f"  Espelhado: {mirror} | Suavização: {smoothing_alpha}")
+    print(f"  STARTING TRACKING SESSION")
+    print(f"  Mode: {'PlayStation Camera' if mode == 'pscam' else 'Standard Webcam'}")
+    print(f"  Camera: {cam_idx} | Resolution: {w}x{h} @ {target_fps} FPS")
+    print(f"  Mirrored: {mirror} | Smoothing: {smoothing_alpha}")
     print(f"==========================================\n")
 
     # Enable Windows 1ms high-precision timer for 60 FPS IPC streaming
@@ -79,7 +79,7 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
             is_pscam=(mode == "pscam")
         )
     except Exception as e:
-        print(f"[ERRO] Falha ao iniciar câmera: {e}")
+        print(f"[ERROR] Failed to start camera: {e}")
         bridge.close()
         if on_close_callback:
             on_close_callback()
@@ -94,7 +94,7 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
             cfg=config
         )
     except Exception as e:
-        print(f"[ERRO] Falha ao iniciar MediaPipe Pose Tracker: {e}")
+        print(f"[ERROR] Failed to start MediaPipe Pose Tracker: {e}")
         camera.release()
         bridge.close()
         if on_close_callback:
@@ -180,15 +180,15 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
 
             key = cv2.waitKey(1) & 0xFF
             if key in (27, ord('q'), ord('Q')):  # ESC or Q
-                print("[INFO] Encerramento solicitado pelo usuário.")
+                print("[INFO] Exit requested by user.")
                 break
             elif key in (ord('c'), ord('C')):
                 tracker.recalibrate()
-                print("[INFO] Recalibração de altura/esqueleto acionada!")
+                print("[INFO] Height/skeleton recalibration triggered!")
             elif key in (ord('m'), ord('M')):
                 mirror = not mirror
                 camera.set_mirror(mirror)
-                print(f"[INFO] Espelhamento alterado para: {mirror}")
+                print(f"[INFO] Mirroring toggled to: {mirror}")
             elif key in (ord('h'), ord('H')):
                 overlay.toggle_hud()
 
@@ -197,7 +197,7 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
                 break
 
     except Exception as e:
-        print(f"[ERRO] Exceção no loop de rastreamento: {e}")
+        print(f"[ERROR] Exception in tracking loop: {e}")
     finally:
         set_high_resolution_timer(False)
         bridge.write_empty()
@@ -205,7 +205,7 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
         camera.release()
         tracker.close()
         cv2.destroyAllWindows()
-        print("[INFO] Sessão de rastreamento encerrada.")
+        print("[INFO] Tracking session ended.")
         if on_close_callback:
             on_close_callback()
 

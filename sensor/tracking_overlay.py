@@ -121,23 +121,23 @@ class TrackingOverlay:
         # 1. Top Left: Title & Mode
         cv2.putText(frame, "LEGACY SENSOR LITE", (14, 24),
                     cv2.FONT_HERSHEY_DUPLEX, 0.65, (255, 255, 255), 1, cv2.LINE_AA)
-        cam_sub = f"{camera_info_str} {'[ESPELHADO]' if is_mirrored else ''}"
+        cam_sub = f"{camera_info_str} {'[MIRRORED]' if is_mirrored else ''}"
         cv2.putText(frame, cam_sub, (14, 43),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.42, COLOR_TEXT_DIM, 1, cv2.LINE_AA)
 
         # 2. Top Center: Status Badge (Full-body vs Partial-body / Desk framing)
         if is_tracked:
             if calibration_tier == "full_body":
-                badge_text = "CORPO INTEIRO (ATIVO)"
+                badge_text = "FULL BODY (ACTIVE)"
             elif calibration_tier == "flexible_torso":
-                badge_text = "MEIO CORPO (ATIVO)"
+                badge_text = "HALF BODY (ACTIVE)"
             elif calibration_tier == "upper_body":
-                badge_text = "ENQUADRAMENTO MESA (ATIVO)"
+                badge_text = "DESK FRAMING (ACTIVE)"
             else:
-                badge_text = "RASTREAMENTO ATIVO"
+                badge_text = "TRACKING ACTIVE"
             badge_color = COLOR_BADGE_OK
         else:
-            badge_text = "PROCURANDO CORPO..."
+            badge_text = "SEARCHING FOR PLAYER..."
             badge_color = COLOR_BADGE_WAIT
 
         badge_w = 240
@@ -148,7 +148,7 @@ class TrackingOverlay:
 
         # 3. Top Right: FPS and Bridge Status
         fps_text = f"CAM: {cam_fps:.1f} FPS | TRACK: {track_fps:.1f} FPS"
-        bridge_text = "IPC: JDP1 & JMI1 [Ativo]"
+        bridge_text = "IPC: JDP1 & JMI1 [Active]"
         t_size = cv2.getTextSize(fps_text, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)[0]
         cv2.putText(frame, fps_text, (w - t_size[0] - 14, 23),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 220), 1, cv2.LINE_AA)
@@ -157,16 +157,16 @@ class TrackingOverlay:
                     cv2.FONT_HERSHEY_SIMPLEX, 0.40, (140, 240, 140), 1, cv2.LINE_AA)
 
         # 4. Bottom Controls Banner
-        controls_text = "[C] Recalibrar  |  [M] Espelhar  |  [H] Ocultar HUD  |  [Q / ESC] Fechar e Voltar"
+        controls_text = "[C] Recalibrate  |  [M] Mirror  |  [H] Toggle HUD  |  [Q / ESC] Exit"
         cv2.putText(frame, controls_text, (16, h - 12),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.44, (220, 220, 225), 1, cv2.LINE_AA)
 
         if is_tracked:
             if is_calibrated:
-                tier_desc = "Corpo Inteiro" if calibration_tier == "full_body" else "Meio Corpo / Mesa"
-                calib_msg = f"Auto-Calibracao: {tier_desc}"
+                tier_desc = "Full Body" if calibration_tier == "full_body" else "Half Body / Desk"
+                calib_msg = f"Auto-Calibration: {tier_desc}"
             else:
-                calib_msg = "Ajustando altura automatica..."
+                calib_msg = "Auto-adjusting height..."
             cv2.putText(frame, calib_msg, (w - 290, h - 12),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.40, (0, 255, 220), 1, cv2.LINE_AA)
 

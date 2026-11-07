@@ -500,7 +500,7 @@ class PoseTracker:
             output_segmentation_masks=True
         )
         self.detector = vision.PoseLandmarker.create_from_options(options)
-        print("[TRACKER] MediaPipe Pose Landmarker inicializado com sucesso.")
+        print("[TRACKER] MediaPipe Pose Landmarker successfully initialized.")
 
     def update_settings(self, smoothing_alpha=None, detection_confidence=None, target_height_m=None, cfg=None):
         if cfg is not None:
@@ -845,4 +845,4 @@ class PoseTracker:
             except Exception:
                 pass
             self.detector = None
-            print("[TRACKER] MediaPipe Pose Landmarker finalizado.")
+            print("[TRACKER] MediaPipe Pose Landmarker terminated.")
