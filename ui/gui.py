@@ -20,7 +20,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-from ui.theme import PALETTE, CALIB_PRESETS, get_font_family
+from ui.theme import PALETTE, CALIB_PRESETS, FONT_TITLE, FONT_HEADING, FONT_BODY, get_font_family, load_custom_fonts_win32
 from ui.icons import make_pill_image, load_pscam_file_icon, generate_icons, generate_tab_icons, generate_status_icons
 from sensor.config_manager import ConfigManager, PRESETS_PSCAM, PRESETS_WEBCAM
 from sensor.camera_manager import CameraManager
@@ -180,7 +180,7 @@ class LegacySensorGUI:
         sidebar_pad.pack(fill=tk.BOTH, expand=True)
 
         # 1.1 Brand Header
-        lbl_brand = tk.Label(sidebar_pad, text="Legacy PSCam Sensor", font=(self.font_family, 15, "bold"),
+        lbl_brand = tk.Label(sidebar_pad, text="Legacy PSCam Sensor", font=(FONT_TITLE, 15, "bold"),
                              fg=PALETTE["ps_blue"], bg=PALETTE["bg_sidebar"])
         lbl_brand.pack(anchor="w")
 

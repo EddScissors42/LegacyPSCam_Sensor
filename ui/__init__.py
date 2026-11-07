@@ -1,17 +1,29 @@
 """
 Legacy PSCam Sensor - User Interface Package.
-Provides the modern PlayStation 5-themed Qt 6 interface (PySide6)
+Provides the modern PlayStation-themed Qt 6 interface (PySide6)
 with fallback to Tkinter.
 """
 import sys
 
-from .theme import PALETTE, CALIB_PRESETS, get_font_family
+from .theme import (
+    PALETTE,
+    CALIB_PRESETS,
+    FONT_TITLE,
+    FONT_HEADING,
+    FONT_BODY,
+    get_font_family,
+    load_custom_fonts_qt,
+    load_custom_fonts_win32,
+)
 from .icons import (
     make_pill_image,
     load_pscam_file_icon,
     generate_icons,
+    generate_icons_pil,
     generate_tab_icons,
+    generate_tab_icons_pil,
     generate_status_icons,
+    generate_status_icons_pil,
 )
 
 # Tkinter fallback GUI
@@ -35,7 +47,7 @@ else:
 def launch_app(backend: str = "qt") -> int:
     """
     Launches the primary graphical interface.
-    Defaults to the modern PlayStation 5-themed Qt 6 interface (PySide6),
+    Defaults to the modern PlayStation-themed Qt 6 interface (PySide6),
     with automatic graceful fallback to Tkinter if Qt 6 is unavailable.
     """
     if backend == "qt" and HAS_QT:
@@ -64,10 +76,18 @@ __all__ = [
     "launch_app",
     "PALETTE",
     "CALIB_PRESETS",
+    "FONT_TITLE",
+    "FONT_HEADING",
+    "FONT_BODY",
     "get_font_family",
+    "load_custom_fonts_qt",
+    "load_custom_fonts_win32",
     "make_pill_image",
     "load_pscam_file_icon",
     "generate_icons",
+    "generate_icons_pil",
     "generate_tab_icons",
+    "generate_tab_icons_pil",
     "generate_status_icons",
+    "generate_status_icons_pil",
 ]

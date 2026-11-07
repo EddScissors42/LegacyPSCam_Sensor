@@ -484,7 +484,7 @@ def test_project_structure():
     assert hasattr(ui, "CALIB_PRESETS")
     assert hasattr(ui, "generate_icons")
 
-    # Verify Qt GUI offscreen instantiation
+    # Verify Qt GUI offscreen instantiation, icons, and fonts
     if ui.HAS_QT:
         import os
         os.environ["QT_QPA_PLATFORM"] = "offscreen"
@@ -492,6 +492,12 @@ def test_project_structure():
         app = QApplication.instance() or QApplication([])
         win = ui.LegacySensorQtGUI()
         assert win.windowTitle() == "Legacy PSCam Sensor"
+        assert not win.pix_ps_act.isNull(), "PS Camera icon pixmap must not be null"
+        assert not win.pix_web_act.isNull(), "Webcam icon pixmap must not be null"
+        assert not win.pix_status_err.isNull(), "Status X icon pixmap must not be null"
+        assert win.font_title == "Kanit", f"Expected Kanit title font, got {win.font_title}"
+        assert win.font_heading == "National Park", f"Expected National Park heading font, got {win.font_heading}"
+        assert win.font_body == "Inter Tight", f"Expected Inter Tight body font, got {win.font_body}"
         win.close()
 
     import assets

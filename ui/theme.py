@@ -1,9 +1,23 @@
 """
 Theme Palette, Typography, and Calibration Presets for Legacy PSCam Sensor UI.
+Features:
+- Crisp White & PlayStation Blue (#00439C) aesthetic.
+- Bundled Custom Typography:
+  * 'Kanit' for the brand title ("Legacy PSCam Sensor")
+  * 'National Park' for headings, tabs, card titles, and interactive controls
+  * 'Inter Tight' for body text, descriptions, status messages, and metadata
 """
-import tkinter.font as tkfont
+import os
+from pathlib import Path
 
-# --- Modern PlayStation Blue Palette ---
+BASE_DIR = Path(__file__).resolve().parent.parent
+FONTS_DIR = BASE_DIR / "assets" / "fonts"
+
+FONT_TITLE = "Kanit"
+FONT_HEADING = "National Park"
+FONT_BODY = "Inter Tight"
+
+# --- Modern PlayStation Blue & Crisp White Palette ---
 PALETTE = {
     # Brand Accents — Official PlayStation Blue Theme
     "ps_blue": "#00439C",          # Iconic PlayStation dark blue
@@ -14,13 +28,13 @@ PALETTE = {
     "blue_pastel_hover": "#CEEAF5",# Hover for blue elements
     "blue_dark": "#1D3557",        # Deep navy blue for headings & icons
 
-    # Surfaces & Backgrounds
+    # Surfaces & Backgrounds (Crisp White Theme)
     "bg_window": "#F8F9FC",        # Near-white clean canvas
     "bg_sidebar": "#FFFFFF",       # Crisp white sidebar
     "bg_card": "#FFFFFF",          # Crisp white card surfaces
     "border_subtle": "#E2E8F0",    # Clean 1px structural borders
     "border_active": "#00439C",    # Active PlayStation blue border
-    "input_bg": "#F1F5F9",         # Light field background
+    "input_bg": "#F1F5F9",         # Light field / balloon background
     "input_border": "#CBD5E1",     # Input border color
     "tab_gray_act": "#E2E8F0",     # Active gray selection tab pill
     "tab_gray_border": "#CBD5E1",  # Active gray border
@@ -79,13 +93,63 @@ CALIB_PRESETS = {
 }
 
 
-def get_font_family() -> str:
-    """Detects available modern geometric sans-serif fonts."""
+def load_custom_fonts_win32() -> None:
+    """Registers bundled TTF fonts in Windows GDI process memory (no admin required)."""
+    if os.name != "nt" or not FONTS_DIR.exists():
+        return
     try:
+        import ctypes
+        for ttf_path in sorted(FONTS_DIR.glob("*.ttf")):
+            ctypes.windll.gdi32.AddFontResourceExW(str(ttf_path.resolve()), 0x10, 0)
+    except Exception:
+        pass
+
+
+def load_custom_fonts_qt() -> dict:
+    """Registers bundled TTF fonts in Qt's QFontDatabase and returns resolved family names."""
+    load_custom_fonts_win32()
+    families = {
+        "title": FONT_TITLE,
+        "heading": FONT_HEADING,
+        "body": FONT_BODY,
+    }
+    if not FONTS_DIR.exists():
+        return families
+    try:
+        from PySide6.QtGui import QFontDatabase
+        loaded = []
+        for ttf_path in sorted(FONTS_DIR.glob("*.ttf")):
+            fid = QFontDatabase.addApplicationFont(str(ttf_path.resolve()))
+            if fid >= 0:
+                loaded.extend(QFontDatabase.applicationFontFamilies(fid))
+        for fam in loaded:
+            low = fam.lower()
+            if "kanit" in low:
+                families["title"] = fam
+            elif "national park" in low:
+                families["heading"] = fam
+            elif "inter tight" in low:
+                families["body"] = fam
+    except Exception:
+        pass
+    return families
+
+
+def get_font_family() -> str:
+    """Detects available modern sans-serif fonts for Tkinter."""
+    load_custom_fonts_win32()
+    try:
+        import tkinter.font as tkfont
         families = [f.lower() for f in tkfont.families()]
-        for pref in ("montserrat", "poppins", "segoe ui", "helvetica", "arial"):
+        for pref in ("inter tight", "national park", "kanit", "montserrat", "poppins", "segoe ui", "helvetica", "arial"):
             for f in families:
                 if pref in f:
+                    if pref == "inter tight":
+                        return "Inter Tight"
+                    if pref == "national park":
+                        return "National Park"
+                    if pref == "kanit":
+                        return "Kanit"
                     return "Segoe UI" if pref == "segoe ui" else pref.title()
     except Exception:
         pass

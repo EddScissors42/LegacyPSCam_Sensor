@@ -1,10 +1,14 @@
 """
-Modern PlayStation 5-Themed Qt 6 User Interface for Legacy PSCam Sensor.
+Modern PlayStation-Themed Qt 6 User Interface for Legacy PSCam Sensor.
 Features:
+- Crisp White & Iconic PlayStation Blue (#00439C) aesthetic matching the original design.
+- Custom Typography:
+  * 'Kanit' for the brand title ("Legacy PSCam Sensor")
+  * 'National Park' for headings, navigation tabs, card titles, and buttons
+  * 'Inter Tight' for body text, status diagnostics, descriptions, and metadata
+- High-resolution supersampled Pillow icons converted directly to QPixmap (PS4 Camera, Webcam, Gear, Sliders, and Status X/Check/Warn badges).
 - Sliding navigation tabs with cubic easing transitions (60 FPS fluid animation).
-- Hardware-accelerated drop shadows and modern glass/card aesthetic.
 - State-aware video panel: when disconnected, displays strictly the status balloon and action button.
-- Asynchronous hotplug detection with Qt Signals and non-blocking timers.
 """
 import os
 import sys
@@ -29,20 +33,27 @@ except Exception:
 from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtCore import (
     Qt, QTimer, QPropertyAnimation, QEasingCurve,
-    QPoint, QRect, QSize, Signal, Slot, QParallelAnimationGroup
+    QPoint, QSize, Signal, Slot, QParallelAnimationGroup
 )
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QComboBox, QCheckBox, QStackedWidget,
-    QFrame, QGraphicsDropShadowEffect, QGraphicsOpacityEffect,
-    QSlider, QSpacerItem, QSizePolicy, QMessageBox
+    QFrame, QSlider, QMessageBox
 )
 from PySide6.QtGui import (
-    QColor, QFont, QPainter, QBrush, QPen, QPixmap, QIcon, QCursor, QImage
+    QPixmap, QIcon, QImage
 )
 
-from ui.theme import PALETTE, CALIB_PRESETS
-from ui.icons import generate_icons, generate_tab_icons, generate_status_icons
+from ui.theme import (
+    PALETTE, CALIB_PRESETS,
+    FONT_TITLE, FONT_HEADING, FONT_BODY,
+    load_custom_fonts_qt
+)
+from ui.icons import (
+    generate_icons_pil,
+    generate_tab_icons_pil,
+    generate_status_icons_pil
+)
 from assets import ICON_PSCAMERA_PATH
 from sensor.config_manager import ConfigManager, PRESETS_PSCAM, PRESETS_WEBCAM
 from sensor.camera_manager import CameraManager
@@ -51,19 +62,25 @@ from sensor import tracking_session
 
 
 def pil_to_qpixmap(pil_img) -> QPixmap:
-    """Converts a Pillow RGBA Image to a Qt QPixmap with antialiasing."""
+    """Converts a Pillow RGBA Image to a Qt QPixmap with explicit stride and deep copy."""
     if pil_img is None:
         return QPixmap()
     img_rgba = pil_img.convert("RGBA")
     data = img_rgba.tobytes("raw", "RGBA")
-    qimg = QImage(data, img_rgba.width, img_rgba.height, QImage.Format.Format_RGBA8888)
+    qimg = QImage(
+        data,
+        img_rgba.width,
+        img_rgba.height,
+        img_rgba.width * 4,
+        QImage.Format.Format_RGBA8888
+    ).copy()
     return QPixmap.fromImage(qimg)
 
 
 class SlidingStackedWidget(QStackedWidget):
     """
     QStackedWidget featuring hardware-friendly sliding animations between pages
-    with cubic easing curves inspired by the PlayStation 5 console UI.
+    with cubic easing curves.
     """
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -79,6 +96,9 @@ class SlidingStackedWidget(QStackedWidget):
 
         w = self.width()
         h = self.height()
+        if w <= 0 or h <= 0:
+            self.setCurrentIndex(index)
+            return
 
         offset = w if index > current_idx else -w
 
@@ -108,14 +128,236 @@ class SlidingStackedWidget(QStackedWidget):
             self.setCurrentIndex(index)
             current_widget.hide()
             current_widget.move(0, 0)
+            next_widget.move(0, 0)
             self._is_animating = False
 
         self.anim_group.finished.connect(on_finished)
         self.anim_group.start()
 
 
+class DeviceNavCard(QFrame):
+    """
+    Interactive rounded navigation card for the sidebar (PlayStation Camera / Standard Webcam).
+    Displays a crisp 38x26 icon on the left and two-line title/subtitle on the right.
+    """
+    clicked = Signal()
+
+    def __init__(self, title: str, subtitle: str, font_heading: str, font_body: str, parent=None):
+        super().__init__(parent)
+        self.font_heading = font_heading
+        self.font_body = font_body
+        self._is_active = False
+        self._pix_act = QPixmap()
+        self._pix_inact = QPixmap()
+
+        self.setFixedHeight(58)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(12, 8, 12, 8)
+        layout.setSpacing(10)
+
+        self.lbl_icon = QLabel(self)
+        self.lbl_icon.setFixedSize(38, 26)
+        self.lbl_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_icon.setStyleSheet("background: transparent; border: none;")
+        layout.addWidget(self.lbl_icon)
+
+        text_col = QVBoxLayout()
+        text_col.setContentsMargins(0, 0, 0, 0)
+        text_col.setSpacing(1)
+
+        self.lbl_title = QLabel(title, self)
+        self.lbl_sub = QLabel(subtitle, self)
+        text_col.addWidget(self.lbl_title)
+        text_col.addWidget(self.lbl_sub)
+        layout.addLayout(text_col, stretch=1)
+
+    def set_icons(self, pix_act: QPixmap, pix_inact: QPixmap):
+        self._pix_act = pix_act
+        self._pix_inact = pix_inact
+        self._refresh_visuals(hovered=False)
+
+    def set_active(self, active: bool):
+        self._is_active = active
+        self._refresh_visuals(hovered=False)
+
+    def _refresh_visuals(self, hovered: bool = False):
+        if self._is_active:
+            self.setStyleSheet(f"""
+                DeviceNavCard {{
+                    background-color: {PALETTE["ps_blue"]};
+                    border: 1px solid {PALETTE["ps_blue"]};
+                    border-radius: 12px;
+                }}
+            """)
+            self.lbl_title.setStyleSheet(
+                f"font-family: '{self.font_heading}'; font-size: 12px; font-weight: bold; color: {PALETTE['text_white']}; background: transparent; border: none;"
+            )
+            self.lbl_sub.setStyleSheet(
+                f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['blue_pastel']}; background: transparent; border: none;"
+            )
+            if not self._pix_act.isNull():
+                self.lbl_icon.setPixmap(self._pix_act)
+        else:
+            bg = "#F1F5F9" if hovered else "#F8FAFC"
+            bdr = "#CBD5E1" if hovered else PALETTE["border_subtle"]
+            self.setStyleSheet(f"""
+                DeviceNavCard {{
+                    background-color: {bg};
+                    border: 1px solid {bdr};
+                    border-radius: 12px;
+                }}
+            """)
+            self.lbl_title.setStyleSheet(
+                f"font-family: '{self.font_heading}'; font-size: 12px; font-weight: bold; color: {PALETTE['text_main']}; background: transparent; border: none;"
+            )
+            self.lbl_sub.setStyleSheet(
+                f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
+            )
+            if not self._pix_inact.isNull():
+                self.lbl_icon.setPixmap(self._pix_inact)
+
+    def enterEvent(self, event):
+        if not self._is_active:
+            self._refresh_visuals(hovered=True)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        if not self._is_active:
+            self._refresh_visuals(hovered=False)
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(event)
+
+
+class CalibPresetCard(QFrame):
+    """Interactive card for calibration presets (Balanced, Competitive, Ultra Stable)."""
+    clicked = Signal(str)
+
+    def __init__(self, preset_id: str, pdata: dict, font_heading: str, font_body: str, parent=None):
+        super().__init__(parent)
+        self.preset_id = preset_id
+        self.pdata = pdata
+        self.font_heading = font_heading
+        self.font_body = font_body
+        self._is_active = False
+
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFixedHeight(140)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(4)
+
+        top_row = QHBoxLayout()
+        top_row.setContentsMargins(0, 0, 0, 0)
+        self.lbl_title = QLabel(f"{pdata['icon']} {pdata['title']}", self)
+        self.lbl_tag = QLabel(pdata["tag"], self)
+        top_row.addWidget(self.lbl_title)
+        top_row.addStretch()
+        top_row.addWidget(self.lbl_tag)
+        layout.addLayout(top_row)
+
+        self.lbl_sub = QLabel(pdata["subtitle"], self)
+        layout.addWidget(self.lbl_sub)
+
+        self.lbl_desc = QLabel(pdata["desc"], self)
+        self.lbl_desc.setWordWrap(True)
+        layout.addWidget(self.lbl_desc, stretch=1)
+
+        bot_row = QHBoxLayout()
+        bot_row.setContentsMargins(0, 2, 0, 0)
+        self.lbl_specs = QLabel(pdata["specs"], self)
+        self.lbl_ind = QLabel("○ Select", self)
+        bot_row.addWidget(self.lbl_specs)
+        bot_row.addStretch()
+        bot_row.addWidget(self.lbl_ind)
+        layout.addLayout(bot_row)
+
+        self.set_active(False)
+
+    def set_active(self, active: bool, hovered: bool = False):
+        self._is_active = active
+        if active:
+            bg = PALETTE["ps_blue_tint"]
+            self.setStyleSheet(f"""
+                CalibPresetCard {{
+                    background-color: {bg};
+                    border: 2px solid {PALETTE["ps_blue"]};
+                    border-radius: 10px;
+                }}
+            """)
+            self.lbl_title.setStyleSheet(
+                f"font-family: '{self.font_heading}'; font-size: 12px; font-weight: bold; color: {PALETTE['ps_blue']}; background: transparent; border: none;"
+            )
+            self.lbl_tag.setStyleSheet(
+                f"font-family: '{self.font_heading}'; font-size: 8px; font-weight: bold; color: #FFFFFF; background-color: {PALETTE['ps_blue']}; padding: 2px 6px; border-radius: 4px; border: none;"
+            )
+            self.lbl_sub.setStyleSheet(
+                f"font-family: '{self.font_heading}'; font-size: 10px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent; border: none;"
+            )
+            self.lbl_desc.setStyleSheet(
+                f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_main']}; background: transparent; border: none;"
+            )
+            self.lbl_specs.setStyleSheet(
+                f"font-family: '{self.font_body}'; font-size: 9px; color: {PALETTE['ps_blue']}; background: transparent; border: none;"
+            )
+            self.lbl_ind.setText("Active")
+            self.lbl_ind.setStyleSheet(
+                f"font-family: '{self.font_heading}'; font-size: 10px; font-weight: bold; color: {PALETTE['ps_blue']}; background: transparent; border: none;"
+            )
+        else:
+            bg = PALETTE["bg_card"]
+            bdr = PALETTE["input_border"] if hovered else PALETTE["border_subtle"]
+            self.setStyleSheet(f"""
+                CalibPresetCard {{
+                    background-color: {bg};
+                    border: 1px solid {bdr};
+                    border-radius: 10px;
+                }}
+            """)
+            self.lbl_title.setStyleSheet(
+                f"font-family: '{self.font_heading}'; font-size: 12px; font-weight: bold; color: {PALETTE['text_main']}; background: transparent; border: none;"
+            )
+            self.lbl_tag.setStyleSheet(
+                f"font-family: '{self.font_heading}'; font-size: 8px; font-weight: bold; color: {PALETTE['text_muted']}; background-color: {PALETTE['input_bg']}; padding: 2px 6px; border-radius: 4px; border: none;"
+            )
+            self.lbl_sub.setStyleSheet(
+                f"font-family: '{self.font_heading}'; font-size: 10px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent; border: none;"
+            )
+            self.lbl_desc.setStyleSheet(
+                f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
+            )
+            self.lbl_specs.setStyleSheet(
+                f"font-family: '{self.font_body}'; font-size: 9px; color: {PALETTE['text_dim']}; background: transparent; border: none;"
+            )
+            self.lbl_ind.setText("○ Select")
+            self.lbl_ind.setStyleSheet(
+                f"font-family: '{self.font_heading}'; font-size: 10px; font-weight: bold; color: {PALETTE['text_dim']}; background: transparent; border: none;"
+            )
+
+    def enterEvent(self, event):
+        if not self._is_active:
+            self.set_active(False, hovered=True)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        if not self._is_active:
+            self.set_active(False, hovered=False)
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit(self.preset_id)
+        super().mousePressEvent(event)
+
+
 class LegacySensorQtGUI(QMainWindow):
-    """Modern PlayStation 5-themed primary window."""
+    """Modern Crisp-White & PlayStation Blue primary window in Qt 6."""
     cameras_refreshed_signal = Signal(list)
     tracking_finished_signal = Signal(bool, str)
 
@@ -128,6 +370,12 @@ class LegacySensorQtGUI(QMainWindow):
         self.setMinimumSize(920, 550)
         if ICON_PSCAMERA_PATH.exists():
             self.setWindowIcon(QIcon(str(ICON_PSCAMERA_PATH)))
+
+        # Register bundled custom fonts (Kanit, National Park, Inter Tight)
+        loaded_fonts = load_custom_fonts_qt()
+        self.font_title = loaded_fonts.get("title", FONT_TITLE)
+        self.font_heading = loaded_fonts.get("heading", FONT_HEADING)
+        self.font_body = loaded_fonts.get("body", FONT_BODY)
 
         # Initialize shared memory bridges immediately on startup so Just Dance connects seamlessly
         self.bridge = KinectBridge()
@@ -167,185 +415,196 @@ class LegacySensorQtGUI(QMainWindow):
         self.timer_periodic.start(1000)
 
     def _load_pixmaps(self):
-        """Loads and converts PIL icons into antialiased QPixmaps."""
+        """Loads pure PIL RGBA icons and converts them into antialiased QPixmaps."""
         try:
-            p_ps_act, p_ps_inact, p_web_act, p_web_inact = generate_icons()
+            p_ps_act, p_ps_inact, p_web_act, p_web_inact = generate_icons_pil()
             self.pix_ps_act = pil_to_qpixmap(p_ps_act)
             self.pix_ps_inact = pil_to_qpixmap(p_ps_inact)
             self.pix_web_act = pil_to_qpixmap(p_web_act)
             self.pix_web_inact = pil_to_qpixmap(p_web_inact)
-        except Exception:
+        except Exception as e:
+            print(f"[WARN] Failed to load device icons: {e}")
             self.pix_ps_act = self.pix_ps_inact = self.pix_web_act = self.pix_web_inact = QPixmap()
 
         try:
-            p_gear_act, p_gear_inact, p_slid_act, p_slid_inact = generate_tab_icons()
+            p_gear_act, p_gear_inact, p_slid_act, p_slid_inact = generate_tab_icons_pil()
             self.pix_gear_act = pil_to_qpixmap(p_gear_act)
             self.pix_gear_inact = pil_to_qpixmap(p_gear_inact)
             self.pix_slid_act = pil_to_qpixmap(p_slid_act)
             self.pix_slid_inact = pil_to_qpixmap(p_slid_inact)
-        except Exception:
+        except Exception as e:
+            print(f"[WARN] Failed to load tab icons: {e}")
             self.pix_gear_act = self.pix_gear_inact = self.pix_slid_act = self.pix_slid_inact = QPixmap()
 
         try:
-            p_err, p_ok, p_warn = generate_status_icons(size=(38, 38))
+            p_err, p_ok, p_warn = generate_status_icons_pil(size=(38, 38))
             self.pix_status_err = pil_to_qpixmap(p_err)
             self.pix_status_ok = pil_to_qpixmap(p_ok)
             self.pix_status_warn = pil_to_qpixmap(p_warn)
-        except Exception:
+        except Exception as e:
+            print(f"[WARN] Failed to load status icons: {e}")
             self.pix_status_err = self.pix_status_ok = self.pix_status_warn = QPixmap()
 
     def _setup_style(self):
-        """Applies a dark PlayStation console stylesheet (QSS)."""
-        self.setStyleSheet("""
-            QMainWindow, QWidget#centralWidget {
-                background-color: #0B111E;
-                color: #F8FAFC;
-                font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
-            }
-            QFrame#sidebar {
-                background-color: #0F172A;
-                border-right: 1px solid #1E293B;
-            }
-            QFrame.card {
-                background-color: #162032;
-                border: 1px solid #1E293B;
-                border-radius: 12px;
-            }
-            QFrame.status_balloon {
-                background-color: #131D2D;
-                border: 1px solid #334155;
-                border-radius: 12px;
-            }
-            QFrame.spec_badge {
-                background-color: #1E3A5F;
-                border: 1px solid #2563EB;
+        """Applies the Crisp White & PlayStation Blue stylesheet (QSS)."""
+        self.setStyleSheet(f"""
+            QMainWindow, QWidget#centralWidget {{
+                background-color: {PALETTE["bg_window"]};
+                color: {PALETTE["text_main"]};
+                font-family: '{self.font_body}', 'Segoe UI', sans-serif;
+            }}
+            QFrame#sidebar {{
+                background-color: {PALETTE["bg_sidebar"]};
+                border-right: 1px solid {PALETTE["border_subtle"]};
+            }}
+            QFrame[class="card"] {{
+                background-color: {PALETTE["bg_card"]};
+                border: 1px solid {PALETTE["border_subtle"]};
                 border-radius: 10px;
-            }
-            QPushButton.btn_cta {
-                background-color: #0070D1;
+            }}
+            QFrame[class="status_balloon"] {{
+                background-color: {PALETTE["input_bg"]};
+                border: 1px solid {PALETTE["border_subtle"]};
+                border-radius: 12px;
+            }}
+            QFrame[class="spec_badge"] {{
+                background-color: {PALETTE["blue_pastel"]};
+                border: none;
+                border-radius: 8px;
+            }}
+            QPushButton[class="btn_cta"] {{
+                background-color: {PALETTE["ps_blue"]};
                 color: #FFFFFF;
+                font-family: '{self.font_heading}', sans-serif;
                 font-weight: bold;
-                font-size: 13px;
-                border-radius: 10px;
+                font-size: 14px;
+                border-radius: 8px;
                 padding: 12px;
                 border: none;
-            }
-            QPushButton.btn_cta:hover {
-                background-color: #0082F0;
-            }
-            QPushButton.btn_cta:pressed {
-                background-color: #005BB5;
-            }
-            QPushButton.btn_cta:disabled {
-                background-color: #334155;
+            }}
+            QPushButton[class="btn_cta"]:hover {{
+                background-color: {PALETTE["ps_blue_hover"]};
+            }}
+            QPushButton[class="btn_cta"]:pressed {{
+                background-color: {PALETTE["ps_blue_active"]};
+            }}
+            QPushButton[class="btn_cta"]:disabled {{
+                background-color: #CBD5E1;
                 color: #64748B;
-            }
-            QPushButton.btn_secondary {
-                background-color: #1E3A5F;
-                color: #38BDF8;
+            }}
+            QPushButton[class="btn_secondary"] {{
+                background-color: {PALETTE["blue_pastel"]};
+                color: {PALETTE["blue_dark"]};
+                font-family: '{self.font_heading}', sans-serif;
                 font-weight: bold;
                 font-size: 11px;
                 border-radius: 8px;
                 padding: 8px 12px;
-                border: 1px solid #2563EB;
-            }
-            QPushButton.btn_secondary:hover {
-                background-color: #2563EB;
-                color: #FFFFFF;
-            }
-            QPushButton.btn_secondary:pressed {
-                background-color: #1D4ED8;
-            }
-            QPushButton.btn_secondary:disabled {
-                background-color: #162032;
-                color: #64748B;
-                border-color: #1E293B;
-            }
-            QPushButton.btn_balloon_action {
-                background-color: #131D2D;
-                color: #FFFFFF;
+                border: none;
+            }}
+            QPushButton[class="btn_secondary"]:hover {{
+                background-color: {PALETTE["blue_pastel_hover"]};
+            }}
+            QPushButton[class="btn_secondary"]:pressed {{
+                background-color: #B8E2F2;
+            }}
+            QPushButton[class="btn_secondary"]:disabled {{
+                background-color: {PALETTE["input_bg"]};
+                color: {PALETTE["text_muted"]};
+            }}
+            QPushButton[class="btn_balloon_action"] {{
+                background-color: #F8FAFC;
+                color: {PALETTE["blue_dark"]};
+                font-family: '{self.font_heading}', sans-serif;
                 font-weight: bold;
-                font-size: 11px;
-                border: 1px solid #1E293B;
+                font-size: 12px;
+                border: 1px solid {PALETTE["border_subtle"]};
                 border-radius: 12px;
                 padding: 10px 16px;
                 text-align: center;
-            }
-            QPushButton.btn_balloon_action:hover {
-                background-color: #1E293B;
-                border-color: #334155;
-            }
-            QPushButton.btn_balloon_action:pressed {
-                background-color: #0F172A;
-            }
-            QPushButton.btn_balloon_action:disabled {
-                background-color: #131D2D;
-                color: #475569;
-                border-color: #1E293B;
-            }
-            QComboBox {
-                background-color: #131D2D;
-                color: #F8FAFC;
-                border: 1px solid #334155;
-                border-radius: 8px;
+            }}
+            QPushButton[class="btn_balloon_action"]:hover {{
+                background-color: #F1F5F9;
+                border-color: {PALETTE["input_border"]};
+            }}
+            QPushButton[class="btn_balloon_action"]:pressed {{
+                background-color: {PALETTE["blue_pastel"]};
+            }}
+            QPushButton[class="btn_balloon_action"]:disabled {{
+                background-color: {PALETTE["input_bg"]};
+                color: {PALETTE["text_muted"]};
+                border-color: {PALETTE["border_subtle"]};
+            }}
+            QComboBox {{
+                background-color: {PALETTE["input_bg"]};
+                color: {PALETTE["text_main"]};
+                font-family: '{self.font_body}', sans-serif;
+                border: 1px solid {PALETTE["input_border"]};
+                border-radius: 6px;
                 padding: 6px 12px;
-                font-size: 11px;
-            }
-            QComboBox:hover {
-                border-color: #0070D1;
-            }
-            QComboBox::drop-down {
+                font-size: 12px;
+            }}
+            QComboBox:hover {{
+                border-color: {PALETTE["ps_blue"]};
+            }}
+            QComboBox::drop-down {{
                 subcontrol-origin: padding;
                 subcontrol-position: top right;
                 width: 24px;
-                border-left: 1px solid #334155;
-            }
-            QComboBox QAbstractItemView {
-                background-color: #162032;
-                color: #F8FAFC;
-                selection-background-color: #0070D1;
-                border: 1px solid #334155;
+                border-left: 1px solid {PALETTE["input_border"]};
+                background-color: {PALETTE["blue_pastel"]};
+                border-top-right-radius: 6px;
+                border-bottom-right-radius: 6px;
+            }}
+            QComboBox QAbstractItemView {{
+                background-color: #FFFFFF;
+                color: {PALETTE["text_main"]};
+                selection-background-color: {PALETTE["ps_blue"]};
+                selection-color: #FFFFFF;
+                border: 1px solid {PALETTE["input_border"]};
                 border-radius: 6px;
-            }
-            QCheckBox {
-                color: #E2E8F0;
-                font-size: 11px;
+            }}
+            QCheckBox {{
+                color: {PALETTE["text_main"]};
+                font-family: '{self.font_body}', sans-serif;
+                font-size: 12px;
                 spacing: 8px;
-            }
-            QCheckBox::indicator {
+                background: transparent;
+            }}
+            QCheckBox::indicator {{
                 width: 18px;
                 height: 18px;
-                border-radius: 5px;
-                border: 1px solid #334155;
-                background-color: #131D2D;
-            }
-            QCheckBox::indicator:hover {
-                border-color: #0070D1;
-            }
-            QCheckBox::indicator:checked {
-                background-color: #0070D1;
-                border-color: #0070D1;
-            }
-            QSlider::groove:horizontal {
+                border-radius: 4px;
+                border: 1px solid {PALETTE["input_border"]};
+                background-color: #FFFFFF;
+            }}
+            QCheckBox::indicator:hover {{
+                border-color: {PALETTE["ps_blue"]};
+            }}
+            QCheckBox::indicator:checked {{
+                background-color: {PALETTE["ps_blue"]};
+                border-color: {PALETTE["ps_blue"]};
+            }}
+            QSlider::groove:horizontal {{
                 height: 6px;
-                background: #1E293B;
+                background: {PALETTE["blue_pastel"]};
                 border-radius: 3px;
-            }
-            QSlider::sub-page:horizontal {
-                background: #0070D1;
+            }}
+            QSlider::sub-page:horizontal {{
+                background: {PALETTE["ps_blue"]};
                 border-radius: 3px;
-            }
-            QSlider::handle:horizontal {
-                background: #38BDF8;
+            }}
+            QSlider::handle:horizontal {{
+                background: {PALETTE["ps_blue"]};
                 width: 16px;
                 margin-top: -5px;
                 margin-bottom: -5px;
                 border-radius: 8px;
-            }
+            }}
         """)
 
     def _build_ui(self):
-        """Builds the main PlayStation console layout with horizontal split."""
+        """Builds the main horizontal split layout."""
         central_widget = QWidget(self)
         central_widget.setObjectName("centralWidget")
         self.setCentralWidget(central_widget)
@@ -355,92 +614,121 @@ class LegacySensorQtGUI(QMainWindow):
         master_layout.setSpacing(0)
 
         # =====================================================================
-        # 1. LEFT SIDEBAR (Width 270)
+        # 1. LEFT SIDEBAR (Width 270, Crisp White)
         # =====================================================================
         self.sidebar_frame = QFrame(central_widget)
         self.sidebar_frame.setObjectName("sidebar")
         self.sidebar_frame.setFixedWidth(270)
         sidebar_layout = QVBoxLayout(self.sidebar_frame)
-        sidebar_layout.setContentsMargins(20, 22, 20, 20)
-        sidebar_layout.setSpacing(12)
+        sidebar_layout.setContentsMargins(18, 20, 18, 20)
+        sidebar_layout.setSpacing(0)
 
-        # 1.1 Brand Header
-        brand_layout = QHBoxLayout()
-        lbl_brand_title = QLabel("LEGACY PSCAM", self.sidebar_frame)
-        lbl_brand_title.setStyleSheet("font-size: 15px; font-weight: bold; color: #FFFFFF; letter-spacing: 1px;")
-        lbl_brand_sub = QLabel("SENSOR", self.sidebar_frame)
-        lbl_brand_sub.setStyleSheet("font-size: 15px; font-weight: bold; color: #0070D1; letter-spacing: 1px;")
-        brand_layout.addWidget(lbl_brand_title)
-        brand_layout.addWidget(lbl_brand_sub)
-        brand_layout.addStretch()
-        sidebar_layout.addLayout(brand_layout)
+        # 1.1 Brand Header (Simple visual using Kanit font)
+        lbl_brand = QLabel("Legacy PSCam Sensor", self.sidebar_frame)
+        lbl_brand.setStyleSheet(
+            f"font-family: '{self.font_title}'; font-size: 20px; font-weight: 600; color: {PALETTE['ps_blue']}; background: transparent;"
+        )
+        sidebar_layout.addWidget(lbl_brand)
 
-        lbl_desc = QLabel("Motion Tracker for Just Dance PC", self.sidebar_frame)
-        lbl_desc.setStyleSheet("font-size: 10px; color: #64748B;")
-        sidebar_layout.addWidget(lbl_desc)
+        lbl_edition = QLabel("for Legacy Offline PC", self.sidebar_frame)
+        lbl_edition.setStyleSheet(
+            f"font-family: '{self.font_body}'; font-size: 11px; font-weight: bold; color: {PALETTE['text_muted']}; background: transparent;"
+        )
+        sidebar_layout.addWidget(lbl_edition)
+        sidebar_layout.addSpacing(14)
 
+        # Divider
+        div_line = QFrame(self.sidebar_frame)
+        div_line.setFrameShape(QFrame.Shape.HLine)
+        div_line.setStyleSheet(f"background-color: {PALETTE['border_subtle']}; max-height: 1px; border: none;")
+        sidebar_layout.addWidget(div_line)
+        sidebar_layout.addSpacing(14)
+
+        # 1.2 Device Switcher Section Title
+        lbl_devices_hdr = QLabel("CAPTURE DEVICE", self.sidebar_frame)
+        lbl_devices_hdr.setStyleSheet(
+            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent;"
+        )
+        sidebar_layout.addWidget(lbl_devices_hdr)
         sidebar_layout.addSpacing(8)
 
-        # 1.2 Device Switcher Cards
-        lbl_devices_hdr = QLabel("INPUT DEVICE", self.sidebar_frame)
-        lbl_devices_hdr.setStyleSheet("font-size: 10px; font-weight: bold; color: #475569; letter-spacing: 0.5px;")
-        sidebar_layout.addWidget(lbl_devices_hdr)
+        # 1.3 Card PS Camera (with supersampled icon)
+        self.card_pscam = DeviceNavCard(
+            "PlayStation®Camera",
+            "OV580 Stereo • 60 FPS",
+            self.font_heading,
+            self.font_body,
+            self.sidebar_frame
+        )
+        self.card_pscam.set_icons(self.pix_ps_act, self.pix_ps_inact)
+        self.card_pscam.clicked.connect(lambda: self._set_mode("pscam"))
+        sidebar_layout.addWidget(self.card_pscam)
+        sidebar_layout.addSpacing(8)
 
-        # Card PS Camera
-        self.btn_card_pscam = QPushButton(self.sidebar_frame)
-        self.btn_card_pscam.setFixedHeight(58)
-        self.btn_card_pscam.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_card_pscam.clicked.connect(lambda: self._set_mode("pscam"))
-        sidebar_layout.addWidget(self.btn_card_pscam)
+        # 1.4 Card Standard Webcam (with supersampled icon)
+        self.card_webcam = DeviceNavCard(
+            "Standard Webcam",
+            "USB or Integrated",
+            self.font_heading,
+            self.font_body,
+            self.sidebar_frame
+        )
+        self.card_webcam.set_icons(self.pix_web_act, self.pix_web_inact)
+        self.card_webcam.clicked.connect(lambda: self._set_mode("webcam"))
+        sidebar_layout.addWidget(self.card_webcam)
+        sidebar_layout.addSpacing(16)
 
-        # Card Webcam
-        self.btn_card_webcam = QPushButton(self.sidebar_frame)
-        self.btn_card_webcam.setFixedHeight(58)
-        self.btn_card_webcam.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_card_webcam.clicked.connect(lambda: self._set_mode("webcam"))
-        sidebar_layout.addWidget(self.btn_card_webcam)
-
-        sidebar_layout.addSpacing(6)
-
-        # 1.3 Quick Action: Open Kinect10.dll folder
-        self.btn_dll_folder = QPushButton("📁 Open Kinect10.dll Folder", self.sidebar_frame)
+        # 1.5 Quick Action: Open Kinect10.dll folder
+        self.btn_dll_folder = QPushButton("Open Kinect10.dll Folder", self.sidebar_frame)
         self.btn_dll_folder.setProperty("class", "btn_secondary")
         self.btn_dll_folder.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_dll_folder.clicked.connect(self._open_dll_folder)
         sidebar_layout.addWidget(self.btn_dll_folder)
+        sidebar_layout.addSpacing(6)
 
-        lbl_dll_tip = QLabel("Copy Kinect10.dll to your Just Dance\nfolder to enable motion capture.", self.sidebar_frame)
-        lbl_dll_tip.setStyleSheet("font-size: 9px; color: #64748B; line-height: 1.3;")
+        lbl_dll_tip = QLabel("Copy Kinect10.dll to the game\nfolder to enable motion capture.", self.sidebar_frame)
+        lbl_dll_tip.setStyleSheet(
+            f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent;"
+        )
         sidebar_layout.addWidget(lbl_dll_tip)
 
         sidebar_layout.addStretch()
 
-        # 1.4 Mini Credits
+        # 1.6 Mini Credits
         lbl_cred1 = QLabel("Original Legacy Sensor by itsVexor", self.sidebar_frame)
-        lbl_cred1.setStyleSheet("font-size: 9px; color: #475569;")
+        lbl_cred1.setStyleSheet(
+            f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent;"
+        )
         lbl_cred2 = QLabel("PSCam4Win by BumbleTree", self.sidebar_frame)
-        lbl_cred2.setStyleSheet("font-size: 9px; color: #475569;")
+        lbl_cred2.setStyleSheet(
+            f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent;"
+        )
         sidebar_layout.addWidget(lbl_cred1)
+        sidebar_layout.addSpacing(2)
         sidebar_layout.addWidget(lbl_cred2)
+        sidebar_layout.addSpacing(8)
 
-        sidebar_layout.addSpacing(4)
-
-        # 1.5 IPC Bridge Status Badge
+        # 1.7 IPC Bridge Status Badge
         ipc_badge = QFrame(self.sidebar_frame)
-        ipc_badge.setStyleSheet("""
-            background-color: #064E3B;
-            border: 1px solid #10B981;
-            border-radius: 8px;
-            padding: 4px;
+        ipc_badge.setStyleSheet(f"""
+            QFrame {{
+                background-color: {PALETTE["status_ok_bg"]};
+                border: 1px solid {PALETTE["status_ok"]};
+                border-radius: 8px;
+            }}
         """)
         ipc_layout = QVBoxLayout(ipc_badge)
-        ipc_layout.setContentsMargins(8, 6, 8, 6)
-        ipc_layout.setSpacing(2)
+        ipc_layout.setContentsMargins(10, 6, 10, 6)
+        ipc_layout.setSpacing(1)
 
-        lbl_ipc = QLabel("● IPC Bridge Active", ipc_badge)
-        lbl_ipc.setStyleSheet("font-size: 11px; font-weight: bold; color: #34D399; background: transparent;")
+        lbl_ipc = QLabel("● IPC Bridge Ready", ipc_badge)
+        lbl_ipc.setStyleSheet(
+            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['status_ok']}; background: transparent; border: none;"
+        )
         lbl_ipc_sub = QLabel("JDP1 (Pose) & JMI1 (Silhouette)", ipc_badge)
-        lbl_ipc_sub.setStyleSheet("font-size: 9px; color: #A7F3D0; background: transparent;")
+        lbl_ipc_sub.setStyleSheet(
+            f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
+        )
         ipc_layout.addWidget(lbl_ipc)
         ipc_layout.addWidget(lbl_ipc_sub)
         sidebar_layout.addWidget(ipc_badge)
@@ -452,22 +740,22 @@ class LegacySensorQtGUI(QMainWindow):
         # =====================================================================
         self.content_widget = QWidget(central_widget)
         content_layout = QVBoxLayout(self.content_widget)
-        content_layout.setContentsMargins(28, 20, 28, 20)
+        content_layout.setContentsMargins(26, 20, 26, 20)
         content_layout.setSpacing(14)
 
         # 2.1 Top Tab Navigation Strip (Centered)
         top_nav_layout = QHBoxLayout()
-        top_nav_layout.setContentsMargins(0, 0, 0, 4)
+        top_nav_layout.setContentsMargins(0, 0, 0, 2)
 
         self.btn_tab_video = QPushButton("  Video Settings", self.content_widget)
-        self.btn_tab_video.setFixedSize(144, 40)
+        self.btn_tab_video.setFixedSize(148, 42)
         self.btn_tab_video.setIcon(QIcon(self.pix_gear_act))
         self.btn_tab_video.setIconSize(QSize(18, 18))
         self.btn_tab_video.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_tab_video.clicked.connect(lambda: self._switch_tab("video"))
 
         self.btn_tab_calib = QPushButton("  Calibration", self.content_widget)
-        self.btn_tab_calib.setFixedSize(126, 40)
+        self.btn_tab_calib.setFixedSize(130, 42)
         self.btn_tab_calib.setIcon(QIcon(self.pix_slid_inact))
         self.btn_tab_calib.setIconSize(QSize(18, 18))
         self.btn_tab_calib.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -481,10 +769,10 @@ class LegacySensorQtGUI(QMainWindow):
         content_layout.addLayout(top_nav_layout)
         self._apply_tab_styles("video")
 
-        # Separator line
+        # Full horizontal separator line under tab strip
         sep = QFrame(self.content_widget)
         sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet("background-color: #1E293B; max-height: 1px;")
+        sep.setStyleSheet(f"background-color: {PALETTE['border_subtle']}; max-height: 1px; border: none;")
         content_layout.addWidget(sep)
 
         # 2.2 Animated Sliding Stacked Widget
@@ -504,10 +792,15 @@ class LegacySensorQtGUI(QMainWindow):
         content_layout.addWidget(self.btn_start)
 
         footer_layout = QHBoxLayout()
+        footer_layout.setContentsMargins(0, 2, 0, 0)
         lbl_author = QLabel("Made by Edd <3", self.content_widget)
-        lbl_author.setStyleSheet("font-size: 10px; color: #64748B;")
-        lbl_ver = QLabel("Legacy PSCam Sensor v0.5 (Qt6)", self.content_widget)
-        lbl_ver.setStyleSheet("font-size: 10px; color: #475569;")
+        lbl_author.setStyleSheet(
+            f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['text_muted']}; background: transparent;"
+        )
+        lbl_ver = QLabel("Legacy PSCam Sensor v0.5", self.content_widget)
+        lbl_ver.setStyleSheet(
+            f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['text_dim']}; background: transparent;"
+        )
         footer_layout.addWidget(lbl_author)
         footer_layout.addStretch()
         footer_layout.addWidget(lbl_ver)
@@ -519,14 +812,14 @@ class LegacySensorQtGUI(QMainWindow):
         """Constructs Page 0: Video Settings."""
         self.page_video = QWidget()
         layout = QVBoxLayout(self.page_video)
-        layout.setContentsMargins(0, 8, 0, 0)
+        layout.setContentsMargins(0, 4, 0, 0)
         layout.setSpacing(12)
 
         # =====================================================================
         # 1. PlayStation Camera Views
         # =====================================================================
         # 1.1 Disconnected Balloon (Shown as the ONLY element when disconnected)
-        self.pscam_disconnected_box = QFrame(self.page_video)
+        self.pscam_disconnected_box = QWidget(self.page_video)
         ps_disc_layout = QVBoxLayout(self.pscam_disconnected_box)
         ps_disc_layout.setContentsMargins(0, 0, 0, 0)
         ps_disc_layout.setSpacing(10)
@@ -534,20 +827,25 @@ class LegacySensorQtGUI(QMainWindow):
         self.pscam_status_card = QFrame(self.pscam_disconnected_box)
         self.pscam_status_card.setProperty("class", "status_balloon")
         card_layout = QHBoxLayout(self.pscam_status_card)
-        card_layout.setContentsMargins(18, 16, 18, 16)
-        card_layout.setSpacing(16)
+        card_layout.setContentsMargins(16, 14, 16, 14)
+        card_layout.setSpacing(14)
 
         self.lbl_pscam_icon = QLabel(self.pscam_status_card)
         self.lbl_pscam_icon.setPixmap(self.pix_status_err)
         self.lbl_pscam_icon.setFixedSize(38, 38)
+        self.lbl_pscam_icon.setStyleSheet("background: transparent; border: none;")
         card_layout.addWidget(self.lbl_pscam_icon)
 
         text_col = QVBoxLayout()
-        text_col.setSpacing(4)
+        text_col.setSpacing(2)
         self.lbl_pscam_conn_title = QLabel("PlayStation Camera not connected", self.pscam_status_card)
-        self.lbl_pscam_conn_title.setStyleSheet("font-size: 13px; font-weight: bold; color: #FFFFFF;")
+        self.lbl_pscam_conn_title.setStyleSheet(
+            f"font-family: '{self.font_heading}'; font-size: 14px; font-weight: bold; color: {PALETTE['text_main']}; background: transparent; border: none;"
+        )
         self.lbl_pscam_info = QLabel("Driver Offline and Camera disconnected from USB Port", self.pscam_status_card)
-        self.lbl_pscam_info.setStyleSheet("font-size: 11px; color: #94A3B8;")
+        self.lbl_pscam_info.setStyleSheet(
+            f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
+        )
         text_col.addWidget(self.lbl_pscam_conn_title)
         text_col.addWidget(self.lbl_pscam_info)
         card_layout.addLayout(text_col, stretch=1)
@@ -565,25 +863,38 @@ class LegacySensorQtGUI(QMainWindow):
         self.pscam_card = QFrame(self.page_video)
         self.pscam_card.setProperty("class", "card")
         ps_conn_layout = QVBoxLayout(self.pscam_card)
-        ps_conn_layout.setContentsMargins(18, 16, 18, 16)
-        ps_conn_layout.setSpacing(10)
+        ps_conn_layout.setContentsMargins(16, 14, 16, 14)
+        ps_conn_layout.setSpacing(8)
 
         lbl_ps_title = QLabel("PLAYSTATION®CAMERA INTEGRATION", self.pscam_card)
-        lbl_ps_title.setStyleSheet("font-size: 12px; font-weight: bold; color: #38BDF8; letter-spacing: 0.5px;")
+        lbl_ps_title.setStyleSheet(
+            f"font-family: '{self.font_heading}'; font-size: 12px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent; border: none;"
+        )
         ps_conn_layout.addWidget(lbl_ps_title)
 
         self.lbl_pscam_ready_info = QLabel("Driver active and PlayStation®Camera connected (60 FPS)", self.pscam_card)
-        self.lbl_pscam_ready_info.setStyleSheet("font-size: 11px; color: #10B981;")
+        self.lbl_pscam_ready_info.setStyleSheet(
+            f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['status_ok']}; background: transparent; border: none;"
+        )
         ps_conn_layout.addWidget(self.lbl_pscam_ready_info)
 
         spec_badge = QFrame(self.pscam_card)
         spec_badge.setProperty("class", "spec_badge")
         spec_layout = QVBoxLayout(spec_badge)
-        spec_layout.setContentsMargins(14, 10, 14, 10)
+        spec_layout.setContentsMargins(12, 10, 12, 10)
+        spec_layout.setSpacing(2)
         lbl_spec_title = QLabel("Optimized Auto Mode: 1280x800 @ 60 FPS (OV580 Stereo DirectShow)", spec_badge)
-        lbl_spec_title.setStyleSheet("font-size: 11px; font-weight: bold; color: #FFFFFF;")
-        lbl_spec_sub = QLabel("Resolution picker is hidden in this tab because the PlayStation®Camera operates in the driver's native format.", spec_badge)
-        lbl_spec_sub.setStyleSheet("font-size: 10px; color: #93C5FD;")
+        lbl_spec_title.setStyleSheet(
+            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent; border: none;"
+        )
+        lbl_spec_sub = QLabel(
+            "Resolution picker is hidden in this tab because the PlayStation®Camera operates in the driver's native format.",
+            spec_badge
+        )
+        lbl_spec_sub.setWordWrap(True)
+        lbl_spec_sub.setStyleSheet(
+            f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
+        )
         spec_layout.addWidget(lbl_spec_title)
         spec_layout.addWidget(lbl_spec_sub)
         ps_conn_layout.addWidget(spec_badge)
@@ -593,7 +904,7 @@ class LegacySensorQtGUI(QMainWindow):
         # 2. Webcam Views
         # =====================================================================
         # 2.1 Disconnected Balloon
-        self.webcam_disconnected_box = QFrame(self.page_video)
+        self.webcam_disconnected_box = QWidget(self.page_video)
         web_disc_layout = QVBoxLayout(self.webcam_disconnected_box)
         web_disc_layout.setContentsMargins(0, 0, 0, 0)
         web_disc_layout.setSpacing(10)
@@ -601,20 +912,25 @@ class LegacySensorQtGUI(QMainWindow):
         self.webcam_status_card = QFrame(self.webcam_disconnected_box)
         self.webcam_status_card.setProperty("class", "status_balloon")
         web_card_layout = QHBoxLayout(self.webcam_status_card)
-        web_card_layout.setContentsMargins(18, 16, 18, 16)
-        web_card_layout.setSpacing(16)
+        web_card_layout.setContentsMargins(16, 14, 16, 14)
+        web_card_layout.setSpacing(14)
 
         self.lbl_webcam_icon = QLabel(self.webcam_status_card)
         self.lbl_webcam_icon.setPixmap(self.pix_status_err)
         self.lbl_webcam_icon.setFixedSize(38, 38)
+        self.lbl_webcam_icon.setStyleSheet("background: transparent; border: none;")
         web_card_layout.addWidget(self.lbl_webcam_icon)
 
         web_text_col = QVBoxLayout()
-        web_text_col.setSpacing(4)
+        web_text_col.setSpacing(2)
         self.lbl_webcam_conn_title = QLabel("Webcam not connected", self.webcam_status_card)
-        self.lbl_webcam_conn_title.setStyleSheet("font-size: 13px; font-weight: bold; color: #FFFFFF;")
+        self.lbl_webcam_conn_title.setStyleSheet(
+            f"font-family: '{self.font_heading}'; font-size: 14px; font-weight: bold; color: {PALETTE['text_main']}; background: transparent; border: none;"
+        )
         self.lbl_webcam_info = QLabel("Camera disconnected from USB Port", self.webcam_status_card)
-        self.lbl_webcam_info.setStyleSheet("font-size: 11px; color: #94A3B8;")
+        self.lbl_webcam_info.setStyleSheet(
+            f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
+        )
         web_text_col.addWidget(self.lbl_webcam_conn_title)
         web_text_col.addWidget(self.lbl_webcam_info)
         web_card_layout.addLayout(web_text_col, stretch=1)
@@ -632,17 +948,21 @@ class LegacySensorQtGUI(QMainWindow):
         self.webcam_card = QFrame(self.page_video)
         self.webcam_card.setProperty("class", "card")
         web_conn_layout = QVBoxLayout(self.webcam_card)
-        web_conn_layout.setContentsMargins(18, 16, 18, 16)
+        web_conn_layout.setContentsMargins(16, 14, 16, 14)
         web_conn_layout.setSpacing(10)
 
         lbl_wc_title = QLabel("WEBCAM VIDEO SETTINGS", self.webcam_card)
-        lbl_wc_title.setStyleSheet("font-size: 12px; font-weight: bold; color: #38BDF8; letter-spacing: 0.5px;")
+        lbl_wc_title.setStyleSheet(
+            f"font-family: '{self.font_heading}'; font-size: 12px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent; border: none;"
+        )
         web_conn_layout.addWidget(lbl_wc_title)
 
         dev_row = QHBoxLayout()
         lbl_dev = QLabel("Device:", self.webcam_card)
-        lbl_dev.setStyleSheet("font-size: 11px; font-weight: bold; color: #E2E8F0;")
-        lbl_dev.setFixedWidth(110)
+        lbl_dev.setStyleSheet(
+            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['text_main']}; background: transparent; border: none;"
+        )
+        lbl_dev.setFixedWidth(115)
         self.cb_cameras = QComboBox(self.webcam_card)
         self.cb_cameras.currentIndexChanged.connect(self._on_camera_selected)
         btn_refresh = QPushButton("↻", self.webcam_card)
@@ -657,8 +977,10 @@ class LegacySensorQtGUI(QMainWindow):
 
         res_row = QHBoxLayout()
         lbl_res = QLabel("Resolution / FPS:", self.webcam_card)
-        lbl_res.setStyleSheet("font-size: 11px; font-weight: bold; color: #E2E8F0;")
-        lbl_res.setFixedWidth(110)
+        lbl_res.setStyleSheet(
+            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['text_main']}; background: transparent; border: none;"
+        )
+        lbl_res.setFixedWidth(115)
         self.cb_preset = QComboBox(self.webcam_card)
         self.cb_preset.currentIndexChanged.connect(self._on_preset_selected)
         res_row.addWidget(lbl_res)
@@ -673,11 +995,13 @@ class LegacySensorQtGUI(QMainWindow):
         self.display_card = QFrame(self.page_video)
         self.display_card.setProperty("class", "card")
         disp_layout = QVBoxLayout(self.display_card)
-        disp_layout.setContentsMargins(18, 16, 18, 16)
-        disp_layout.setSpacing(10)
+        disp_layout.setContentsMargins(16, 12, 16, 12)
+        disp_layout.setSpacing(8)
 
         lbl_disp_title = QLabel("ADDITIONAL DISPLAY OPTIONS", self.display_card)
-        lbl_disp_title.setStyleSheet("font-size: 12px; font-weight: bold; color: #38BDF8; letter-spacing: 0.5px;")
+        lbl_disp_title.setStyleSheet(
+            f"font-family: '{self.font_heading}'; font-size: 12px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent; border: none;"
+        )
         disp_layout.addWidget(lbl_disp_title)
 
         self.chk_hud = QCheckBox("Display HUD Overlay in Tracking Window (FPS, IPC & Shortcuts)", self.display_card)
@@ -699,59 +1023,33 @@ class LegacySensorQtGUI(QMainWindow):
         """Constructs Page 1: Calibration & Motion Profile."""
         self.page_calib = QWidget()
         layout = QVBoxLayout(self.page_calib)
-        layout.setContentsMargins(0, 8, 0, 0)
-        layout.setSpacing(12)
+        layout.setContentsMargins(0, 4, 0, 0)
+        layout.setSpacing(10)
 
         main_card = QFrame(self.page_calib)
         main_card.setProperty("class", "card")
         card_layout = QVBoxLayout(main_card)
-        card_layout.setContentsMargins(18, 16, 18, 16)
-        card_layout.setSpacing(12)
+        card_layout.setContentsMargins(16, 14, 16, 14)
+        card_layout.setSpacing(10)
 
         lbl_head = QLabel("TRACKING & MOTION PROFILE", main_card)
-        lbl_head.setStyleSheet("font-size: 12px; font-weight: bold; color: #38BDF8; letter-spacing: 0.5px;")
+        lbl_head.setStyleSheet(
+            f"font-family: '{self.font_heading}'; font-size: 12px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent; border: none;"
+        )
         lbl_sub = QLabel("Select the profile that best fits your playstyle and camera setup.", main_card)
-        lbl_sub.setStyleSheet("font-size: 11px; color: #94A3B8;")
+        lbl_sub.setStyleSheet(
+            f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
+        )
         card_layout.addWidget(lbl_head)
         card_layout.addWidget(lbl_sub)
 
         # 3 Profile cards
         cards_row = QHBoxLayout()
-        cards_row.setSpacing(10)
+        cards_row.setSpacing(8)
 
         for pid, pdata in CALIB_PRESETS.items():
-            card = QPushButton(main_card)
-            card.setFixedHeight(120)
-            card.setCursor(Qt.CursorShape.PointingHandCursor)
-            card.clicked.connect(lambda _, p=pid: self._select_calib_preset(p))
-
-            c_layout = QVBoxLayout(card)
-            c_layout.setContentsMargins(12, 10, 12, 10)
-            c_layout.setSpacing(4)
-
-            top_row = QHBoxLayout()
-            lbl_title = QLabel(f"{pdata['icon']} {pdata['title']}", card)
-            lbl_title.setStyleSheet("font-size: 12px; font-weight: bold; color: #FFFFFF;")
-            lbl_tag = QLabel(pdata["tag"], card)
-            lbl_tag.setStyleSheet("font-size: 8px; font-weight: bold; color: #38BDF8; background: #0F172A; padding: 2px 6px; border-radius: 4px;")
-            top_row.addWidget(lbl_title)
-            top_row.addStretch()
-            top_row.addWidget(lbl_tag)
-            c_layout.addLayout(top_row)
-
-            lbl_sub_p = QLabel(pdata["subtitle"], card)
-            lbl_sub_p.setStyleSheet("font-size: 10px; font-weight: bold; color: #0070D1;")
-            c_layout.addWidget(lbl_sub_p)
-
-            lbl_desc = QLabel(pdata["desc"], card)
-            lbl_desc.setStyleSheet("font-size: 9px; color: #94A3B8;")
-            lbl_desc.setWordWrap(True)
-            c_layout.addWidget(lbl_desc, stretch=1)
-
-            lbl_specs = QLabel(pdata["specs"], card)
-            lbl_specs.setStyleSheet("font-size: 8px; color: #64748B;")
-            c_layout.addWidget(lbl_specs)
-
+            card = CalibPresetCard(pid, pdata, self.font_heading, self.font_body, main_card)
+            card.clicked.connect(self._select_calib_preset)
             cards_row.addWidget(card)
             self.calib_cards[pid] = card
 
@@ -759,16 +1057,33 @@ class LegacySensorQtGUI(QMainWindow):
 
         # Auto-height callout
         auto_h = QFrame(main_card)
-        auto_h.setStyleSheet("background-color: #131D2D; border: 1px solid #1E293B; border-radius: 8px; padding: 8px;")
+        auto_h.setStyleSheet(f"""
+            QFrame {{
+                background-color: {PALETTE["input_bg"]};
+                border: 1px solid {PALETTE["border_subtle"]};
+                border-radius: 8px;
+            }}
+        """)
         ah_layout = QHBoxLayout(auto_h)
+        ah_layout.setContentsMargins(12, 8, 12, 8)
+        ah_layout.setSpacing(10)
         lbl_ruler = QLabel("📏", auto_h)
-        lbl_ruler.setStyleSheet("font-size: 16px;")
+        lbl_ruler.setStyleSheet("font-size: 16px; background: transparent; border: none;")
         ah_layout.addWidget(lbl_ruler)
         ah_text = QVBoxLayout()
-        ah_title = QLabel("Automatic Height Normalization (1.75m Standard)", auto_h)
-        ah_title.setStyleSheet("font-size: 11px; font-weight: bold; color: #38BDF8;")
-        ah_sub = QLabel("The sensor dynamically scales body proportions to the Kinect v1 metric convention. No manual adjustment needed.", auto_h)
-        ah_sub.setStyleSheet("font-size: 10px; color: #94A3B8;")
+        ah_text.setSpacing(1)
+        ah_title = QLabel("Automatic Height Calibration (1.75m default)", auto_h)
+        ah_title.setStyleSheet(
+            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent; border: none;"
+        )
+        ah_sub = QLabel(
+            "The sensor dynamically normalizes body proportions to the Just Dance Kinect v1 metric convention. No manual adjustment needed.",
+            auto_h
+        )
+        ah_sub.setWordWrap(True)
+        ah_sub.setStyleSheet(
+            f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
+        )
         ah_text.addWidget(ah_title)
         ah_text.addWidget(ah_sub)
         ah_layout.addLayout(ah_text, stretch=1)
@@ -783,29 +1098,52 @@ class LegacySensorQtGUI(QMainWindow):
 
         # Advanced drawer
         self.adv_drawer = QFrame(main_card)
-        self.adv_drawer.setStyleSheet("background-color: #131D2D; border: 1px solid #1E293B; border-radius: 8px; padding: 12px;")
+        self.adv_drawer.setStyleSheet(f"""
+            QFrame {{
+                background-color: {PALETTE["bg_card"]};
+                border: 1px solid {PALETTE["border_subtle"]};
+                border-radius: 8px;
+            }}
+        """)
         adv_layout = QVBoxLayout(self.adv_drawer)
-        adv_layout.setSpacing(8)
+        adv_layout.setContentsMargins(14, 10, 14, 10)
+        adv_layout.setSpacing(6)
 
         # Slider 1: Smoothing
-        self.lbl_smooth = QLabel(f"EMA Motion Smoothing: {self.cfg.get('smoothing_alpha', 0.55):.2f}", self.adv_drawer)
-        self.lbl_smooth.setStyleSheet("font-size: 11px; font-weight: bold; color: #FFFFFF;")
+        self.lbl_smooth = QLabel("", self.adv_drawer)
+        self.lbl_smooth.setStyleSheet(
+            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['text_main']}; background: transparent; border: none;"
+        )
         adv_layout.addWidget(self.lbl_smooth)
         self.slider_smooth = QSlider(Qt.Orientation.Horizontal, self.adv_drawer)
         self.slider_smooth.setRange(20, 85)
         self.slider_smooth.setValue(int(self.cfg.get("smoothing_alpha", 0.55) * 100))
         self.slider_smooth.valueChanged.connect(self._on_smooth_slider_changed)
         adv_layout.addWidget(self.slider_smooth)
+        self._update_smooth_label(self.cfg.get("smoothing_alpha", 0.55))
 
         # Slider 2: Confidence
-        self.lbl_conf = QLabel(f"MediaPipe Detection Confidence: {self.cfg.get('detection_confidence', 0.50):.2f}", self.adv_drawer)
-        self.lbl_conf.setStyleSheet("font-size: 11px; font-weight: bold; color: #FFFFFF;")
+        self.lbl_conf = QLabel("", self.adv_drawer)
+        self.lbl_conf.setStyleSheet(
+            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['text_main']}; background: transparent; border: none;"
+        )
         adv_layout.addWidget(self.lbl_conf)
         self.slider_conf = QSlider(Qt.Orientation.Horizontal, self.adv_drawer)
         self.slider_conf.setRange(30, 80)
         self.slider_conf.setValue(int(self.cfg.get("detection_confidence", 0.50) * 100))
         self.slider_conf.valueChanged.connect(self._on_conf_slider_changed)
         adv_layout.addWidget(self.slider_conf)
+        self._update_conf_label(self.cfg.get("detection_confidence", 0.50))
+
+        # Reset button row
+        adv_actions = QHBoxLayout()
+        btn_reset = QPushButton("↺ Reset to Recommended Profile (Balanced)", self.adv_drawer)
+        btn_reset.setProperty("class", "btn_secondary")
+        btn_reset.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_reset.clicked.connect(lambda: self._select_calib_preset("balanced"))
+        adv_actions.addWidget(btn_reset)
+        adv_actions.addStretch()
+        adv_layout.addLayout(adv_actions)
 
         self.adv_drawer.setVisible(False)
         card_layout.addWidget(self.adv_drawer)
@@ -820,39 +1158,41 @@ class LegacySensorQtGUI(QMainWindow):
     # UI STATE MANAGEMENT & VISIBILITY
     # =========================================================================
     def _apply_tab_styles(self, tab_id: str):
-        if tab_id == "video":
-            self.btn_tab_video.setStyleSheet("""
-                background-color: #1E293B;
-                color: #FFFFFF;
+        act_css = f"""
+            QPushButton {{
+                background-color: {PALETTE["tab_gray_act"]};
+                color: #0F172A;
+                font-family: '{self.font_heading}', sans-serif;
+                font-size: 12px;
                 font-weight: bold;
-                border: 1px solid #334155;
-                border-radius: 8px;
-            """)
+                border: 1px solid {PALETTE["tab_gray_border"]};
+                border-radius: 10px;
+            }}
+        """
+        inact_css = f"""
+            QPushButton {{
+                background-color: #FFFFFF;
+                color: #64748B;
+                font-family: '{self.font_heading}', sans-serif;
+                font-size: 12px;
+                font-weight: bold;
+                border: 1px solid {PALETTE["border_subtle"]};
+                border-radius: 10px;
+            }}
+            QPushButton:hover {{
+                background-color: {PALETTE["tab_gray_hover"]};
+                border-color: {PALETTE["tab_gray_border"]};
+            }}
+        """
+        if tab_id == "video":
+            self.btn_tab_video.setStyleSheet(act_css)
             self.btn_tab_video.setIcon(QIcon(self.pix_gear_act))
-            self.btn_tab_calib.setStyleSheet("""
-                background-color: transparent;
-                color: #94A3B8;
-                font-weight: normal;
-                border: 1px solid transparent;
-                border-radius: 8px;
-            """)
+            self.btn_tab_calib.setStyleSheet(inact_css)
             self.btn_tab_calib.setIcon(QIcon(self.pix_slid_inact))
         else:
-            self.btn_tab_calib.setStyleSheet("""
-                background-color: #1E293B;
-                color: #FFFFFF;
-                font-weight: bold;
-                border: 1px solid #334155;
-                border-radius: 8px;
-            """)
+            self.btn_tab_calib.setStyleSheet(act_css)
             self.btn_tab_calib.setIcon(QIcon(self.pix_slid_act))
-            self.btn_tab_video.setStyleSheet("""
-                background-color: transparent;
-                color: #94A3B8;
-                font-weight: normal;
-                border: 1px solid transparent;
-                border-radius: 8px;
-            """)
+            self.btn_tab_video.setStyleSheet(inact_css)
             self.btn_tab_video.setIcon(QIcon(self.pix_gear_inact))
 
     def _switch_tab(self, tab_id: str):
@@ -878,50 +1218,8 @@ class LegacySensorQtGUI(QMainWindow):
 
     def _update_sidebar_buttons(self):
         mode = self.cfg.get("camera_mode", "pscam")
-        active_style = """
-            QPushButton {
-                background-color: #00439C;
-                color: #FFFFFF;
-                border: 1px solid #2563EB;
-                border-radius: 12px;
-                text-align: left;
-                padding-left: 14px;
-            }
-        """
-        inactive_style = """
-            QPushButton {
-                background-color: #131D2D;
-                color: #94A3B8;
-                border: 1px solid #1E293B;
-                border-radius: 12px;
-                text-align: left;
-                padding-left: 14px;
-            }
-            QPushButton:hover {
-                background-color: #1E293B;
-                border-color: #334155;
-            }
-        """
-        if mode == "pscam":
-            self.btn_card_pscam.setStyleSheet(active_style)
-            self.btn_card_pscam.setIcon(QIcon(self.pix_ps_act))
-            self.btn_card_pscam.setIconSize(QSize(28, 28))
-            self.btn_card_pscam.setText(" PlayStation®Camera\n OV580 Stereo • 60 FPS")
-
-            self.btn_card_webcam.setStyleSheet(inactive_style)
-            self.btn_card_webcam.setIcon(QIcon(self.pix_web_inact))
-            self.btn_card_webcam.setIconSize(QSize(28, 28))
-            self.btn_card_webcam.setText(" Standard Webcam\n USB or Integrated")
-        else:
-            self.btn_card_webcam.setStyleSheet(active_style)
-            self.btn_card_webcam.setIcon(QIcon(self.pix_web_act))
-            self.btn_card_webcam.setIconSize(QSize(28, 28))
-            self.btn_card_webcam.setText(" Standard Webcam\n USB or Integrated")
-
-            self.btn_card_pscam.setStyleSheet(inactive_style)
-            self.btn_card_pscam.setIcon(QIcon(self.pix_ps_inact))
-            self.btn_card_pscam.setIconSize(QSize(28, 28))
-            self.btn_card_pscam.setText(" PlayStation®Camera\n OV580 Stereo • 60 FPS")
+        self.card_pscam.set_active(mode == "pscam")
+        self.card_webcam.set_active(mode == "webcam")
 
     def _update_video_view_visibility(self):
         """
@@ -1042,7 +1340,9 @@ class LegacySensorQtGUI(QMainWindow):
             self.lbl_pscam_icon.setPixmap(self.pix_status_err)
             self.lbl_pscam_conn_title.setText("PlayStation Camera not connected")
             self.lbl_pscam_info.setText("Driver Not Installed and Camera disconnected from USB Port")
-            self.lbl_pscam_info.setStyleSheet("font-size: 11px; color: #EF4444;")
+            self.lbl_pscam_info.setStyleSheet(
+                f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['status_err']}; background: transparent; border: none;"
+            )
             self.btn_launch_pscam.setEnabled(False)
             self.btn_launch_pscam.setText("Driver Not Installed")
 
@@ -1050,13 +1350,17 @@ class LegacySensorQtGUI(QMainWindow):
             self.lbl_pscam_icon.setPixmap(self.pix_status_err)
             self.lbl_pscam_conn_title.setText("PlayStation Camera not connected")
             if running:
-                self.lbl_pscam_info.setText("Driver Online and Camera disconnected from USB Port")
-                self.lbl_pscam_info.setStyleSheet("font-size: 11px; color: #F59E0B;")
+                self.lbl_pscam_info.setText("Driver Online but Camera still disconnected from USB Port")
+                self.lbl_pscam_info.setStyleSheet(
+                    f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['status_warn']}; background: transparent; border: none;"
+                )
                 self.btn_launch_pscam.setEnabled(False)
                 self.btn_launch_pscam.setText("PSCam4Win Driver Active")
             else:
                 self.lbl_pscam_info.setText("Driver Offline and Camera disconnected from USB Port")
-                self.lbl_pscam_info.setStyleSheet("font-size: 11px; color: #94A3B8;")
+                self.lbl_pscam_info.setStyleSheet(
+                    f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
+                )
                 self.btn_launch_pscam.setEnabled(True)
                 self.btn_launch_pscam.setText("Start PSCam4Win Driver")
 
@@ -1064,7 +1368,9 @@ class LegacySensorQtGUI(QMainWindow):
             self.lbl_pscam_icon.setPixmap(self.pix_status_warn)
             self.lbl_pscam_conn_title.setText("PlayStation Camera detected")
             self.lbl_pscam_info.setText("Camera connected, but PSCam4Win Driver is Offline")
-            self.lbl_pscam_info.setStyleSheet("font-size: 11px; color: #F59E0B;")
+            self.lbl_pscam_info.setStyleSheet(
+                f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['status_warn']}; background: transparent; border: none;"
+            )
             self.btn_launch_pscam.setEnabled(True)
             self.btn_launch_pscam.setText("Start PSCam4Win Driver")
 
@@ -1072,7 +1378,9 @@ class LegacySensorQtGUI(QMainWindow):
             self.lbl_pscam_icon.setPixmap(self.pix_status_warn)
             self.lbl_pscam_conn_title.setText("PlayStation Camera initializing")
             self.lbl_pscam_info.setText("PlayStation®Camera detected! PSCam4Win uploading USB firmware...")
-            self.lbl_pscam_info.setStyleSheet("font-size: 11px; color: #38BDF8;")
+            self.lbl_pscam_info.setStyleSheet(
+                f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['ps_blue']}; background: transparent; border: none;"
+            )
             self.btn_launch_pscam.setEnabled(False)
             self.btn_launch_pscam.setText("Uploading Firmware...")
 
@@ -1080,7 +1388,9 @@ class LegacySensorQtGUI(QMainWindow):
             self.lbl_pscam_icon.setPixmap(self.pix_status_warn)
             self.lbl_pscam_conn_title.setText("PlayStation Camera initializing")
             self.lbl_pscam_info.setText("Hardware ready! Initializing DirectShow virtual camera (60 FPS)...")
-            self.lbl_pscam_info.setStyleSheet("font-size: 11px; color: #38BDF8;")
+            self.lbl_pscam_info.setStyleSheet(
+                f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['ps_blue']}; background: transparent; border: none;"
+            )
             self.btn_launch_pscam.setEnabled(False)
             self.btn_launch_pscam.setText("PSCam4Win Driver Active")
 
@@ -1168,51 +1478,59 @@ class LegacySensorQtGUI(QMainWindow):
         self.cfg["smoothing_alpha"] = p["smoothing_alpha"]
         self.cfg["detection_confidence"] = p["detection_confidence"]
 
+        self.slider_smooth.blockSignals(True)
         self.slider_smooth.setValue(int(p["smoothing_alpha"] * 100))
+        self.slider_smooth.blockSignals(False)
+        self._update_smooth_label(p["smoothing_alpha"])
+
+        self.slider_conf.blockSignals(True)
         self.slider_conf.setValue(int(p["detection_confidence"] * 100))
+        self.slider_conf.blockSignals(False)
+        self._update_conf_label(p["detection_confidence"])
+
         self._update_calib_cards_ui()
         self._save_settings()
 
     def _update_calib_cards_ui(self):
         for pid, card in self.calib_cards.items():
-            if pid == self.current_calib_preset:
-                card.setStyleSheet("""
-                    QPushButton {
-                        background-color: #1E3A5F;
-                        border: 2px solid #0070D1;
-                        border-radius: 10px;
-                        text-align: left;
-                    }
-                """)
-            else:
-                card.setStyleSheet("""
-                    QPushButton {
-                        background-color: #131D2D;
-                        border: 1px solid #1E293B;
-                        border-radius: 10px;
-                        text-align: left;
-                    }
-                    QPushButton:hover {
-                        border-color: #334155;
-                        background-color: #162032;
-                    }
-                """)
+            card.set_active(pid == self.current_calib_preset)
 
     def _toggle_advanced_calib(self):
         self.is_adv_calib_open = not self.is_adv_calib_open
         self.adv_drawer.setVisible(self.is_adv_calib_open)
-        self.btn_toggle_adv.setText("Hide Advanced Filter Settings ▲" if self.is_adv_calib_open else "Show Advanced Filter Settings ▼")
+        self.btn_toggle_adv.setText(
+            "Hide Advanced Filter Settings ▲" if self.is_adv_calib_open else "Show Advanced Filter Settings ▼"
+        )
+
+    def _update_smooth_label(self, val: float):
+        v = float(val)
+        desc = "Balanced"
+        if v < 0.40:
+            desc = "Very Smooth (Higher Latency)"
+        elif v > 0.65:
+            desc = "Ultra Fast (Lower Filtering)"
+        self.lbl_smooth.setText(f"Movement Responsiveness (EMA): {v:.2f} — {desc}")
+
+    def _update_conf_label(self, val: float):
+        v = float(val)
+        self.lbl_conf.setText(f"AI Detection Rigor (Confidence): {int(v * 100)}%")
 
     def _on_smooth_slider_changed(self, val: int):
-        alpha = val / 100.0
-        self.lbl_smooth.setText(f"EMA Motion Smoothing: {alpha:.2f}")
+        alpha = round(val / 100.0, 2)
+        self._update_smooth_label(alpha)
         self.cfg["smoothing_alpha"] = alpha
+        self.current_calib_preset = "custom"
+        self.cfg["tracking_preset"] = "custom"
+        self._update_calib_cards_ui()
         self._save_settings()
 
     def _on_conf_slider_changed(self, val: int):
-        conf = val / 100.0
-        self.lbl_conf.setText(f"MediaPipe Detection Confidence: {conf:.2f}")
+        conf = round(val / 100.0, 2)
+        self._update_conf_label(conf)
         self.cfg["detection_confidence"] = conf
+        self.current_calib_preset = "custom"
+        self.cfg["tracking_preset"] = "custom"
+        self._update_calib_cards_ui()
         self._save_settings()
 
     def _launch_pscam_tray(self):
@@ -1320,6 +1638,8 @@ class LegacySensorQtGUI(QMainWindow):
             pass
 
     def closeEvent(self, event):
+        if hasattr(self, "timer_periodic") and self.timer_periodic is not None:
+            self.timer_periodic.stop()
         if hasattr(self, "bridge") and self.bridge is not None:
             self.bridge.close()
         event.accept()
