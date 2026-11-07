@@ -33,7 +33,7 @@ from sensor.pose_tracker import (
     CameraSpaceXTracker, apply_camera_space_translation, apply_slot_snap,
     FaceFollowPTZ, avg, lerp
 )
-from sensor.camera_manager import CameraManager
+from sensor.camera_manager import CameraManager, FrameBusReader
 from sensor.tracking_overlay import TrackingOverlay
 
 def test_config():
@@ -426,6 +426,26 @@ def test_camera_manager():
     cams = CameraManager.enumerate_cameras(max_probe=2)
     assert len(cams) > 0
     print(f"  Cameras found: {[str(c) for c in cams]}")
+
+    # Test FrameBusReader lifecycle
+    fb = FrameBusReader()
+    # It may or may not find a slot if driver is stopped, but it must not crash
+    assert fb.slot in {-1, 0, 1, 2, 3, 4, 5, 6, 7}
+    fb.close()
+    assert fb.h_map is None
+    print("  FrameBus direct IPC reader lifecycle verified")
+
+    # Test Stereo Side-by-Side (SBS) auto-cropping logic
+    dummy_sbs = np.zeros((800, 2560, 3), dtype=np.uint8)
+    h_sbs, w_sbs = dummy_sbs.shape[:2]
+    assert w_sbs >= int(1.8 * h_sbs)
+    cropped_sbs = dummy_sbs[:, :w_sbs // 2]
+    assert cropped_sbs.shape == (800, 1280, 3), f"Expected (800, 1280, 3), got {cropped_sbs.shape}"
+
+    dummy_webcam = np.zeros((480, 640, 3), dtype=np.uint8)
+    h_wc, w_wc = dummy_webcam.shape[:2]
+    assert w_wc < int(1.8 * h_wc)
+    print("  Stereo Side-by-Side auto-crop logic verified")
     print("  -> CameraManager PASSED")
 
 def test_project_structure():

@@ -114,10 +114,12 @@ flowchart TD
 
 ### 3. `camera_manager.py` — Gerenciamento de Câmera e Captura Assíncrona
 - **Classe `LatestFrameCamera`:** Executa um loop contínuo de captura de quadros em thread separada com um buffer atômico de profundidade 1. Isso elimina completamente o acúmulo de frames do DirectShow, garantindo que o MediaPipe receba sempre o quadro mais recente com latência zero.
+- **Leitor Direto de Memória Compartilhada `FrameBusReader` (PSCam4Win IPC):** Conecta-se diretamente aos canais mapeados em memória `Global\PSCam4Win{slot}.FrameBus` (escaneando slots 7, 6, 0..5). Bypassa problemas do Windows Camera Frame Server (cache de tipos de mídia que forçavam tela preta quando o DirectShow negociava 1280x400 em vez de 1280x800), recuperando quadros YUY2 a 60 FPS reais sem latência.
+- **Detecção e Recorte Automático de Stereo Side-by-Side (SBS):** Quando a PlayStation 4 Camera inicializa no modo padrão de fábrica Side-by-Side (`w >= 1.8 * h`, como 2560x800 ou 1280x400), o sistema detecta automaticamente a proporção estéreo e recorta o sensor esquerdo (`frame[:, :w//2]`), entregando uma visão limpa de 16:10 do dançarino sem duplicação de imagem ou seam estéreo.
 - **Snapshot Rápido de Hardware PnP (`get_hardware_snapshot`):** Utiliza diretamente a DLL nativa `cfgmgr32.dll` (`CM_Get_Device_ID_ListW`) com filtro de dispositivos presentes, retornando uma assinatura de hardware em menos de **3 milissegundos**, sem a sobrecarga de subprocessos como `pnputil`.
 - **Máquina de Estados da PS4 Camera (`get_ps4_camera_state`):** Rastreia os IDs de hardware USB (`VID_05A9&PID_0580` do bootloader e `VID_05A9&PID_058B` do sensor ativo) e a contagem de câmeras virtuais (`SWD\VCAMDEVAPI`) para determinar o status exato da câmera.
 - **Negociação de Formatos (FourCC):** Identifica a PlayStation 4 Camera (`is_pscam=True`) e preserva o stream nativo em **YUY2 / NV12**, evitando a definição forçada de `'MJPG'` que corrompe a negociação com a câmera virtual do driver.
-- **Enumeração de Dispositivos:** Cruza os índices do OpenCV com a lista de dispositivos PnP do Windows (`Get-PnpDevice -Class Camera`) para exibir nomes amigáveis na interface.
+- **Enumeração de Dispositivos:** Cruza os índices do OpenCV com a lista de dispositivos PnP do Windows (`Get-PnpDevice -Class Camera`) para exibir nomes amigáveis na interface e resolução nativa de 1280x800 para a PS Camera.
 
 ### 4. `pose_tracker.py` — Motor de Pose e Cinemática
 - **`PoseTracker`:** Inicializa e gerencia a rede neural `vision.PoseLandmarker` do Google MediaPipe no modo contínuo de vídeo (`RunningMode.VIDEO`).

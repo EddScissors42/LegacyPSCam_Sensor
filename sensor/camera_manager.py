@@ -6,6 +6,7 @@ preset negotiation, buffer control, and zero-latency frame streaming.
 import json
 import os
 import re
+import struct
 import subprocess
 import threading
 import time
@@ -259,18 +260,114 @@ class CameraManager:
                     is_ps = any(k in name.lower() for k in ["ps4", "playstation", "ov580", "pscam"]) or (w == 1280 and h in (400, 800) and CameraManager.is_pscam_running())
                     if is_ps and "ps4" not in name.lower() and "playstation" not in name.lower():
                         name = f"PlayStation 4 Camera ({name})"
-                    cameras.append(CameraInfo(idx, f"{name} ({w}x{h})", is_pscam=is_ps))
+                    display_res = "1280x800" if is_ps else f"{w}x{h}"
+                    cameras.append(CameraInfo(idx, f"{name} ({display_res})", is_pscam=is_ps))
 
         if not cameras:
             cameras.append(CameraInfo(0, "Default Camera (Index 0)", False))
 
         return cameras
 
+class FrameBusReader:
+    """
+    Direct Shared Memory Frame Reader for PSCam4Win (FrameBus IPC).
+    Bypasses Windows Camera Frame Server media type caching and DirectShow
+    format negotiation mismatches by reading pristine uncompressed YUY2 frames
+    directly from Global\\PSCam4Win{slot}.FrameBus.
+    """
+    def __init__(self):
+        self.h_map = None
+        self.view_ptr = None
+        self.slot = -1
+        self.last_frame_id = -1
+        self._connect()
+
+    def _connect(self):
+        if os.name != 'nt':
+            return
+        try:
+            import ctypes
+            from ctypes import wintypes
+            FILE_MAP_READ = 0x0004
+            OpenFileMappingW = ctypes.windll.kernel32.OpenFileMappingW
+            OpenFileMappingW.restype = wintypes.HANDLE
+            OpenFileMappingW.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.LPCWSTR]
+
+            MapViewOfFile = ctypes.windll.kernel32.MapViewOfFile
+            MapViewOfFile.restype = ctypes.c_void_p
+            MapViewOfFile.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.DWORD, wintypes.DWORD, ctypes.c_size_t]
+
+            CloseHandle = ctypes.windll.kernel32.CloseHandle
+
+            # PS4 cameras are assigned top-down: slot 7 first (or 6 for split), PS3 cameras to 0..5
+            for s in [7, 6, 0, 1, 2, 3, 4, 5]:
+                name = f"Global\\PSCam4Win{s}.FrameBus"
+                h = OpenFileMappingW(FILE_MAP_READ, False, name)
+                if h:
+                    ptr = MapViewOfFile(h, FILE_MAP_READ, 0, 0, 4096 + 2560 * 800 * 2)
+                    if ptr:
+                        raw = ctypes.string_at(ptr, 64)
+                        magic, ver, fmt, w, h_dim = struct.unpack('<IIIII', raw[:20])
+                        if magic == 0x50533345 and w > 0 and h_dim > 0:
+                            self.h_map = h
+                            self.view_ptr = ptr
+                            self.slot = s
+                            return
+                    CloseHandle(h)
+        except Exception:
+            pass
+
+    def read_frame(self):
+        if not self.view_ptr:
+            self._connect()
+            if not self.view_ptr:
+                return None
+        try:
+            import ctypes
+            import struct
+            import numpy as np
+
+            raw_hdr = ctypes.string_at(self.view_ptr, 64)
+            magic, ver, fmt, w, h_dim, fpsNum, fpsDen, jpegLen, regionBytes, seq, frame_id, qpc = struct.unpack(
+                '<IIIIIIIIIxxxxqqq', raw_hdr
+            )
+
+            # Seqlock check: even sequence number indicates consistent frame data
+            if magic == 0x50533345 and (seq % 2 == 0) and w > 0 and h_dim > 0:
+                raw_pixels = ctypes.string_at(self.view_ptr + 4096, w * h_dim * 2)
+                yuy2 = np.frombuffer(raw_pixels, dtype=np.uint8).reshape((h_dim, w, 2))
+                bgr = cv2.cvtColor(yuy2, cv2.COLOR_YUV2BGR_YUY2)
+                self.last_frame_id = frame_id
+                return bgr
+        except Exception:
+            pass
+        return None
+
+    def close(self):
+        if self.h_map:
+            try:
+                import ctypes
+                from ctypes import wintypes
+                UnmapViewOfFile = ctypes.windll.kernel32.UnmapViewOfFile
+                UnmapViewOfFile.argtypes = [ctypes.c_void_p]
+                CloseHandle = ctypes.windll.kernel32.CloseHandle
+                CloseHandle.argtypes = [wintypes.HANDLE]
+
+                if self.view_ptr:
+                    UnmapViewOfFile(self.view_ptr)
+                    self.view_ptr = None
+                CloseHandle(self.h_map)
+            except Exception:
+                pass
+            self.h_map = None
+            self.slot = -1
+
 class LatestFrameCamera:
     """
     Zero-latency threaded camera grabber.
-    Continually reads from OpenCV VideoCapture on a background thread
-    so the internal OpenCV frame queue never buffers stale frames.
+    Continually reads from OpenCV VideoCapture (or directly from PSCam4Win FrameBus)
+    on a background thread so the internal OpenCV frame queue never buffers stale frames.
+    Handles black-frame recovery and automatic Side-by-Side stereo cropping.
     Always delivers pristine, un-mirrored frames to the pose tracker.
     """
     def __init__(self, camera_index, target_w=640, target_h=480, target_fps=30, mirror=True, is_pscam=False):
@@ -282,6 +379,7 @@ class LatestFrameCamera:
         self.is_pscam = is_pscam
 
         self.cap = None
+        self.fb_reader = FrameBusReader() if (self.is_pscam and os.name == 'nt') else None
         self.running = False
         self.thread = None
         self.lock = threading.Lock()
@@ -337,13 +435,34 @@ class LatestFrameCamera:
     def _capture_loop(self):
         while self.running and self.cap and self.cap.isOpened():
             ret, frame = self.cap.read()
+
+            # PS Camera Direct FrameBus Fallback:
+            # If the camera is a PS Camera and OpenCV returns an all-black frame (due to driver
+            # resolution negotiation mismatch) or direct FrameBus is active, pull the real frame
+            # directly from the PSCam4Win memory mapping.
+            if self.is_pscam:
+                is_black = (not ret) or (frame is None) or (float(frame.mean()) < 1.0)
+                if is_black or self.fb_reader:
+                    fb_frame = self.fb_reader.read_frame() if self.fb_reader else None
+                    if fb_frame is not None and float(fb_frame.mean()) > 1.0:
+                        frame = fb_frame
+                        ret = True
+
             if not ret or frame is None:
                 time.sleep(0.003)
                 continue
 
+            # Auto-crop Side-by-Side stereo mode to Left Sensor (primary dancer view)
+            # PS4 camera defaults to 2560x800 or 1280x400 stereo on first initialization
+            h, w = frame.shape[:2]
+            if w >= int(1.8 * h):
+                frame = frame[:, :w // 2]
+
             with self.lock:
                 self.latest_frame = frame
                 self.latest_ret = True
+                self.actual_w = frame.shape[1]
+                self.actual_h = frame.shape[0]
                 self.fps_counter += 1
                 now = time.time()
                 elapsed = now - self.fps_last_time
@@ -366,6 +485,12 @@ class LatestFrameCamera:
         self.running = False
         if self.thread and self.thread.is_alive():
             self.thread.join(timeout=1.0)
+        if self.fb_reader:
+            try:
+                self.fb_reader.close()
+            except Exception:
+                pass
+            self.fb_reader = None
         if self.cap:
             try:
                 self.cap.release()

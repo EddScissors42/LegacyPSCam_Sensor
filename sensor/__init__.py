@@ -3,7 +3,7 @@ Legacy Sensor Lite - Sensor & Tracking Engine Module.
 Unifies camera capture, MediaPipe AI tracking, IPC shared memory,
 and OpenCV HUD overlay.
 """
-from .camera_manager import CameraManager, LatestFrameCamera
+from .camera_manager import CameraManager, LatestFrameCamera, FrameBusReader
 from .pose_tracker import (
     PoseTracker, HandAnchorFilter, AdaptiveSmoother, SkeletonCalibrator,
     CameraSpaceXTracker, apply_camera_space_translation, apply_slot_snap,
@@ -21,6 +21,7 @@ from .config_manager import ConfigManager, parse_preset, PRESETS_PSCAM, PRESETS_
 __all__ = [
     "CameraManager",
     "LatestFrameCamera",
+    "FrameBusReader",
     "PoseTracker",
     "HandAnchorFilter",
     "AdaptiveSmoother",

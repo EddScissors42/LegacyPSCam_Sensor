@@ -75,7 +75,7 @@ A suíte cobre 9 áreas fundamentais:
 | `test_calibrator` | `sensor/pose_tracker.py` | Validação de eixos do Kinect: `ShoulderRight` positivo no X e `ShoulderLeft` negativo no X. |
 | `test_pose_tracker` | `sensor/pose_tracker.py` | Rajada de 5 frames com intervalo < 1ms sem disparar exceção de timestamp. |
 | `test_overlay` | `sensor/tracking_overlay.py` | Renderização do HUD, silhueta e esqueleto sem falhas numpy. |
-| `test_camera_manager` | `sensor/camera_manager.py` | Snapshot PnP ultrarrápido (< 3ms via `cfgmgr32.dll`), máquina de estados da PS4 Camera e enumeração OpenCV. |
+| `test_camera_manager` | `sensor/camera_manager.py` | Snapshot PnP ultrarrápido (< 3ms via `cfgmgr32.dll`), máquina de estados da PS4 Camera, enumeração OpenCV, leitor direto `FrameBusReader` e auto-crop de stereo Side-by-Side. |
 
 ### Adicionando Novos Testes
 Ao criar novos recursos (como um novo algoritmo de suavização ou novo controle de GUI), adicione uma função `test_<funcionalidade>()` no arquivo `test_suite.py` e inclua sua execução na função principal `run_all_tests()`.

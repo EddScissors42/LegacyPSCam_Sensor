@@ -13,7 +13,7 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
 | **Silhueta e Contorno Neon ("Sombrinha")** | ✅ Totalmente Implementado | `pose_tracker.py` / `tracking_overlay.py` | Máscara anatômica com contorno neon e preenchimento translúcido. |
 | **Ponte de Imagem e Máscara (JMI1)** | ✅ Totalmente Implementado | `kinect_shared_memory.py` | Buffer de 1.3 MB (640x480 BGRA + 320x240 Player Mask) para o Just Dance. |
 | **Ponte de Coach X (JXC1)** | ✅ Totalmente Implementado | `kinect_shared_memory.py` | Buffer de 28 bytes para posicionamento de coach no jogo. |
-| **Integração PlayStation 4 Camera** | ✅ Totalmente Implementado | `camera_manager.py` | Suporte nativo ao sensor OV580 em **1280x800 @ 60 FPS**. |
+| **Integração PlayStation 4 Camera** | ✅ Totalmente Implementado | `camera_manager.py` | Suporte nativo ao sensor OV580 em **1280x800 @ 60 FPS**, captura direta via FrameBus IPC (anti-tela preta) e auto-crop de Side-by-Side. |
 | **Auto-Detecção de Hotplug e Reconexão** | ✅ Totalmente Implementado | `camera_manager.py` / `gui.py` | Monitoramento PnP de hardware via Win32 CfgMgr32 (< 3ms) com auto-seleção e atualização fluida sem congelar o menu. |
 | **Máquina de Estados da PS4 Camera** | ✅ Totalmente Implementado | `camera_manager.py` / `gui.py` | Detecção em tempo real do ciclo de vida USB (Desconectada, Bootloader, Câmera Virtual e Pronta). |
 | **Integração Webcams Padrão** | ✅ Totalmente Implementado | `camera_manager.py` | Suporte a webcams USB e embutidas em 30 e 60 FPS. |
@@ -44,6 +44,8 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
 - **Como funciona:** A PS4 Camera é uma câmera estéreo equipada com o processador OmniVision OV580 e dois sensores OV9713, capaz de atingir 60 FPS com alta nitidez e amplo campo de visão horizontal.
 - **Implementação:**
   - O `camera_manager.py` detecta a instalação e o status de execução do driver `PSCam4Win`.
+  - **Leitura Direta via FrameBus IPC (Anti-Tela Preta):** Utiliza o leitor de memória compartilhada `FrameBusReader` para se conectar diretamente aos canais `Global\PSCam4Win{slot}.FrameBus`. Isso elimina a tela preta causada pelo cache do Windows Camera Frame Server que forçava 1280x400 no DirectShow e ativava o `FillYuy2Black` no driver.
+  - **Auto-Crop de Stereo Side-by-Side (SBS):** Quando o driver inicializa no modo Side-by-Side (2560x800 ou 1280x400), o sistema detecta a proporção panorâmica (`w >= 1.8 * h`) e recorta automaticamente a metade correspondente ao sensor esquerdo (`frame[:, :w//2]`), entregando uma visão limpa de 16:10 do dançarino sem duplicação estéreo.
   - Configura a câmera virtual DirectShow para operar em **1280x800 @ 60 FPS**.
   - Mantém o FourCC original do driver em **YUY2 / NV12**, sem tentar forçar compactação MJPG incompatível.
   - Oferece no menu a detecção em tempo real e o botão para iniciar o driver caso ele esteja parado.
