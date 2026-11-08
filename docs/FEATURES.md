@@ -200,6 +200,17 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
 - **Faxina de Recursos Duplicados e Órfãos:**
   - Removidas as sobras `assets/camera.svg`, `assets/lab.svg` e `assets/icons/mode_.svg`. O pacote `assets` agora exporta diretamente os arquivos canônicos em `assets/icons/`.
 
+### 18. Espaço "Additional Display Options" e Bloco "Camera Orientation" (v0.2.7 Alpha)
+- **Padronização Conceitual de "Espaço":**
+  - Os grandes blocos agrupadores da interface visual passam a ser denominados formalmente de **"espaços"** (espaço *Webcam Video Settings* e espaço *Additional Display Options*).
+- **Novo Bloco "CAMERA ORIENTATION" no Espaço Additional Display Options:**
+  - Integrado card com o mesmo contorno visual e anatomia dos blocos de Resolução e FPS (`border: 1px solid #E2E8F0; border-radius: 10px; background-color: #FFFFFF`).
+  - Menu de seleção contendo as 4 rotações cardinais: `"0° (Padrão)"`, `"90° (Horário)"`, `"180° (Invertido)"` e `"270° (Anti-horário)"`.
+  - Suporte completo no motor de captura assíncrona (`LatestFrameCamera`), aplicando `cv2.rotate` diretamente nos quadros antes da inferência de pose, viabilizando o uso de câmeras montadas de cabeça para baixo ou na vertical.
+  - Atalho de teclado rápido (`O`) durante a dança para alternar instantaneamente a rotação da câmera.
+  - Persistência automática em `config.json` via chave `camera_orientation`.
+  - Altura padrão da janela atualizada para 640px para conforto ergonômico e respiro entre os espaços.
+
 ---
 
 ## 🟡 Funcionalidades Parciais e ⏳ Roadmap Futuro

@@ -52,6 +52,7 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
     det_conf = config.get("detection_confidence", 0.5)
     target_height = config.get("target_height_m", 1.75)
     show_hud = config.get("show_hud", True)
+    camera_orientation = int(config.get("camera_orientation", 0))
 
     print(f"\n==========================================")
     print(f"  STARTING TRACKING SESSION")
@@ -78,7 +79,8 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
             target_h=h,
             target_fps=target_fps,
             mirror=mirror,
-            is_pscam=(mode == "pscam")
+            is_pscam=(mode == "pscam"),
+            orientation=camera_orientation
         )
     except Exception as e:
         print(f"[ERROR] Failed to start camera: {e}")
@@ -136,6 +138,10 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
                     print(f"[INFO] Mirroring toggled to: {mirror}")
                 elif key in (ord('h'), ord('H')):
                     overlay.toggle_hud()
+                elif key in (ord('o'), ord('O')):
+                    camera_orientation = (camera_orientation + 90) % 360
+                    camera.set_orientation(camera_orientation)
+                    print(f"[INFO] Camera orientation toggled to: {camera_orientation}°")
                 if cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1:
                     break
                 time.sleep(0.0015)

@@ -388,8 +388,8 @@ class LegacySensorQtGUI(QMainWindow):
             parent = None
         super().__init__(parent)
         self.setWindowTitle(WINDOW_TITLE)
-        self.resize(960, 580)
-        self.setMinimumSize(920, 550)
+        self.resize(960, 640)
+        self.setMinimumSize(920, 580)
         if ICON_PSCAMERA_PATH.exists():
             self.setWindowIcon(QIcon(str(ICON_PSCAMERA_PATH)))
 
@@ -1165,14 +1165,62 @@ class LegacySensorQtGUI(QMainWindow):
         self.display_card = QFrame(self.page_video)
         self.display_card.setProperty("class", "card")
         disp_layout = QVBoxLayout(self.display_card)
-        disp_layout.setContentsMargins(16, 12, 16, 12)
-        disp_layout.setSpacing(8)
+        disp_layout.setContentsMargins(16, 14, 16, 14)
+        disp_layout.setSpacing(10)
 
         lbl_disp_title = QLabel("ADDITIONAL DISPLAY OPTIONS", self.display_card)
         lbl_disp_title.setStyleSheet(
             f"font-family: '{self.font_heading}'; font-size: 12px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent; border: none;"
         )
         disp_layout.addWidget(lbl_disp_title)
+
+        lbl_disp_sub = QLabel("Configure camera image rotation and in-game visual overlays.", self.display_card)
+        lbl_disp_sub.setStyleSheet(
+            f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
+        )
+        disp_layout.addWidget(lbl_disp_sub)
+
+        # Block: Camera Orientation
+        block_orient = QFrame(self.display_card)
+        block_orient.setObjectName("settingBlockOrient")
+        block_orient.setFixedHeight(92)
+        block_orient.setStyleSheet(f"""
+            QFrame#settingBlockOrient {{
+                background-color: #FFFFFF;
+                border: 1px solid {PALETTE["border_subtle"]};
+                border-radius: 10px;
+            }}
+            QFrame#settingBlockOrient:hover {{
+                border-color: {PALETTE["input_border"]};
+            }}
+        """)
+        orient_layout = QVBoxLayout(block_orient)
+        orient_layout.setContentsMargins(14, 10, 14, 10)
+        orient_layout.setSpacing(4)
+
+        lbl_orient_title = QLabel("CAMERA ORIENTATION", block_orient)
+        lbl_orient_title.setStyleSheet(
+            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent; border: none;"
+        )
+        orient_layout.addWidget(lbl_orient_title)
+
+        lbl_orient_sub = QLabel("Rotation angle if your camera is physically mounted sideways or inverted.", block_orient)
+        lbl_orient_sub.setWordWrap(True)
+        lbl_orient_sub.setStyleSheet(
+            f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
+        )
+        orient_layout.addWidget(lbl_orient_sub)
+
+        self.cb_orient = QComboBox(block_orient)
+        self.cb_orient.setFixedHeight(32)
+        self.cb_orient.addItems(["0° (Padrão)", "90° (Horário)", "180° (Invertido)", "270° (Anti-horário)"])
+        curr_orient = self.cfg.get("camera_orientation", 0)
+        orient_map = {0: 0, 90: 1, 180: 2, 270: 3}
+        self.cb_orient.setCurrentIndex(orient_map.get(curr_orient, 0))
+        self.cb_orient.currentIndexChanged.connect(self._on_orientation_changed)
+        orient_layout.addWidget(self.cb_orient)
+
+        disp_layout.addWidget(block_orient)
 
         self.chk_hud = QCheckBox("Display HUD Overlay in Tracking Window (FPS, IPC & Shortcuts)", self.display_card)
         self.chk_hud.setChecked(self.cfg.get("show_hud", True))
@@ -1857,6 +1905,12 @@ class LegacySensorQtGUI(QMainWindow):
     def _on_display_options_changed(self):
         self.cfg["show_hud"] = self.chk_hud.isChecked()
         self.cfg["face_follow_enabled"] = self.chk_face.isChecked()
+        self._save_settings()
+
+    def _on_orientation_changed(self, index: int):
+        orientations = [0, 90, 180, 270]
+        angle = orientations[index] if 0 <= index < len(orientations) else 0
+        self.cfg["camera_orientation"] = angle
         self._save_settings()
 
     def _select_calib_preset(self, preset_id: str):

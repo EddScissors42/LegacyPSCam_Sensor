@@ -425,13 +425,14 @@ class LatestFrameCamera:
     Handles black-frame recovery and automatic Side-by-Side stereo cropping.
     Always delivers pristine, un-mirrored frames to the pose tracker.
     """
-    def __init__(self, camera_index, target_w=640, target_h=480, target_fps=30, mirror=True, is_pscam=False):
+    def __init__(self, camera_index, target_w=640, target_h=480, target_fps=30, mirror=True, is_pscam=False, orientation=0):
         self.camera_index = camera_index
         self.target_w = target_w
         self.target_h = target_h
         self.target_fps = target_fps
         self.mirror = mirror
         self.is_pscam = is_pscam
+        self.orientation = int(orientation)
 
         self.cap = None
         self.fb_reader = FrameBusReader() if (self.is_pscam and os.name == 'nt') else None
@@ -533,6 +534,14 @@ class LatestFrameCamera:
             if w >= int(1.8 * h):
                 frame = frame[:, :w // 2]
 
+            # Apply camera orientation rotation if configured
+            if self.orientation == 90:
+                frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+            elif self.orientation == 180:
+                frame = cv2.rotate(frame, cv2.ROTATE_180)
+            elif self.orientation == 270:
+                frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
+
             with self.lock:
                 self.latest_frame = frame
                 self.latest_ret = True
@@ -563,6 +572,10 @@ class LatestFrameCamera:
 
     def set_mirror(self, mirror):
         self.mirror = mirror
+
+    def set_orientation(self, orientation: int):
+        with self.lock:
+            self.orientation = int(orientation)
 
     def release(self):
         self.running = False

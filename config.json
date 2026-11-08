@@ -28,5 +28,6 @@
     "face_follow_enabled": false,
     "face_follow_zoom": 1.22,
     "face_follow_smoothing": 0.2,
-    "face_follow_y_bias": 0.06
+    "face_follow_y_bias": 0.06,
+    "camera_orientation": 0
 }

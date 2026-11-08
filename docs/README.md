@@ -35,6 +35,7 @@ All non-essential overhead has been removed while perfecting the core components
 | 6-Player Coach Selection Support | Expanded lateral tracking range allowing selection of all dancer slots (Slots 1 to 6). | Implemented |
 | Auto-Framing / FaceFollow PTZ | Dynamic software pan/tilt/zoom (1.22x) keeping player face focused and centered in Just Dance. | Implemented |
 | Device Settings & Navigation Polish | Aligned controls anatomy, experimental safety notice, and auto-return to Video Settings on device toggle. | Implemented |
+| Camera Orientation Control | Real-time 0°, 90°, 180°, and 270° rotation block supporting inverted or sideways camera mounts. | Implemented |
 | High-Resolution Windows Timer (1ms) | Python timer synchronization ensuring `Sleep(33)` in `Kinect10.dll` delivers solid 30 FPS. | Implemented |
 
 ---
