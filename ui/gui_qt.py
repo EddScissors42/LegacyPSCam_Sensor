@@ -380,7 +380,7 @@ class LegacySensorQtGUI(QMainWindow):
     cameras_refreshed_signal = Signal(list)
     tracking_finished_signal = Signal(bool, str)
 
-    def __init__(self, parent=None, *args, **kwargs):
+    def __init__(self, parent=None, *args, auto_discover=True, **kwargs):
         if parent is not None and not isinstance(parent, QWidget):
             parent = None
         super().__init__(parent)
@@ -410,6 +410,7 @@ class LegacySensorQtGUI(QMainWindow):
         self.active_tab = "video"
         self.current_calib_preset = self.cfg.get("tracking_preset", "balanced")
         self.is_adv_calib_open = False
+        self._is_closing = False
         self.calib_cards = {}
 
         self._load_pixmaps()
@@ -426,12 +427,15 @@ class LegacySensorQtGUI(QMainWindow):
 
         # Initial PS Camera status and camera discovery
         self._update_pscam_status()
-        self._refresh_cameras_async()
+        if auto_discover:
+            self._refresh_cameras_async()
 
-        # Periodic non-blocking check (1000ms)
-        self.timer_periodic = QTimer(self)
-        self.timer_periodic.timeout.connect(self._periodic_check)
-        self.timer_periodic.start(1000)
+            # Periodic non-blocking check (1000ms)
+            self.timer_periodic = QTimer(self)
+            self.timer_periodic.timeout.connect(self._periodic_check)
+            self.timer_periodic.start(1000)
+        else:
+            self.timer_periodic = None
 
     def _load_pixmaps(self):
         """Loads pure PIL RGBA icons and converts them into antialiased QPixmaps with 4x supersampling."""
@@ -1503,12 +1507,18 @@ class LegacySensorQtGUI(QMainWindow):
                 cams = CameraManager.enumerate_cameras()
             except Exception:
                 cams = []
-            self.cameras_refreshed_signal.emit(cams)
+            if not getattr(self, "_is_closing", False):
+                try:
+                    self.cameras_refreshed_signal.emit(cams)
+                except RuntimeError:
+                    pass
 
         threading.Thread(target=worker, daemon=True).start()
 
     @Slot(list)
     def _on_cameras_refreshed(self, cams):
+        if getattr(self, "_is_closing", False):
+            return
         self._is_refreshing_cams = False
         self.camera_list = cams
         self._update_pscam_status()
@@ -1705,6 +1715,7 @@ class LegacySensorQtGUI(QMainWindow):
             pass
 
     def closeEvent(self, event):
+        self._is_closing = True
         if hasattr(self, "timer_periodic") and self.timer_periodic is not None:
             self.timer_periodic.stop()
         if hasattr(self, "bridge") and self.bridge is not None:

@@ -539,7 +539,7 @@ def test_project_structure():
         os.environ["QT_QPA_PLATFORM"] = "offscreen"
         from PySide6.QtWidgets import QApplication
         app = QApplication.instance() or QApplication([])
-        win = ui.LegacySensorQtGUI()
+        win = ui.LegacySensorQtGUI(auto_discover=False)
         assert win.windowTitle() == version.WINDOW_TITLE
         assert not win.pix_ps_act.isNull(), "PS Camera icon pixmap must not be null"
         assert not win.pix_web_act.isNull(), "Webcam icon pixmap must not be null"
@@ -561,6 +561,7 @@ def test_project_structure():
             win._switch_tab("calib")
             assert win.active_tab == "video", "Switching to calib must be prevented when camera is not accessible"
         win.close()
+        app.processEvents()
 
     import assets
     assert hasattr(assets, "ASSETS_DIR")

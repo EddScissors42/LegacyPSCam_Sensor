@@ -293,8 +293,14 @@ class CameraManager:
                     is_ps = any(k in name.lower() for k in ["ps4", "playstation", "ov580", "pscam"]) or (w == 1280 and h in (400, 800) and CameraManager.is_pscam_running())
                     if is_ps and "ps4" not in name.lower() and "playstation" not in name.lower():
                         name = f"PlayStation 4 Camera ({name})"
-                    display_res = "1280x800" if is_ps else f"{w}x{h}"
+                    display_res = "1280x800" if is_ps else (f"{w}x{h}" if w > 0 and h > 0 else "640x480")
                     cameras.append(CameraInfo(idx, f"{name} ({display_res})", is_pscam=is_ps))
+
+        # Ensure PS4 Camera is listed if PSCam4Win driver/FrameBus is active even without VCam DirectShow
+        if not any(c.is_pscam for c in cameras) and os.name == 'nt':
+            ps4_state = CameraManager.get_ps4_camera_state()
+            if ps4_state.get("state") in ("READY", "WAITING_VCAM") and ps4_state.get("running"):
+                cameras.append(CameraInfo(len(cameras), "PlayStation 4 Camera [FrameBus Direct] (1280x800)", is_pscam=True))
 
         if not cameras:
             cameras.append(CameraInfo(0, "Default Camera (Index 0)", False))
@@ -335,14 +341,18 @@ class FrameBusReader:
             MapViewOfFile.restype = ctypes.c_void_p
             MapViewOfFile.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.DWORD, wintypes.DWORD, ctypes.c_size_t]
 
+            UnmapViewOfFile = ctypes.windll.kernel32.UnmapViewOfFile
+            UnmapViewOfFile.argtypes = [ctypes.c_void_p]
             CloseHandle = ctypes.windll.kernel32.CloseHandle
+            CloseHandle.argtypes = [wintypes.HANDLE]
 
             # PS4 cameras are assigned top-down: slot 7 first (or 6 for split), PS3 cameras to 0..5
             for s in [7, 6, 0, 1, 2, 3, 4, 5]:
                 name = f"Global\\PSCam4Win{s}.FrameBus"
                 h = OpenFileMappingW(FILE_MAP_READ, False, name)
                 if h:
-                    ptr = MapViewOfFile(h, FILE_MAP_READ, 0, 0, 4096 + 2560 * 800 * 2)
+                    # Map entire section (dwNumberOfBytesToMap = 0) so we never exceed section size
+                    ptr = MapViewOfFile(h, FILE_MAP_READ, 0, 0, 0)
                     if ptr:
                         raw = ctypes.string_at(ptr, 64)
                         magic, ver, fmt, w, h_dim = struct.unpack('<IIIII', raw[:20])
@@ -351,6 +361,7 @@ class FrameBusReader:
                             self.view_ptr = ptr
                             self.slot = s
                             return
+                        UnmapViewOfFile(ptr)
                     CloseHandle(h)
         except Exception:
             pass
@@ -443,7 +454,28 @@ class LatestFrameCamera:
         self._open_and_negotiate()
 
     def _open_and_negotiate(self):
-        # Prefer CAP_DSHOW on Windows for fast startup and mode control
+        # 1. Fast Path for PlayStation 4 Camera: Direct PSCam4Win FrameBus Shared Memory
+        # Bypasses the 1-2s DirectShow virtual camera graph negotiation when FrameBus is already streaming.
+        if self.is_pscam and self.fb_reader is not None:
+            fb_frame = self.fb_reader.read_frame(only_new=False)
+            if fb_frame is not None and not self._is_black_frame(fb_frame):
+                h, w = fb_frame.shape[:2]
+                if w >= int(1.8 * h):
+                    fb_frame = fb_frame[:, :w // 2]
+                self.actual_w = fb_frame.shape[1]
+                self.actual_h = fb_frame.shape[0]
+                self.actual_fps = self.target_fps
+                self.latest_frame = fb_frame
+                self.latest_ret = True
+                self.frame_seq = 1
+                print(f"[CAMERA] PS4 Camera conectada diretamente via FrameBus (Slot {self.fb_reader.slot}): "
+                      f"{self.actual_w}x{self.actual_h}@{self.actual_fps}fps (Zero-Latency Bypass)")
+                self.running = True
+                self.thread = threading.Thread(target=self._capture_loop, daemon=True, name="CameraCaptureThread")
+                self.thread.start()
+                return
+
+        # 2. Standard DirectShow / MSMF Path (Webcams or PS Camera fallback if FrameBus is not yet active)
         self.cap = cv2.VideoCapture(self.camera_index, cv2.CAP_DSHOW)
         if not self.cap.isOpened():
             self.cap = cv2.VideoCapture(self.camera_index)
@@ -486,7 +518,7 @@ class LatestFrameCamera:
         return float(frame[::16, ::16].mean()) < 1.0
 
     def _capture_loop(self):
-        while self.running and self.cap and self.cap.isOpened():
+        while self.running:
             ret = False
             frame = None
 
@@ -498,14 +530,23 @@ class LatestFrameCamera:
                 if fb_frame is not None and not self._is_black_frame(fb_frame):
                     frame = fb_frame
                     ret = True
-                elif self.fb_reader.is_connected and (time.perf_counter() - self.fb_reader.last_frame_time) < 0.15:
+                elif self.fb_reader.is_connected and (time.perf_counter() - self.fb_reader.last_frame_time) < 0.25:
                     # FrameBus is actively streaming; wait briefly for the next 60 Hz hardware tick
                     time.sleep(0.0015)
                     continue
 
-            # 2. Standard DirectShow Path (or fallback if FrameBus is inactive)
+            # 2. Standard DirectShow Path (or lazy fallback if FrameBus is inactive)
             if not ret or frame is None:
-                ret, frame = self.cap.read()
+                if self.cap is None or not self.cap.isOpened():
+                    # Lazy-open DirectShow fallback only if FrameBus is unavailable
+                    try:
+                        self.cap = cv2.VideoCapture(self.camera_index, cv2.CAP_DSHOW)
+                        if not self.cap.isOpened():
+                            self.cap = cv2.VideoCapture(self.camera_index)
+                    except Exception:
+                        self.cap = None
+                if self.cap is not None and self.cap.isOpened():
+                    ret, frame = self.cap.read()
                 if self.is_pscam and (not ret or self._is_black_frame(frame)) and self.fb_reader is not None:
                     fb_frame = self.fb_reader.read_frame(only_new=False)
                     if fb_frame is not None and not self._is_black_frame(fb_frame):
