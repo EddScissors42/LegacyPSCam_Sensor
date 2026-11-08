@@ -24,10 +24,10 @@ def make_pill_image(w: int, h: int, fill, outline=None, radius: int = 12):
     return ImageTk.PhotoImage(img.resize((w, h), Image.Resampling.LANCZOS))
 
 
-def load_pscam_file_icon(png_path: Path, target_box=(38, 26), color=(255, 255, 255)):
+def load_pscam_file_icon(png_path: Path, target_box=(38, 26), color=(255, 255, 255), scale: int = 4):
     """
     Loads user-provided IconePSCAMERA.png, converts dark background to transparent alpha,
-    recolors the icon graphic to the target color, and scales it into target_box.
+    recolors the icon graphic to the target color, and scales it into target_box * scale.
     """
     if not png_path or not png_path.exists():
         return None
@@ -52,14 +52,14 @@ def load_pscam_file_icon(png_path: Path, target_box=(38, 26), color=(255, 255, 2
             return None
         cropped = colored_im.crop(bbox)
 
-        # Scale proportionally to fit within target_box
-        bw, bh = target_box
-        scale = min(bw / cropped.width, bh / cropped.height)
-        new_w = max(1, int(cropped.width * scale))
-        new_h = max(1, int(cropped.height * scale))
+        # Scale proportionally to fit within scaled target box
+        bw, bh = target_box[0] * scale, target_box[1] * scale
+        fit_scale = min(bw / cropped.width, bh / cropped.height)
+        new_w = max(1, int(cropped.width * fit_scale))
+        new_h = max(1, int(cropped.height * fit_scale))
         resized = cropped.resize((new_w, new_h), Image.Resampling.LANCZOS)
 
-        canvas = Image.new("RGBA", target_box, (0, 0, 0, 0))
+        canvas = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
         canvas.paste(resized, ((bw - new_w) // 2, (bh - new_h) // 2))
         return canvas
     except Exception as e:
@@ -67,12 +67,12 @@ def load_pscam_file_icon(png_path: Path, target_box=(38, 26), color=(255, 255, 2
         return None
 
 
-def generate_icons_pil(target_box=(38, 26)):
+def generate_icons_pil(target_box=(38, 26), scale: int = 4):
     """
     Renders supersampled PIL.Image RGBA icons for the sidebar navigation:
     1. PlayStation 4 Camera (loaded from assets/icons/IconePSCAMERA.png with vector fallback).
     2. Generic round Webcam (circular head with lens aperture and stand).
-    Returns (pil_ps_act, pil_ps_inact, pil_web_act, pil_web_inact).
+    Returns (pil_ps_act, pil_ps_inact, pil_web_act, pil_web_inact) rendered at target_box * scale.
     """
     base_dir = Path(__file__).resolve().parent
     png_candidates = [
@@ -86,12 +86,12 @@ def generate_icons_pil(target_box=(38, 26)):
     png_path = next((p for p in png_candidates if p.exists()), base_dir.parent / "assets" / "icons" / "IconePSCAMERA.png")
 
     # 1. PS4 Camera Icon (from file or vector fallback)
-    ps_file_act = load_pscam_file_icon(png_path, target_box=target_box, color=(255, 255, 255))
-    ps_file_inact = load_pscam_file_icon(png_path, target_box=target_box, color=(0, 67, 156))
+    ps_file_act = load_pscam_file_icon(png_path, target_box=target_box, color=(255, 255, 255), scale=scale)
+    ps_file_inact = load_pscam_file_icon(png_path, target_box=target_box, color=(0, 67, 156), scale=scale)
+
+    w, h = target_box[0] * scale, target_box[1] * scale
 
     if ps_file_act is None or ps_file_inact is None:
-        scale = 4
-        w, h = target_box[0] * scale, target_box[1] * scale
         img_ps_act = Image.new("RGBA", (w, h), (0, 0, 0, 0))
         d = ImageDraw.Draw(img_ps_act)
         d.rounded_rectangle([int(w * 0.08), int(h * 0.28), int(w * 0.92), int(h * 0.54)],
@@ -103,7 +103,7 @@ def generate_icons_pil(target_box=(38, 26)):
         d.rectangle([int(w * 0.44), int(h * 0.54), int(w * 0.56), int(h * 0.76)], fill=(255, 255, 255, 255))
         d.rounded_rectangle([int(w * 0.25), int(h * 0.76), int(w * 0.75), int(h * 0.86)],
                             radius=int(2 * scale), fill=(255, 255, 255, 255))
-        ps_file_act = img_ps_act.resize(target_box, Image.Resampling.LANCZOS)
+        ps_file_act = img_ps_act if scale > 1 else img_ps_act.resize(target_box, Image.Resampling.LANCZOS)
 
         img_ps_inact = Image.new("RGBA", (w, h), (0, 0, 0, 0))
         d = ImageDraw.Draw(img_ps_inact)
@@ -114,11 +114,9 @@ def generate_icons_pil(target_box=(38, 26)):
         d.rectangle([int(w * 0.44), int(h * 0.54), int(w * 0.56), int(h * 0.76)], fill=(0, 67, 156, 255))
         d.rounded_rectangle([int(w * 0.25), int(h * 0.76), int(w * 0.75), int(h * 0.86)],
                             radius=int(2 * scale), fill=(0, 67, 156, 255))
-        ps_file_inact = img_ps_inact.resize(target_box, Image.Resampling.LANCZOS)
+        ps_file_inact = img_ps_inact if scale > 1 else img_ps_inact.resize(target_box, Image.Resampling.LANCZOS)
 
     # 2. Webcam Icon (Properly padded with zero clipping at the top or bottom)
-    scale = 4
-    w, h = target_box[0] * scale, target_box[1] * scale
     cr = int(7 * scale)
     ccx = w // 2
     ccy = int(h * 0.38)
@@ -138,7 +136,7 @@ def generate_icons_pil(target_box=(38, 26)):
     d.rectangle([int(w * 0.45), stem_top, int(w * 0.55), stem_bottom], fill=(255, 255, 255, 255))
     d.rounded_rectangle([int(w * 0.24), stem_bottom, int(w * 0.76), int(h * 0.92)],
                         radius=int(2 * scale), fill=(255, 255, 255, 255))
-    web_act_pil = img_web_act.resize(target_box, Image.Resampling.LANCZOS)
+    web_act_pil = img_web_act if scale > 1 else img_web_act.resize(target_box, Image.Resampling.LANCZOS)
 
     # 2.2 Inactive Webcam Icon (PlayStation Blue on light background)
     img_web_inact = Image.new("RGBA", (w, h), (0, 0, 0, 0))
@@ -153,14 +151,14 @@ def generate_icons_pil(target_box=(38, 26)):
     d.rectangle([int(w * 0.45), stem_top, int(w * 0.55), stem_bottom], fill=(0, 67, 156, 255))
     d.rounded_rectangle([int(w * 0.24), stem_bottom, int(w * 0.76), int(h * 0.92)],
                         radius=int(2 * scale), fill=(0, 67, 156, 255))
-    web_inact_pil = img_web_inact.resize(target_box, Image.Resampling.LANCZOS)
+    web_inact_pil = img_web_inact if scale > 1 else img_web_inact.resize(target_box, Image.Resampling.LANCZOS)
 
     return ps_file_act, ps_file_inact, web_act_pil, web_inact_pil
 
 
 def generate_icons():
     """Returns ImageTk.PhotoImage variants for Tkinter sidebar navigation."""
-    ps_act, ps_inact, web_act, web_inact = generate_icons_pil()
+    ps_act, ps_inact, web_act, web_inact = generate_icons_pil(scale=1)
     return (
         ImageTk.PhotoImage(ps_act),
         ImageTk.PhotoImage(ps_inact),
@@ -169,10 +167,11 @@ def generate_icons():
     )
 
 
-def render_svg_icon_pil(svg_path: Path, size: tuple = (18, 18), color_hex: str = "#0F172A"):
+def render_svg_icon_pil(svg_path: Path, size: tuple = (18, 18), color_hex: str = "#0F172A", scale: int = 4):
     """
     Renders an SVG file to a transparent, tinted PIL RGBA Image.
-    Uses Qt's QSvgRenderer for high-precision anti-aliasing.
+    Uses Qt's QSvgRenderer with Antialiasing and SmoothPixmapTransform.
+    Returns (w*scale, h*scale) supersampled image for crisp Retina/High-DPI rendering.
     """
     if not svg_path or not Path(svg_path).exists():
         return None
@@ -192,27 +191,29 @@ def render_svg_icon_pil(svg_path: Path, size: tuple = (18, 18), color_hex: str =
             return None
 
         w, h = size
-        scale = 2
-        qimg = QImage(w * scale, h * scale, QImage.Format.Format_RGBA8888)
+        pw, ph = w * scale, h * scale
+        qimg = QImage(pw, ph, QImage.Format.Format_RGBA8888)
         qimg.fill(Qt.GlobalColor.transparent)
         p = QPainter(qimg)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
         ren.render(p)
         p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
         p.fillRect(qimg.rect(), QColor(color_hex))
         p.end()
 
-        pil_raw = Image.frombytes("RGBA", (w * scale, h * scale), qimg.bits().tobytes())
-        return pil_raw.resize(size, Image.Resampling.LANCZOS)
+        pil_raw = Image.frombytes("RGBA", (pw, ph), qimg.bits().tobytes())
+        return pil_raw
     except Exception:
         return None
 
 
-def generate_tab_icons_pil(size=(18, 18)):
+def generate_tab_icons_pil(size=(18, 18), scale: int = 4):
     """
     Renders supersampled PIL.Image RGBA icons for the top navigation tabs:
-    1. Settings SVG icon for 'Video Settings'
-    2. Sliders SVG icon for 'Calibration'
-    Returns (settings_act, settings_inact, sliders_act, sliders_inact).
+    1. Settings SVG icon for 'Video Settings' (active & inactive)
+    2. Sliders SVG icon for 'Calibration' (active, inactive, & disabled)
+    Returns (settings_act, settings_inact, sliders_act, sliders_inact, sliders_disabled).
     """
     base_dir = Path(__file__).resolve().parent
     settings_candidates = [
@@ -233,15 +234,16 @@ def generate_tab_icons_pil(size=(18, 18)):
 
     col_act = "#0F172A"
     col_inact = "#64748B"
+    col_disabled = "#94A3B8"
 
-    set_act = render_svg_icon_pil(settings_path, size=size, color_hex=col_act)
-    set_inact = render_svg_icon_pil(settings_path, size=size, color_hex=col_inact)
-    slid_act = render_svg_icon_pil(sliders_path, size=size, color_hex=col_act)
-    slid_inact = render_svg_icon_pil(sliders_path, size=size, color_hex=col_inact)
+    set_act = render_svg_icon_pil(settings_path, size=size, color_hex=col_act, scale=scale)
+    set_inact = render_svg_icon_pil(settings_path, size=size, color_hex=col_inact, scale=scale)
+    slid_act = render_svg_icon_pil(sliders_path, size=size, color_hex=col_act, scale=scale)
+    slid_inact = render_svg_icon_pil(sliders_path, size=size, color_hex=col_inact, scale=scale)
+    slid_dis = render_svg_icon_pil(sliders_path, size=size, color_hex=col_disabled, scale=scale)
 
     # Procedural vector fallbacks if SVGs cannot be loaded/rendered
-    if set_act is None or set_inact is None or slid_act is None or slid_inact is None:
-        scale = 4
+    if set_act is None or set_inact is None or slid_act is None or slid_inact is None or slid_dis is None:
         w, h = size[0] * scale, size[1] * scale
 
         def make_gear(color):
@@ -264,7 +266,7 @@ def generate_tab_icons_pil(size=(18, 18)):
                 d.polygon(pts, fill=color)
             d.ellipse([cx - r_inner, cy - r_inner, cx + r_inner, cy + r_inner], fill=color)
             d.ellipse([cx - r_hole, cy - r_hole, cx + r_hole, cy + r_hole], fill=(0, 0, 0, 0))
-            return img.resize(size, Image.Resampling.LANCZOS)
+            return img
 
         def make_sliders(color):
             img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
@@ -280,10 +282,11 @@ def generate_tab_icons_pil(size=(18, 18)):
                 d.ellipse([kx - knob_r, y - knob_r, kx + knob_r, y + knob_r], fill=color)
                 hole_r = int(1.6 * scale)
                 d.ellipse([kx - hole_r, y - hole_r, kx + hole_r, y + hole_r], fill=(0, 0, 0, 0))
-            return img.resize(size, Image.Resampling.LANCZOS)
+            return img
 
         col_act_tuple = (15, 23, 42, 255)
         col_inact_tuple = (100, 116, 139, 255)
+        col_dis_tuple = (148, 163, 184, 255)
         if set_act is None:
             set_act = make_gear(col_act_tuple)
         if set_inact is None:
@@ -292,13 +295,15 @@ def generate_tab_icons_pil(size=(18, 18)):
             slid_act = make_sliders(col_act_tuple)
         if slid_inact is None:
             slid_inact = make_sliders(col_inact_tuple)
+        if slid_dis is None:
+            slid_dis = make_sliders(col_dis_tuple)
 
-    return set_act, set_inact, slid_act, slid_inact
+    return set_act, set_inact, slid_act, slid_inact, slid_dis
 
 
 def generate_tab_icons():
     """Returns ImageTk.PhotoImage pairs for Tkinter top navigation tabs."""
-    g_act, g_inact, s_act, s_inact = generate_tab_icons_pil()
+    g_act, g_inact, s_act, s_inact, _ = generate_tab_icons_pil(scale=1)
     return (
         ImageTk.PhotoImage(g_act),
         ImageTk.PhotoImage(g_inact),
@@ -307,13 +312,13 @@ def generate_tab_icons():
     )
 
 
-def generate_mode_icons_pil(size=(18, 18)):
+def generate_mode_icons_pil(size=(15, 15), scale: int = 4):
     """
     Renders supersampled PIL.Image RGBA icons for the calibration mode preset cards:
     - balanced: mode_balanced.svg (active: PlayStation Blue #00439C, inactive: Slate #64748B)
     - competitive: mode_competitive.svg (active: PlayStation Blue #00439C, inactive: Slate #64748B)
     - stable: mode_stable.svg / mode_.svg (active: PlayStation Blue #00439C, inactive: Slate #64748B)
-    Returns dict: {pid: (pil_act, pil_inact)}.
+    Returns dict: {pid: (pil_act, pil_inact)} rendered at size * scale.
     """
     base_dir = Path(__file__).resolve().parent
 
@@ -332,15 +337,14 @@ def generate_mode_icons_pil(size=(18, 18)):
     col_act = "#00439C"
     col_inact = "#64748B"
 
-    bal_act = render_svg_icon_pil(path_bal, size=size, color_hex=col_act)
-    bal_inact = render_svg_icon_pil(path_bal, size=size, color_hex=col_inact)
-    comp_act = render_svg_icon_pil(path_comp, size=size, color_hex=col_act)
-    comp_inact = render_svg_icon_pil(path_comp, size=size, color_hex=col_inact)
-    stab_act = render_svg_icon_pil(path_stable, size=size, color_hex=col_act)
-    stab_inact = render_svg_icon_pil(path_stable, size=size, color_hex=col_inact)
+    bal_act = render_svg_icon_pil(path_bal, size=size, color_hex=col_act, scale=scale)
+    bal_inact = render_svg_icon_pil(path_bal, size=size, color_hex=col_inact, scale=scale)
+    comp_act = render_svg_icon_pil(path_comp, size=size, color_hex=col_act, scale=scale)
+    comp_inact = render_svg_icon_pil(path_comp, size=size, color_hex=col_inact, scale=scale)
+    stab_act = render_svg_icon_pil(path_stable, size=size, color_hex=col_act, scale=scale)
+    stab_inact = render_svg_icon_pil(path_stable, size=size, color_hex=col_inact, scale=scale)
 
     # Procedural fallbacks if SVGs are missing or fail to render
-    scale = 4
     w, h = size[0] * scale, size[1] * scale
 
     def make_fallback_star(col_tuple):
@@ -358,7 +362,7 @@ def generate_mode_icons_pil(size=(18, 18)):
             (cx - w * 0.12, cy - h * 0.12),
         ]
         d.polygon(pts, fill=col_tuple)
-        return img.resize(size, Image.Resampling.LANCZOS)
+        return img
 
     def make_fallback_lightning(col_tuple):
         img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
@@ -372,7 +376,7 @@ def generate_mode_icons_pil(size=(18, 18)):
             (w * 0.52, h * 0.42),
         ]
         d.polygon(pts, fill=col_tuple)
-        return img.resize(size, Image.Resampling.LANCZOS)
+        return img
 
     def make_fallback_shield(col_tuple):
         img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
@@ -386,7 +390,7 @@ def generate_mode_icons_pil(size=(18, 18)):
             (w * 0.15, h * 0.22),
         ]
         d.polygon(pts, fill=col_tuple)
-        return img.resize(size, Image.Resampling.LANCZOS)
+        return img
 
     col_act_tuple = (0, 67, 156, 255)
     col_inact_tuple = (100, 116, 139, 255)
@@ -411,23 +415,23 @@ def generate_mode_icons_pil(size=(18, 18)):
     }
 
 
-def generate_mode_icons(size=(18, 18)):
+def generate_mode_icons(size=(15, 15)):
     """Returns {pid: (act_photo, inact_photo)} for Tkinter."""
-    pil_dict = generate_mode_icons_pil(size=size)
+    pil_dict = generate_mode_icons_pil(size=size, scale=1)
     return {
         pid: (ImageTk.PhotoImage(act), ImageTk.PhotoImage(inact))
         for pid, (act, inact) in pil_dict.items()
     }
 
 
-def generate_status_icons_pil(size=(38, 38)):
+def generate_status_icons_pil(size=(38, 38), scale: int = 4):
     """
     Renders supersampled PIL.Image RGBA status badges for device connection status:
     1. Error: Red circular badge with a large, crisp X.
     2. OK: Green circular badge with a crisp checkmark.
     3. Warn: Amber circular badge with an exclamation mark.
+    Returns (pil_err, pil_ok, pil_warn) rendered at size * scale.
     """
-    scale = 4
     w, h = size[0] * scale, size[1] * scale
     pad = int(1.5 * scale)
     cx, cy = w / 2, h / 2
@@ -443,7 +447,7 @@ def generate_status_icons_pil(size=(38, 38)):
     cr = lw / 2.0
     for px, py in [(cx - r, cy - r), (cx + r, cy + r), (cx - r, cy + r), (cx + r, cy - r)]:
         d_err.ellipse([px - cr, py - cr, px + cr, py + cr], fill=(220, 38, 38, 255))
-    pil_err = img_err.resize(size, Image.Resampling.LANCZOS)
+    pil_err = img_err if scale > 1 else img_err.resize(size, Image.Resampling.LANCZOS)
 
     # 2. OK (Checkmark badge)
     img_ok = Image.new("RGBA", (w, h), (0, 0, 0, 0))
@@ -459,7 +463,7 @@ def generate_status_icons_pil(size=(38, 38)):
     cr = lw / 2.0
     d_ok.ellipse([pts[0][0] - cr, pts[0][1] - cr, pts[0][0] + cr, pts[0][1] + cr], fill=(5, 150, 105, 255))
     d_ok.ellipse([pts[2][0] - cr, pts[2][1] - cr, pts[2][0] + cr, pts[2][1] + cr], fill=(5, 150, 105, 255))
-    pil_ok = img_ok.resize(size, Image.Resampling.LANCZOS)
+    pil_ok = img_ok if scale > 1 else img_ok.resize(size, Image.Resampling.LANCZOS)
 
     # 3. Warn (! badge)
     img_warn = Image.new("RGBA", (w, h), (0, 0, 0, 0))
@@ -471,14 +475,14 @@ def generate_status_icons_pil(size=(38, 38)):
     d_warn.ellipse([cx - cr, cy - int(7 * scale) - cr, cx + cr, cy - int(7 * scale) + cr], fill=(217, 119, 6, 255))
     d_warn.ellipse([cx - cr, cy + int(1.5 * scale) - cr, cx + cr, cy + int(1.5 * scale) + cr], fill=(217, 119, 6, 255))
     d_warn.ellipse([cx - cr, cy + int(4.5 * scale) - cr, cx + cr, cy + int(4.5 * scale) + cr], fill=(217, 119, 6, 255))
-    pil_warn = img_warn.resize(size, Image.Resampling.LANCZOS)
+    pil_warn = img_warn if scale > 1 else img_warn.resize(size, Image.Resampling.LANCZOS)
 
     return pil_err, pil_ok, pil_warn
 
 
 def generate_status_icons(size=(38, 38)):
     """Returns ImageTk.PhotoImage status badges for Tkinter."""
-    p_err, p_ok, p_warn = generate_status_icons_pil(size=size)
+    p_err, p_ok, p_warn = generate_status_icons_pil(size=size, scale=1)
     return (
         ImageTk.PhotoImage(p_err),
         ImageTk.PhotoImage(p_ok),

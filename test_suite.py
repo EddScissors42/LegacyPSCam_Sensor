@@ -506,6 +506,8 @@ def test_project_structure():
         assert not win.pix_web_act.isNull(), "Webcam icon pixmap must not be null"
         assert not win.pix_gear_act.isNull(), "Settings icon pixmap must not be null"
         assert not win.pix_slid_act.isNull(), "Sliders icon pixmap must not be null"
+        assert not win.pix_slid_disabled.isNull(), "Disabled sliders icon pixmap must not be null"
+        assert win.pix_gear_act.devicePixelRatio() >= 2.0, "Icons must have High-DPI supersampling"
         assert "balanced" in win.mode_pixmaps and not win.mode_pixmaps["balanced"][0].isNull(), "Mode icon balanced must not be null"
         assert "competitive" in win.mode_pixmaps and not win.mode_pixmaps["competitive"][0].isNull(), "Mode icon competitive must not be null"
         assert "stable" in win.mode_pixmaps and not win.mode_pixmaps["stable"][0].isNull(), "Mode icon stable must not be null"
@@ -513,6 +515,12 @@ def test_project_structure():
         assert win.font_title == "Kanit", f"Expected Kanit title font, got {win.font_title}"
         assert win.font_heading == "National Park", f"Expected National Park heading font, got {win.font_heading}"
         assert win.font_body == "Inter Tight", f"Expected Inter Tight body font, got {win.font_body}"
+
+        # Calibration tab gating when camera is not connected
+        if not win.is_camera_accessible():
+            assert not win.btn_tab_calib.isEnabled(), "Calibration tab must be disabled when camera is not accessible"
+            win._switch_tab("calib")
+            assert win.active_tab == "video", "Switching to calib must be prevented when camera is not accessible"
         win.close()
 
     import assets

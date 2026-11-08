@@ -63,8 +63,8 @@ from sensor.kinect_shared_memory import KinectBridge
 from sensor import tracking_session
 
 
-def pil_to_qpixmap(pil_img) -> QPixmap:
-    """Converts a Pillow RGBA Image to a Qt QPixmap with explicit stride and deep copy."""
+def pil_to_qpixmap(pil_img, dpr: float = 4.0) -> QPixmap:
+    """Converts a Pillow RGBA Image to a Qt QPixmap with explicit stride, deep copy, and High-DPI devicePixelRatio."""
     if pil_img is None:
         return QPixmap()
     img_rgba = pil_img.convert("RGBA")
@@ -76,7 +76,10 @@ def pil_to_qpixmap(pil_img) -> QPixmap:
         img_rgba.width * 4,
         QImage.Format.Format_RGBA8888
     ).copy()
-    return QPixmap.fromImage(qimg)
+    pm = QPixmap.fromImage(qimg)
+    if dpr > 1.0:
+        pm.setDevicePixelRatio(dpr)
+    return pm
 
 
 class SlidingStackedWidget(QStackedWidget):
@@ -271,8 +274,8 @@ class CalibPresetCard(QFrame):
         top_row.setSpacing(6)
 
         self.lbl_icon = QLabel(self)
-        self.lbl_icon.setFixedSize(18, 18)
-        self.lbl_icon.setScaledContents(True)
+        self.lbl_icon.setFixedSize(15, 15)
+        self.lbl_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.lbl_icon.setStyleSheet("background: transparent; border: none;")
 
         self.lbl_title = QLabel(pdata["title"], self)
@@ -431,31 +434,32 @@ class LegacySensorQtGUI(QMainWindow):
         self.timer_periodic.start(1000)
 
     def _load_pixmaps(self):
-        """Loads pure PIL RGBA icons and converts them into antialiased QPixmaps."""
+        """Loads pure PIL RGBA icons and converts them into antialiased QPixmaps with 4x supersampling."""
         try:
-            p_ps_act, p_ps_inact, p_web_act, p_web_inact = generate_icons_pil()
-            self.pix_ps_act = pil_to_qpixmap(p_ps_act)
-            self.pix_ps_inact = pil_to_qpixmap(p_ps_inact)
-            self.pix_web_act = pil_to_qpixmap(p_web_act)
-            self.pix_web_inact = pil_to_qpixmap(p_web_inact)
+            p_ps_act, p_ps_inact, p_web_act, p_web_inact = generate_icons_pil(target_box=(38, 26), scale=4)
+            self.pix_ps_act = pil_to_qpixmap(p_ps_act, dpr=4.0)
+            self.pix_ps_inact = pil_to_qpixmap(p_ps_inact, dpr=4.0)
+            self.pix_web_act = pil_to_qpixmap(p_web_act, dpr=4.0)
+            self.pix_web_inact = pil_to_qpixmap(p_web_inact, dpr=4.0)
         except Exception as e:
             print(f"[WARN] Failed to load device icons: {e}")
             self.pix_ps_act = self.pix_ps_inact = self.pix_web_act = self.pix_web_inact = QPixmap()
 
         try:
-            p_gear_act, p_gear_inact, p_slid_act, p_slid_inact = generate_tab_icons_pil()
-            self.pix_gear_act = pil_to_qpixmap(p_gear_act)
-            self.pix_gear_inact = pil_to_qpixmap(p_gear_inact)
-            self.pix_slid_act = pil_to_qpixmap(p_slid_act)
-            self.pix_slid_inact = pil_to_qpixmap(p_slid_inact)
+            p_gear_act, p_gear_inact, p_slid_act, p_slid_inact, p_slid_dis = generate_tab_icons_pil(size=(18, 18), scale=4)
+            self.pix_gear_act = pil_to_qpixmap(p_gear_act, dpr=4.0)
+            self.pix_gear_inact = pil_to_qpixmap(p_gear_inact, dpr=4.0)
+            self.pix_slid_act = pil_to_qpixmap(p_slid_act, dpr=4.0)
+            self.pix_slid_inact = pil_to_qpixmap(p_slid_inact, dpr=4.0)
+            self.pix_slid_disabled = pil_to_qpixmap(p_slid_dis, dpr=4.0)
         except Exception as e:
             print(f"[WARN] Failed to load tab icons: {e}")
-            self.pix_gear_act = self.pix_gear_inact = self.pix_slid_act = self.pix_slid_inact = QPixmap()
+            self.pix_gear_act = self.pix_gear_inact = self.pix_slid_act = self.pix_slid_inact = self.pix_slid_disabled = QPixmap()
 
         try:
-            p_modes = generate_mode_icons_pil(size=(18, 18))
+            p_modes = generate_mode_icons_pil(size=(15, 15), scale=4)
             self.mode_pixmaps = {
-                pid: (pil_to_qpixmap(act), pil_to_qpixmap(inact))
+                pid: (pil_to_qpixmap(act, dpr=4.0), pil_to_qpixmap(inact, dpr=4.0))
                 for pid, (act, inact) in p_modes.items()
             }
         except Exception as e:
@@ -463,10 +467,10 @@ class LegacySensorQtGUI(QMainWindow):
             self.mode_pixmaps = {}
 
         try:
-            p_err, p_ok, p_warn = generate_status_icons_pil(size=(38, 38))
-            self.pix_status_err = pil_to_qpixmap(p_err)
-            self.pix_status_ok = pil_to_qpixmap(p_ok)
-            self.pix_status_warn = pil_to_qpixmap(p_warn)
+            p_err, p_ok, p_warn = generate_status_icons_pil(size=(38, 38), scale=4)
+            self.pix_status_err = pil_to_qpixmap(p_err, dpr=4.0)
+            self.pix_status_ok = pil_to_qpixmap(p_ok, dpr=4.0)
+            self.pix_status_warn = pil_to_qpixmap(p_warn, dpr=4.0)
         except Exception as e:
             print(f"[WARN] Failed to load status icons: {e}")
             self.pix_status_err = self.pix_status_ok = self.pix_status_warn = QPixmap()
@@ -1160,6 +1164,47 @@ class LegacySensorQtGUI(QMainWindow):
     # =========================================================================
     # UI STATE MANAGEMENT & VISIBILITY
     # =========================================================================
+    def is_camera_accessible(self) -> bool:
+        """Returns True if the currently selected camera device is connected and accessible."""
+        mode = self.cfg.get("camera_mode", "pscam")
+        if mode == "pscam":
+            return getattr(self, "_current_pscam_state", "DISCONNECTED") == "READY"
+        else:
+            cams = getattr(self, "camera_list", [])
+            webcams = [c for c in cams if not c.is_pscam]
+            if not webcams and not any(c.is_pscam for c in cams):
+                webcams = cams
+            return len(webcams) > 0
+
+    def _disabled_tab_css(self) -> str:
+        return f"""
+            QPushButton {{
+                background-color: #F1F5F9;
+                color: #94A3B8;
+                font-family: '{self.font_heading}', sans-serif;
+                font-size: 12px;
+                font-weight: bold;
+                border: 1px solid #CBD5E1;
+                border-radius: 10px;
+            }}
+        """
+
+    def _update_tab_availability(self):
+        """Disables and grays out the Calibration tab when the camera is not connected/accessible."""
+        accessible = self.is_camera_accessible()
+        if not accessible:
+            self.btn_tab_calib.setEnabled(False)
+            self.btn_tab_calib.setCursor(Qt.CursorShape.ForbiddenCursor)
+            if self.active_tab == "calib":
+                self._switch_tab("video")
+            else:
+                self.btn_tab_calib.setStyleSheet(self._disabled_tab_css())
+                self.btn_tab_calib.setIcon(QIcon(self.pix_slid_disabled))
+        else:
+            self.btn_tab_calib.setEnabled(True)
+            self.btn_tab_calib.setCursor(Qt.CursorShape.PointingHandCursor)
+            self._apply_tab_styles(self.active_tab)
+
     def _apply_tab_styles(self, tab_id: str):
         act_css = f"""
             QPushButton {{
@@ -1187,18 +1232,35 @@ class LegacySensorQtGUI(QMainWindow):
                 border-color: {PALETTE["tab_gray_border"]};
             }}
         """
+        accessible = self.is_camera_accessible()
+
         if tab_id == "video":
             self.btn_tab_video.setStyleSheet(act_css)
             self.btn_tab_video.setIcon(QIcon(self.pix_gear_act))
-            self.btn_tab_calib.setStyleSheet(inact_css)
-            self.btn_tab_calib.setIcon(QIcon(self.pix_slid_inact))
+            if not accessible:
+                self.btn_tab_calib.setEnabled(False)
+                self.btn_tab_calib.setCursor(Qt.CursorShape.ForbiddenCursor)
+                self.btn_tab_calib.setStyleSheet(self._disabled_tab_css())
+                self.btn_tab_calib.setIcon(QIcon(self.pix_slid_disabled))
+            else:
+                self.btn_tab_calib.setEnabled(True)
+                self.btn_tab_calib.setCursor(Qt.CursorShape.PointingHandCursor)
+                self.btn_tab_calib.setStyleSheet(inact_css)
+                self.btn_tab_calib.setIcon(QIcon(self.pix_slid_inact))
         else:
+            if not accessible:
+                self._switch_tab("video")
+                return
+            self.btn_tab_calib.setEnabled(True)
+            self.btn_tab_calib.setCursor(Qt.CursorShape.PointingHandCursor)
             self.btn_tab_calib.setStyleSheet(act_css)
             self.btn_tab_calib.setIcon(QIcon(self.pix_slid_act))
             self.btn_tab_video.setStyleSheet(inact_css)
             self.btn_tab_video.setIcon(QIcon(self.pix_gear_inact))
 
     def _switch_tab(self, tab_id: str):
+        if tab_id == "calib" and not self.is_camera_accessible():
+            return
         if self.active_tab == tab_id:
             return
         self.active_tab = tab_id
@@ -1262,6 +1324,8 @@ class LegacySensorQtGUI(QMainWindow):
                 self.webcam_disconnected_box.setVisible(False)
                 self.webcam_card.setVisible(True)
                 self.display_card.setVisible(True)
+
+        self._update_tab_availability()
 
     def _refresh_presets(self):
         mode = self.cfg.get("camera_mode", "pscam")

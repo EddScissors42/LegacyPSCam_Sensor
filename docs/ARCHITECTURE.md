@@ -22,7 +22,7 @@ LegacyPSCam_Sensor/
 │   ├── tracking_session.py     # Orquestrador do loop de rastreamento e eventos de teclado
 │   ├── tracking_overlay.py     # Renderização visual do esqueleto, silhueta sombreada e HUD
 │   └── config_manager.py       # Gerenciamento e persistência das configurações (config.json)
-├── version.py                  # Versionamento centralizado e metadados de build (v0.1.3 Alpha)
+├── version.py                  # Versionamento centralizado e metadados de build (v0.1.4 Alpha)
 ├── ui/                         # Pacote da Interface Gráfica
 │   ├── __init__.py             # Exporta as classes LegacySensorGUI / Qt / Tkinter e launch_app
 │   ├── theme.py                # Paleta de cores PlayStation Blue, carregamento de fontes e presets
