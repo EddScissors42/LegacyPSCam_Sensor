@@ -1,6 +1,6 @@
-# 🏛️ Arquitetura do Sistema — Legacy PSCam Sensor
+# 🏛️ Arquitetura do Sistema — Legacy Sensor Lite
 
-Este documento descreve detalhadamente a arquitetura do **Legacy PSCam Sensor**, a separação de responsabilidades entre seus módulos, o fluxo de dados em tempo real e o relacionamento com o hardware da **PlayStation 4 Camera** e com o processo do **Just Dance PC**.
+Este documento descreve detalhadamente a arquitetura do **Legacy Sensor Lite**, a separação de responsabilidades entre seus módulos, o fluxo de dados em tempo real e o relacionamento com o hardware da **PlayStation 4 Camera** e com o processo do **Just Dance PC**.
 
 ---
 
@@ -9,36 +9,24 @@ Este documento descreve detalhadamente a arquitetura do **Legacy PSCam Sensor**,
 O sistema é baseado em uma **arquitetura modular em pacotes**, onde cada etapa do processamento de vídeo, inteligência artificial, cinemática, interface de usuário e comunicação entre processos opera de forma isolada e desacoplada:
 
 ```
-LegacyPSCam_Sensor/
+LegacySensor_Lite/
 ├── main.py                     # Ponto de entrada (CLI dispatcher e inicializador)
 ├── test_suite.py               # Suíte de testes automatizados (9/9 suítes integradas)
 ├── config.json                 # Gerenciamento e persistência das configurações locais
 ├── sensor/                     # Pacote do Motor de Rastreamento e Visão Computacional
 │   ├── __init__.py             # Exports unificados da API do sensor
-│   ├── camera_manager.py       # Descoberta, negociação DirectShow/FrameBus IPC e captura assíncrona
-│   ├── pose_filters.py         # Filtros cinemáticos: Hand Anchor, EMA, Calibrador, Slot Tracker e PTZ
-│   ├── pose_tracker.py         # Motor MediaPipe Pose e geração de máscara corporal
+│   ├── camera_manager.py       # Descoberta, negociação DirectShow/MSMF e captura assíncrona
+│   ├── pose_tracker.py         # Motor MediaPipe Pose, Hand Anchor, Calibrador, EMA e Máscara
 │   ├── kinect_shared_memory.py # Driver IPC com KinectBridge (JDP1 344B + JMI1/2 1.3MB + JXC1 28B)
 │   ├── tracking_session.py     # Orquestrador do loop de rastreamento e eventos de teclado
 │   ├── tracking_overlay.py     # Renderização visual do esqueleto, silhueta sombreada e HUD
 │   └── config_manager.py       # Gerenciamento e persistência das configurações (config.json)
-├── version.py                  # Versionamento centralizado e metadados de build (v0.1.4 Alpha)
 ├── ui/                         # Pacote da Interface Gráfica
-│   ├── __init__.py             # Exporta as classes LegacySensorGUI / Qt / Tkinter e launch_app
-│   ├── theme.py                # Paleta de cores PlayStation Blue, carregamento de fontes e presets
-│   ├── icons.py                # Renderização vetorial e de SVGs (settings, sliders, modes)
-│   ├── gui_qt.py               # Interface moderna estilo console em PySide6 / Qt 6
-│   └── gui.py                  # Interface clássica em Tkinter (fallback)
+│   ├── __init__.py             # Exporta a classe LegacySensorGUI
+│   └── gui.py                  # Interface gráfica moderna dark em Tkinter / ttk
 ├── assets/                     # Recursos visuais e mídias
-│   ├── __init__.py             # Caminhos canônicos de ícones, fontes e modelos
-│   ├── icons/                  # Ícones customizados do sistema
-│   │   ├── IconePSCAMERA.png   # Ícone da PlayStation 4 Camera
-│   │   ├── settings.svg        # Ícone vetorial da aba Configurações de Vídeo
-│   │   ├── sliders.svg         # Ícone vetorial da aba Calibração
-│   │   ├── mode_balanced.svg   # Ícone vetorial do perfil Balanced
-│   │   ├── mode_competitive.svg# Ícone vetorial do perfil Competitive
-│   │   └── mode_stable.svg     # Ícone vetorial do perfil Ultra Stable
-│   └── fonts/                  # Fontes TTF empacotadas (Kanit, National Park, Inter Tight)
+│   ├── IconePSCAMERA.png       # Ícone da PlayStation 4 Camera
+│   └── models/                 # Modelos neurais locais
 ├── models/
 │   └── pose_landmarker_lite.task # Modelo pré-treinado do Google MediaPipe Pose
 ├── tools/
@@ -101,15 +89,13 @@ flowchart TD
     end
 
     subgraph UI_LAYER["Camada de Apresentação (ui/ e assets/)"]
-        GUI_QT["ui.LegacySensorQtGUI\n(PySide6 / Qt 6 PS5-Themed)"]
-        GUI_TK["ui.LegacySensorTkGUI\n(Tkinter Fallback)"]
+        GUI["ui.LegacySensorGUI\n(Tkinter / ttk Dark)"]
         OVERLAY["sensor.TrackingOverlay\n(Silhueta, Contorno e HUD)"]
-        ASSETS["assets/icons/\n(PSCam, Settings, Sliders)"]
+        ASSETS["assets/\n(IconePSCAMERA.png)"]
         CAM_MGR -.->|Frame Espelhado| OVERLAY
         MASK_GEN -.->|Máscara Espelhada| OVERLAY
         CALIBRATOR -.->|Coordenadas 2D| OVERLAY
-        ASSETS -.-> GUI_QT
-        ASSETS -.-> GUI_TK
+        ASSETS -.-> GUI
     end
 ```
 
@@ -121,33 +107,25 @@ flowchart TD
 - **Responsabilidade:** Inicialização da aplicação, parsing de parâmetros da linha de comando (`--start`, `--mode`, `--camera`) e carregamento da GUI ou da sessão de rastreamento direto.
 - **Relações:** Instancia `ConfigManager` e aciona `gui.py` ou `tracking_session.py`.
 
-### 2. `ui/` (`gui_qt.py`, `gui.py`, `theme.py`, `icons.py`) — Interface do Usuário (Painel de Controle)
-- **Arquitetura Dual-Engine:** O pacote unifica uma interface moderna estilo console com fallback gracioso:
-  - `ui/gui_qt.py` (`LegacySensorQtGUI`): Interface principal construída sobre **PySide6 / Qt 6**, inspirada no design e transições do console PlayStation 5.
-    - **Transições Suaves em 60 FPS (`SlidingStackedWidget`):** Alternância entre as abas *"Video Settings"* e *"Calibration"* utilizando animações paralelas de translação horizontal (`QPropertyAnimation` na propriedade `pos`) com curva de desaceleração cúbica (`QEasingCurve.Type.OutCubic`).
-    - **Painel Sensível a Estado (State-Aware Video View):** Quando a câmera (PS Camera ou Webcam) está desconectada, o balão contextual é o **único elemento exibido**, acompanhado de status de diagnóstico e botão de ação dedicado. Ao conectar, o balão oculta-se suavemente dando lugar aos controles e opções adicionais.
-    - **Comunicação Concorrente Thread-Safe via Qt Signals:** A enumeração de câmeras e eventos do tracking emitem `cameras_refreshed_signal` e `tracking_finished_signal`, garantindo que atualizações de interface ocorram estritamente na thread do despachante Qt.
-  - `ui/gui.py` (`LegacySensorTkGUI`): Implementação clássica em Tkinter mantida como fallback para ambientes com restrição de dependências.
-  - `ui/theme.py`: Define a paleta oficial PlayStation Blue (`#00439C`), presets de calibração (`CALIB_PRESETS`) e seleção de tipografia.
-  - `ui/icons.py`: Gera pílulas arredondadas anti-aliased (`make_pill_image`) e ícones supersampled em Pillow para a PlayStation 4 Camera, Webcam, status e abas superiores.
+### 2. `gui.py` — Interface do Usuário (Painel de Controle)
+- **Responsabilidade:** Interface visual em Tkinter com layout horizontal moderno, cantos arredondados, abas de navegação superiores em cartões cinza selecionáveis com ícones de engrenagem e sliders, paleta oficial PlayStation Blue (`#00439C`) e ícones de alta resolução. Permite alternar entre a **PlayStation Camera** e **Webcam Padrão**, selecionar perfis simplificados de rastreamento (**Equilibrado**, **Competitivo**, **Ultra Estável**), conta com calibração de altura 100% automática e oferece gaveta retrátil de ajustes avançados de filtros.
 - **Ciclo de Vida do Driver e Hotplug Reativo:** Monitora a cada 1.0 segundo o hardware PnP e o ciclo de vida da PS4 Camera (`NOT_INSTALLED`, `DISCONNECTED`, `DRIVER_STOPPED`, `BOOTLOADER_UPLOADING`, `WAITING_VCAM`, `READY`).
-- **Threading Não-Bloqueante:** Tanto a enumeração de câmeras do OpenCV quanto a sessão de rastreamento executam em threads dedicadas (`threading.Thread(daemon=True)`), mantendo a janela do Qt/Tkinter totalmente fluida e sem congelamentos na UI.
+- **Threading Não-Bloqueante:** Tanto a enumeração de câmeras do OpenCV quanto a sessão de rastreamento executam em threads dedicadas (`threading.Thread(daemon=True)`), mantendo a janela do Tkinter totalmente fluida e sem congelamentos na UI.
 
 ### 3. `camera_manager.py` — Gerenciamento de Câmera e Captura Assíncrona
-- **Classe `LatestFrameCamera`:** Executa um loop contínuo de captura de quadros em thread separada com um buffer atômico de profundidade 1. Isso elimina completamente o acúmulo de frames do DirectShow, garantindo que o MediaPipe receba sempre o quadro mais recente com latência zero.
-- **Leitor Direto de Memória Compartilhada `FrameBusReader` (PSCam4Win IPC Prioritário):** Conecta-se diretamente aos canais mapeados em memória `Global\PSCam4Win{slot}.FrameBus` (escaneando slots 7, 6, 0..5). No modo PS Camera, a leitura prioritária (`only_new=True`) busca diretamente quadros novos (`frame_id != last_frame_id`) sem bloquear no `cap.read()` do DirectShow e sem reconverter frames YUY2 repetidos, além de usar amostragem com stride (`frame[::16, ::16].mean()`) para detecção instantânea de quadros pretos.
-- **Detecção e Recorte Automático de Stereo Side-by-Side (SBS):** Quando a PlayStation 4 Camera inicializa no modo padrão de fábrica Side-by-Side (`w >= 1.8 * h`, como 2560x800 ou 1280x400), o sistema detecta automaticamente a proporção estéreo e recorta o sensor esquerdo (`frame[:, :w//2]`), entregando uma visão limpa de 16:10 do dançarino sem duplicação de imagem ou seam estéreo.
+- **Classe `LatestFrameCamera`:** Executa um loop contínuo de captura de quadros em thread separada com um buffer atômico de profundidade 1 e contador monotônico de sequência (`frame_seq`). Com `read(only_new=True)`, o loop de rastreamento consome apenas quadros de hardware inéditos, eliminando 100% do reprocessamento de frames duplicados quando o loop roda mais rápido que a câmera.
+- **Leitura Direta do FrameBus com Bypass DirectShow (`FrameBusReader`):** Conecta-se diretamente à memória compartilhada `Global\PSCam4Win{slot}.FrameBus` para ler frames `YUY2` sem cópias intermediárias. Quando o `FrameBus` já está ativo e transmitindo, o `LatestFrameCamera._open_and_negotiate()` ignora a negociação de 1 a 2 segundos da câmera virtual DirectShow (`cv2.VideoCapture`) e inicia a captura imediatamente, mantendo o DirectShow apenas como fallback preguiçoso (*lazy fallback*).
 - **Snapshot Rápido de Hardware PnP (`get_hardware_snapshot`):** Utiliza diretamente a DLL nativa `cfgmgr32.dll` (`CM_Get_Device_ID_ListW`) com filtro de dispositivos presentes, retornando uma assinatura de hardware em menos de **3 milissegundos**, sem a sobrecarga de subprocessos como `pnputil`.
 - **Máquina de Estados da PS4 Camera (`get_ps4_camera_state`):** Rastreia os IDs de hardware USB (`VID_05A9&PID_0580` do bootloader e `VID_05A9&PID_058B` do sensor ativo) e a contagem de câmeras virtuais (`SWD\VCAMDEVAPI`) para determinar o status exato da câmera.
 - **Negociação de Formatos (FourCC):** Identifica a PlayStation 4 Camera (`is_pscam=True`) e preserva o stream nativo em **YUY2 / NV12**, evitando a definição forçada de `'MJPG'` que corrompe a negociação com a câmera virtual do driver.
-- **Enumeração de Dispositivos:** Cruza os índices do OpenCV com a lista de dispositivos PnP do Windows (`Get-PnpDevice -Class Camera`) para exibir nomes amigáveis na interface e resolução nativa de 1280x800 para a PS Camera.
+- **Enumeração de Dispositivos:** Cruza os índices do OpenCV com a lista de dispositivos PnP do Windows (`Get-PnpDevice -Class Camera`) para exibir nomes amigáveis na interface.
 
-### 4. `pose_tracker.py` — Motor de Pose e Cinemática
-- **`PoseTracker`:** Inicializa e gerencia a rede neural `vision.PoseLandmarker` do Google MediaPipe no modo contínuo de vídeo (`RunningMode.VIDEO`).
+### 4. `pose_tracker.py` e `pose_filters.py` — Motor de Pose e Cinemática
+- **`PoseTracker`:** Inicializa e gerencia a rede neural `vision.PoseLandmarker` do Google MediaPipe no modo contínuo de vídeo (`RunningMode.VIDEO`), preservando as proporções nativas de aspecto da câmera e operando com limiares otimizados para o modelo Lite (`det_c <= 0.45`, `pres_c <= 0.35`) para garantir detecção contínua e sem perda de rastreamento.
 - **Garantia de Monotonicidade:** Força que `timestamp_ms` seja estritamente incremental a cada frame (`timestamp_ms = max(now_ms, last_ms + 1)`), prevenindo quebras em 60 FPS estáveis.
 - **Sintetizador de Membros Inferiores:** Quando o jogador está diante de uma mesa ou notebook e a câmera não enquadra quadris ou pernas, sintetiza quadris com confiança >= 0.45 (`TRACKED`) e pernas naturais eretas com confiança 0.35 (`INFERRED`), impedindo que o `Kinect10.dll` perca o jogador.
 - **`HandAnchorFilter`:** Detecta quando a mão perde confiança e extrapola a posição ao longo do vetor anatômico do antebraço (`cotovelo -> pulso`), garantindo que giros de mão não percam pontos nas coreografias.
-- **`AdaptiveSmoother`:** Filtro de Média Móvel Exponencial (EMA) com alpha dinâmico ajustado pela velocidade dos membros. Em repouso, o alpha diminui para filtrar micro-ruídos; em passos rápidos, o alpha escala para > 0.85 para resposta imediata.
+- **`AdaptiveSmoother` Independente de FPS (`dt`-Normalized 3D & 2D):** Filtro de Média Móvel Exponencial (EMA) com velocidade 3D e 2D normalizada pelo delta de tempo (`dt` relativo à referência de `1/30s`). Suaviza tanto o esqueleto 3D enviado ao Just Dance PC (`apply`) quanto o esqueleto 2D renderizado na janela de preview (`apply_pixel`), garantindo resposta idêntica e livre de jitter em 30 FPS e 60 FPS.
 - **`SkeletonCalibrator` Multi-Tier:** Opera em 3 níveis adaptativos:
   1. *Tier 1 (Corpo Inteiro / `full_body`):* Cabeça a tornozelos.
   2. *Tier 2 (Meio Corpo / `flexible_torso`):* Cabeça a quadris com proporção áurea.
@@ -155,26 +133,26 @@ flowchart TD
 - **Ancoragem Métrica de Altura do Quadril (`Y = 1.0m`):** Mantém a convenção métrica nativa do Kinect v1 exigida pelo Just Dance PC (`hip_height_m: 1.0`), posicionando quadris em 1.0m, cabeça em 1.75m e pés no chão em 0.10m.
 - **Rastreador de Espaço de Câmera (`CameraSpaceXTracker` & `apply_slot_snap`):** Mapeia o deslocamento horizontal do jogador na sala para a faixa lateral do palco de $\pm 1.4\text{m}$, permitindo transitar com precisão e sem travamento entre todos os 6 slots de dançarinos.
 - **Ordem Ótima do Pipeline:** O esqueleto anatômico é suavizado pelo `AdaptiveSmoother` *antes* da translação lateral de sala e do encaixe de slots. Isso assegura que o filtro EMA não restrinja nem atrase a seleção dinâmica de dançarinos.
-- **`build_body_mask` Robusto:** Gera a máscara de segmentação anatômica em 2D estendendo o tronco até a base da tela e fundindo-o via bitwise-OR com a segmentação neural do MediaPipe, garantindo que o canal de silhueta (320x240) nunca fique vazio.
+- **`build_body_mask` Nativo em `320x240`:** Gera e aplica o fechamento morfológico da máscara de segmentação anatômica diretamente na resolução nativa do Kinect (`320x240`), reduzindo em 13x o custo de CPU em câmeras `1280x800` e fundindo via bitwise-OR com a segmentação neural do MediaPipe.
 
 ### 5. `tracking_session.py` — Orquestrador do Loop de Rastreamento
 - **Responsabilidade:** Conecta todos os módulos durante o jogo:
   1. Abre a câmera via `LatestFrameCamera`.
   2. Inicializa o `PoseTracker` e o `KinectBridge`.
-  3. No loop principal, processa o frame bruto na IA, grava os 20 joints e a máscara de imagem no `KinectBridge`, gera o frame espelhado com overlay visual (silhueta, contorno e esqueleto) e bombeia eventos de teclado (`cv2.waitKey(1)`).
+  3. No loop principal, aguarda apenas frames novos da câmera (`camera.read(only_new=True)`), processa o frame bruto na IA, grava os 20 joints e a máscara de imagem no `KinectBridge`, gera o frame espelhado com overlay visual (silhueta, contorno e esqueleto) e bombeia eventos de teclado (`cv2.waitKey(1)`).
   4. Trata atalhos: `[C]` Recalibrar, `[M]` Alternar espelhamento, `[H]` Ocultar HUD, `[Q/ESC]` Sair.
   5. Fecha e desaloca os recursos de forma limpa ao encerrar.
 
 ### 6. `tracking_overlay.py` — Renderizador de HUD, Silhueta e Esqueleto
 - **Responsabilidade:** 
-  1. `draw_player_silhouette`: Desenha a silhueta semitransparente em tom escuro sob o dançarino e o contorno neon de alta visibilidade ao redor do corpo.
+  1. `draw_player_silhouette`: Extrai os contornos da máscara `320x240`, escala os vértices para a resolução do frame de preview e aplica `cv2.addWeighted` exclusivamente dentro da *Bounding Box* (ROI) do jogador, eliminando cópias de frame inteiro a 60 FPS.
   2. `draw_skeleton`: Desenha os nós articulares e os ossos com gradiente de cores.
-  3. `draw_hud`: Exibe o cabeçalho superior com contadores reais de FPS da câmera e da inferência, status do canal IPC e atalhos de teclado.
+  3. `draw_hud`: Exibe os banners superior e inferior usando fatias de ROI in-place com contadores reais de FPS da câmera e da inferência, status do canal IPC e atalhos de teclado.
 
 ### 7. `kinect_shared_memory.py` — Ponte IPC Multi-Canal (`KinectBridge`)
 - **Responsabilidade:** Gerencia os três canais de memória mapeada consumidos pelo `Kinect10.dll`:
   1. `KinectSharedMemory` (`Local\LegacyWebcamKinectPose`, 344 bytes, `JDP1`): Coordenadas e confiança das 20 articulações corporais.
-  2. `KinectImageSharedMemory` (`Local\LegacyWebcamKinectImage` JMI1 e `Local\LegacyWebcamKinectImageV2` JMI2, 1.305.632 bytes): Frame de vídeo BGRA 640x480 e máscara de jogador 320x240 (player index mask) para a silhueta no HUD do jogo e seleção de dançarinos. Utiliza buffers pré-alocados in-place (`dst=...`), limiarização SIMD (`cv2.threshold`) e `memoryview` zero-copy para eliminar ~150 MB/s de alocações em heap a 60 FPS.
+  2. `KinectImageSharedMemory` (`Local\LegacyWebcamKinectImage` JMI1 e `Local\LegacyWebcamKinectImageV2` JMI2, 1.305.632 bytes): Frame de vídeo BGRA 640x480 e máscara de jogador 320x240 (player index mask) para a silhueta no HUD do jogo e seleção de dançarinos. Alimentado com máscara anatômica compatível com o limiar de 64 (0x40) do `Kinect10.dll`.
   3. `KinectCoachXSharedMemory` (`Local\LegacyWebcamKinectCoachX`, 28 bytes, `JXC1`): Posição horizontal do coach.
 - **Protocolo Seqlock:** Todos os canais implementam escrita atômica lockless (ímpar durante escrita, par ao finalizar), garantindo leituras consistentes pelo Just Dance PC sem travar threads.
 
@@ -197,7 +175,7 @@ A PlayStation 4 Camera (modelos CUH-ZEY1 e CUH-ZEY2) utiliza o processador de im
 [ PSCam4Win.dll (Windows Camera Frame Server) ]
         │  2. Expõe Câmera Virtual DirectShow no Windows
         ▼
-[ LegacyPSCam_Sensor (cv2.VideoCapture) ]
+[ LegacySensor_Lite (cv2.VideoCapture) ]
         │  3. Captura YUY2 estéreo em 1280x800 @ 60 FPS
 ```
 
