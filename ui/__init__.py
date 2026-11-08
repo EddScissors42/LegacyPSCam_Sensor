@@ -22,6 +22,8 @@ from .icons import (
     generate_icons_pil,
     generate_tab_icons,
     generate_tab_icons_pil,
+    generate_mode_icons,
+    generate_mode_icons_pil,
     generate_status_icons,
     generate_status_icons_pil,
 )
@@ -88,6 +90,8 @@ __all__ = [
     "generate_icons_pil",
     "generate_tab_icons",
     "generate_tab_icons_pil",
+    "generate_mode_icons",
+    "generate_mode_icons_pil",
     "generate_status_icons",
     "generate_status_icons_pil",
 ]

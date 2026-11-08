@@ -307,6 +307,119 @@ def generate_tab_icons():
     )
 
 
+def generate_mode_icons_pil(size=(18, 18)):
+    """
+    Renders supersampled PIL.Image RGBA icons for the calibration mode preset cards:
+    - balanced: mode_balanced.svg (active: PlayStation Blue #00439C, inactive: Slate #64748B)
+    - competitive: mode_competitive.svg (active: PlayStation Blue #00439C, inactive: Slate #64748B)
+    - stable: mode_stable.svg / mode_.svg (active: PlayStation Blue #00439C, inactive: Slate #64748B)
+    Returns dict: {pid: (pil_act, pil_inact)}.
+    """
+    base_dir = Path(__file__).resolve().parent
+
+    def find_icon(name_candidates):
+        for name in name_candidates:
+            for parent in [base_dir.parent / "assets" / "icons", base_dir.parent / "assets", base_dir / "assets" / "icons", base_dir / "assets"]:
+                p = parent / name
+                if p.exists():
+                    return p
+        return None
+
+    path_bal = find_icon(["mode_balanced.svg"])
+    path_comp = find_icon(["mode_competitive.svg"])
+    path_stable = find_icon(["mode_stable.svg", "mode_.svg"])
+
+    col_act = "#00439C"
+    col_inact = "#64748B"
+
+    bal_act = render_svg_icon_pil(path_bal, size=size, color_hex=col_act)
+    bal_inact = render_svg_icon_pil(path_bal, size=size, color_hex=col_inact)
+    comp_act = render_svg_icon_pil(path_comp, size=size, color_hex=col_act)
+    comp_inact = render_svg_icon_pil(path_comp, size=size, color_hex=col_inact)
+    stab_act = render_svg_icon_pil(path_stable, size=size, color_hex=col_act)
+    stab_inact = render_svg_icon_pil(path_stable, size=size, color_hex=col_inact)
+
+    # Procedural fallbacks if SVGs are missing or fail to render
+    scale = 4
+    w, h = size[0] * scale, size[1] * scale
+
+    def make_fallback_star(col_tuple):
+        img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        d = ImageDraw.Draw(img)
+        cx, cy = w / 2, h / 2
+        pts = [
+            (cx, cy - h * 0.45),
+            (cx + w * 0.12, cy - h * 0.12),
+            (cx + w * 0.45, cy),
+            (cx + w * 0.12, cy + h * 0.12),
+            (cx, cy + h * 0.45),
+            (cx - w * 0.12, cy + h * 0.12),
+            (cx - w * 0.45, cy),
+            (cx - w * 0.12, cy - h * 0.12),
+        ]
+        d.polygon(pts, fill=col_tuple)
+        return img.resize(size, Image.Resampling.LANCZOS)
+
+    def make_fallback_lightning(col_tuple):
+        img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        d = ImageDraw.Draw(img)
+        pts = [
+            (w * 0.55, h * 0.05),
+            (w * 0.20, h * 0.52),
+            (w * 0.48, h * 0.52),
+            (w * 0.42, h * 0.95),
+            (w * 0.80, h * 0.42),
+            (w * 0.52, h * 0.42),
+        ]
+        d.polygon(pts, fill=col_tuple)
+        return img.resize(size, Image.Resampling.LANCZOS)
+
+    def make_fallback_shield(col_tuple):
+        img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        d = ImageDraw.Draw(img)
+        pts = [
+            (w * 0.50, h * 0.08),
+            (w * 0.85, h * 0.22),
+            (w * 0.85, h * 0.55),
+            (w * 0.50, h * 0.92),
+            (w * 0.15, h * 0.55),
+            (w * 0.15, h * 0.22),
+        ]
+        d.polygon(pts, fill=col_tuple)
+        return img.resize(size, Image.Resampling.LANCZOS)
+
+    col_act_tuple = (0, 67, 156, 255)
+    col_inact_tuple = (100, 116, 139, 255)
+
+    if bal_act is None:
+        bal_act = make_fallback_star(col_act_tuple)
+    if bal_inact is None:
+        bal_inact = make_fallback_star(col_inact_tuple)
+    if comp_act is None:
+        comp_act = make_fallback_lightning(col_act_tuple)
+    if comp_inact is None:
+        comp_inact = make_fallback_lightning(col_inact_tuple)
+    if stab_act is None:
+        stab_act = make_fallback_shield(col_act_tuple)
+    if stab_inact is None:
+        stab_inact = make_fallback_shield(col_inact_tuple)
+
+    return {
+        "balanced": (bal_act, bal_inact),
+        "competitive": (comp_act, comp_inact),
+        "stable": (stab_act, stab_inact),
+    }
+
+
+def generate_mode_icons(size=(18, 18)):
+    """Returns {pid: (act_photo, inact_photo)} for Tkinter."""
+    pil_dict = generate_mode_icons_pil(size=size)
+    return {
+        pid: (ImageTk.PhotoImage(act), ImageTk.PhotoImage(inact))
+        for pid, (act, inact) in pil_dict.items()
+    }
+
+
 def generate_status_icons_pil(size=(38, 38)):
     """
     Renders supersampled PIL.Image RGBA status badges for device connection status:

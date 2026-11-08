@@ -22,11 +22,11 @@ LegacyPSCam_Sensor/
 │   ├── tracking_session.py     # Orquestrador do loop de rastreamento e eventos de teclado
 │   ├── tracking_overlay.py     # Renderização visual do esqueleto, silhueta sombreada e HUD
 │   └── config_manager.py       # Gerenciamento e persistência das configurações (config.json)
-├── version.py                  # Versionamento centralizado e metadados de build (v0.1.2 Alpha)
+├── version.py                  # Versionamento centralizado e metadados de build (v0.1.3 Alpha)
 ├── ui/                         # Pacote da Interface Gráfica
 │   ├── __init__.py             # Exporta as classes LegacySensorGUI / Qt / Tkinter e launch_app
 │   ├── theme.py                # Paleta de cores PlayStation Blue, carregamento de fontes e presets
-│   ├── icons.py                # Renderização vetorial e de SVGs personalizados (settings/sliders)
+│   ├── icons.py                # Renderização vetorial e de SVGs (settings, sliders, modes)
 │   ├── gui_qt.py               # Interface moderna estilo console em PySide6 / Qt 6
 │   └── gui.py                  # Interface clássica em Tkinter (fallback)
 ├── assets/                     # Recursos visuais e mídias
@@ -34,7 +34,10 @@ LegacyPSCam_Sensor/
 │   ├── icons/                  # Ícones customizados do sistema
 │   │   ├── IconePSCAMERA.png   # Ícone da PlayStation 4 Camera
 │   │   ├── settings.svg        # Ícone vetorial da aba Configurações de Vídeo
-│   │   └── sliders.svg         # Ícone vetorial da aba Calibração
+│   │   ├── sliders.svg         # Ícone vetorial da aba Calibração
+│   │   ├── mode_balanced.svg   # Ícone vetorial do perfil Balanced
+│   │   ├── mode_competitive.svg# Ícone vetorial do perfil Competitive
+│   │   └── mode_stable.svg     # Ícone vetorial do perfil Ultra Stable
 │   └── fonts/                  # Fontes TTF empacotadas (Kanit, National Park, Inter Tight)
 ├── models/
 │   └── pose_landmarker_lite.task # Modelo pré-treinado do Google MediaPipe Pose

@@ -53,7 +53,7 @@ All non-essential overhead has been removed while perfecting the core components
 ```
 LegacyPSCam_Sensor/
 ├── main.py                     # CLI launcher and entry point
-├── version.py                  # Official versioning & build metadata (v0.1.2 Alpha)
+├── version.py                  # Official versioning & build metadata (v0.1.3 Alpha)
 ├── test_suite.py               # 9 complete automated test suites
 ├── config.json                 # Saved user preferences
 ├── sensor/                     # Tracking Engine and AI package
@@ -69,7 +69,7 @@ LegacyPSCam_Sensor/
 │   ├── theme.py                # Palette, fonts, and calibration presets
 │   └── icons.py                # Supersampled icons, SVGs, and status badges
 ├── assets/                     # Visual assets and media
-│   ├── icons/                  # Custom icons (IconePSCAMERA.png, settings.svg, sliders.svg)
+│   ├── icons/                  # Custom icons (IconePSCAMERA.png, settings, sliders, mode SVGs)
 │   └── fonts/                  # Bundled typography (Kanit, National Park, Inter Tight)
 ├── models/                     # Pre-trained neural network models
 │   └── pose_landmarker_lite.task # Google MediaPipe Pose model

@@ -469,6 +469,9 @@ def test_project_structure():
     assert (BASE_DIR / "assets" / "icons" / "IconePSCAMERA.png").exists(), "Asset IconePSCAMERA.png must exist in assets/icons/"
     assert (BASE_DIR / "assets" / "icons" / "settings.svg").exists(), "Asset settings.svg must exist in assets/icons/"
     assert (BASE_DIR / "assets" / "icons" / "sliders.svg").exists(), "Asset sliders.svg must exist in assets/icons/"
+    assert (BASE_DIR / "assets" / "icons" / "mode_balanced.svg").exists(), "Asset mode_balanced.svg must exist in assets/icons/"
+    assert (BASE_DIR / "assets" / "icons" / "mode_competitive.svg").exists(), "Asset mode_competitive.svg must exist in assets/icons/"
+    assert (BASE_DIR / "assets" / "icons" / "mode_stable.svg").exists() or (BASE_DIR / "assets" / "icons" / "mode_.svg").exists(), "Asset mode_stable.svg must exist in assets/icons/"
     assert (BASE_DIR / "models" / "pose_landmarker_lite.task").exists(), "models/pose_landmarker_lite.task must exist"
 
     import sensor
@@ -503,6 +506,9 @@ def test_project_structure():
         assert not win.pix_web_act.isNull(), "Webcam icon pixmap must not be null"
         assert not win.pix_gear_act.isNull(), "Settings icon pixmap must not be null"
         assert not win.pix_slid_act.isNull(), "Sliders icon pixmap must not be null"
+        assert "balanced" in win.mode_pixmaps and not win.mode_pixmaps["balanced"][0].isNull(), "Mode icon balanced must not be null"
+        assert "competitive" in win.mode_pixmaps and not win.mode_pixmaps["competitive"][0].isNull(), "Mode icon competitive must not be null"
+        assert "stable" in win.mode_pixmaps and not win.mode_pixmaps["stable"][0].isNull(), "Mode icon stable must not be null"
         assert not win.pix_status_err.isNull(), "Status X icon pixmap must not be null"
         assert win.font_title == "Kanit", f"Expected Kanit title font, got {win.font_title}"
         assert win.font_heading == "National Park", f"Expected National Park heading font, got {win.font_heading}"
@@ -515,6 +521,9 @@ def test_project_structure():
     assert assets.ICON_PSCAMERA_PATH.exists()
     assert assets.ICON_SETTINGS_PATH.exists()
     assert assets.ICON_SLIDERS_PATH.exists()
+    assert assets.ICON_MODE_BALANCED_PATH.exists()
+    assert assets.ICON_MODE_COMPETITIVE_PATH.exists()
+    assert assets.ICON_MODE_STABLE_PATH.exists()
     assert assets.MODEL_POSE_PATH.exists(), "Canonical pose model path must exist via assets.MODEL_POSE_PATH"
 
     print("  -> Modular Project Structure PASSED")

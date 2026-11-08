@@ -318,28 +318,7 @@ class LegacySensorGUI:
         )
         lbl_cred2.pack(anchor="w")
 
-        # 1.7 Bottom Status Pill in Sidebar
-        status_box = tk.Frame(sidebar_pad, bg=PALETTE["status_ok_bg"],
-                              highlightbackground=PALETTE["status_ok"], highlightthickness=1, padx=8, pady=6)
-        status_box.pack(fill=tk.X)
 
-        self.lbl_ipc_badge = tk.Label(
-            status_box,
-            text="● IPC Bridge Ready",
-            font=(self.font_family, 8, "bold"),
-            fg=PALETTE["status_ok"],
-            bg=PALETTE["status_ok_bg"]
-        )
-        self.lbl_ipc_badge.pack(anchor="w")
-
-        lbl_ipc_detail = tk.Label(
-            status_box,
-            text="JDP1 (Pose) & JMI1 (Silhouette)",
-            font=(self.font_family, 7),
-            fg=PALETTE["text_muted"],
-            bg=PALETTE["status_ok_bg"]
-        )
-        lbl_ipc_detail.pack(anchor="w")
 
         # =========================================================================
         # 2. MAIN CONTENT AREA (Right Side)
@@ -446,15 +425,6 @@ class LegacySensorGUI:
         # Subtle Status Footer underneath button
         footer_row = tk.Frame(bottom_area, bg=PALETTE["bg_window"])
         footer_row.pack(fill=tk.X, pady=(6, 0))
-
-        self.lbl_status = tk.Label(
-            footer_row,
-            text="Made by Edd <3",
-            font=(self.font_family, 8),
-            fg=PALETTE["text_muted"],
-            bg=PALETTE["bg_window"]
-        )
-        self.lbl_status.pack(side=tk.LEFT)
 
         lbl_version = tk.Label(
             footer_row,
@@ -765,15 +735,6 @@ class LegacySensorGUI:
             )
             lbl_specs.pack(side=tk.LEFT)
 
-            lbl_ind = tk.Label(
-                bot_row,
-                text="○ Select",
-                font=(self.font_family, 7, "bold"),
-                fg=PALETTE["text_dim"],
-                bg=PALETTE["bg_card"]
-            )
-            lbl_ind.pack(side=tk.RIGHT)
-
             widgets_dict = {
                 "frame": card_frame,
                 "hdr_row": hdr_row,
@@ -783,7 +744,6 @@ class LegacySensorGUI:
                 "sub": lbl_sub_p,
                 "desc": lbl_desc,
                 "specs": lbl_specs,
-                "ind": lbl_ind,
             }
             self.calib_card_widgets[pid] = widgets_dict
 
@@ -800,7 +760,7 @@ class LegacySensorGUI:
             enter_cb = make_enter_handler(pid)
             leave_cb = make_leave_handler(pid)
 
-            for w in (card_frame, hdr_row, bot_row, lbl_title, lbl_tag, lbl_sub_p, lbl_desc, lbl_specs, lbl_ind):
+            for w in (card_frame, hdr_row, bot_row, lbl_title, lbl_tag, lbl_sub_p, lbl_desc, lbl_specs):
                 w.bind("<Button-1>", click_cb)
                 w.bind("<Enter>", enter_cb)
                 w.bind("<Leave>", leave_cb)
@@ -861,7 +821,8 @@ class LegacySensorGUI:
             pady=6,
             command=self._toggle_advanced_calib
         )
-        self.btn_toggle_adv.pack(fill=tk.X)
+        # Hidden for now per user request
+        # self.btn_toggle_adv.pack(fill=tk.X)
 
         self.adv_calib_box = tk.Frame(
             calib_wrapper,
@@ -1387,7 +1348,6 @@ class LegacySensorGUI:
                 w["sub"].configure(fg=PALETTE["blue_dark"], bg=bg_c)
                 w["desc"].configure(fg=PALETTE["text_main"], bg=bg_c)
                 w["specs"].configure(fg=PALETTE["ps_blue"], bg=bg_c)
-                w["ind"].configure(text="Active", fg=PALETTE["ps_blue"], bg=bg_c)
             else:
                 bg_c = PALETTE["bg_card"]
                 w["frame"].configure(bg=bg_c, highlightbackground=PALETTE["border_subtle"], highlightthickness=1)
@@ -1398,7 +1358,6 @@ class LegacySensorGUI:
                 w["sub"].configure(fg=PALETTE["blue_dark"], bg=bg_c)
                 w["desc"].configure(fg=PALETTE["text_muted"], bg=bg_c)
                 w["specs"].configure(fg=PALETTE["text_dim"], bg=bg_c)
-                w["ind"].configure(text="○ Select", fg=PALETTE["text_dim"], bg=bg_c)
 
         if hasattr(self, "lbl_calib_mode_badge"):
             if self.current_calib_preset == "custom":

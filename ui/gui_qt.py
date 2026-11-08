@@ -52,6 +52,7 @@ from ui.theme import (
 from ui.icons import (
     generate_icons_pil,
     generate_tab_icons_pil,
+    generate_mode_icons_pil,
     generate_status_icons_pil
 )
 from assets import ICON_PSCAMERA_PATH
@@ -239,12 +240,23 @@ class CalibPresetCard(QFrame):
     """Interactive card for calibration presets (Balanced, Competitive, Ultra Stable)."""
     clicked = Signal(str)
 
-    def __init__(self, preset_id: str, pdata: dict, font_heading: str, font_body: str, parent=None):
+    def __init__(
+        self,
+        preset_id: str,
+        pdata: dict,
+        font_heading: str,
+        font_body: str,
+        pix_act: QPixmap = None,
+        pix_inact: QPixmap = None,
+        parent=None
+    ):
         super().__init__(parent)
         self.preset_id = preset_id
         self.pdata = pdata
         self.font_heading = font_heading
         self.font_body = font_body
+        self.pix_act = pix_act or QPixmap()
+        self.pix_inact = pix_inact or QPixmap()
         self._is_active = False
 
         self.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -256,8 +268,17 @@ class CalibPresetCard(QFrame):
 
         top_row = QHBoxLayout()
         top_row.setContentsMargins(0, 0, 0, 0)
-        self.lbl_title = QLabel(f"{pdata['icon']} {pdata['title']}", self)
+        top_row.setSpacing(6)
+
+        self.lbl_icon = QLabel(self)
+        self.lbl_icon.setFixedSize(18, 18)
+        self.lbl_icon.setScaledContents(True)
+        self.lbl_icon.setStyleSheet("background: transparent; border: none;")
+
+        self.lbl_title = QLabel(pdata["title"], self)
         self.lbl_tag = QLabel(pdata["tag"], self)
+
+        top_row.addWidget(self.lbl_icon)
         top_row.addWidget(self.lbl_title)
         top_row.addStretch()
         top_row.addWidget(self.lbl_tag)
@@ -273,10 +294,8 @@ class CalibPresetCard(QFrame):
         bot_row = QHBoxLayout()
         bot_row.setContentsMargins(0, 2, 0, 0)
         self.lbl_specs = QLabel(pdata["specs"], self)
-        self.lbl_ind = QLabel("○ Select", self)
         bot_row.addWidget(self.lbl_specs)
         bot_row.addStretch()
-        bot_row.addWidget(self.lbl_ind)
         layout.addLayout(bot_row)
 
         self.set_active(False)
@@ -284,6 +303,8 @@ class CalibPresetCard(QFrame):
     def set_active(self, active: bool, hovered: bool = False):
         self._is_active = active
         if active:
+            if not self.pix_act.isNull():
+                self.lbl_icon.setPixmap(self.pix_act)
             bg = PALETTE["ps_blue_tint"]
             self.setStyleSheet(f"""
                 CalibPresetCard {{
@@ -307,11 +328,9 @@ class CalibPresetCard(QFrame):
             self.lbl_specs.setStyleSheet(
                 f"font-family: '{self.font_body}'; font-size: 9px; color: {PALETTE['ps_blue']}; background: transparent; border: none;"
             )
-            self.lbl_ind.setText("Active")
-            self.lbl_ind.setStyleSheet(
-                f"font-family: '{self.font_heading}'; font-size: 10px; font-weight: bold; color: {PALETTE['ps_blue']}; background: transparent; border: none;"
-            )
         else:
+            if not self.pix_inact.isNull():
+                self.lbl_icon.setPixmap(self.pix_inact)
             bg = PALETTE["bg_card"]
             bdr = PALETTE["input_border"] if hovered else PALETTE["border_subtle"]
             self.setStyleSheet(f"""
@@ -335,10 +354,6 @@ class CalibPresetCard(QFrame):
             )
             self.lbl_specs.setStyleSheet(
                 f"font-family: '{self.font_body}'; font-size: 9px; color: {PALETTE['text_dim']}; background: transparent; border: none;"
-            )
-            self.lbl_ind.setText("○ Select")
-            self.lbl_ind.setStyleSheet(
-                f"font-family: '{self.font_heading}'; font-size: 10px; font-weight: bold; color: {PALETTE['text_dim']}; background: transparent; border: none;"
             )
 
     def enterEvent(self, event):
@@ -436,6 +451,16 @@ class LegacySensorQtGUI(QMainWindow):
         except Exception as e:
             print(f"[WARN] Failed to load tab icons: {e}")
             self.pix_gear_act = self.pix_gear_inact = self.pix_slid_act = self.pix_slid_inact = QPixmap()
+
+        try:
+            p_modes = generate_mode_icons_pil(size=(18, 18))
+            self.mode_pixmaps = {
+                pid: (pil_to_qpixmap(act), pil_to_qpixmap(inact))
+                for pid, (act, inact) in p_modes.items()
+            }
+        except Exception as e:
+            print(f"[WARN] Failed to load mode icons: {e}")
+            self.mode_pixmaps = {}
 
         try:
             p_err, p_ok, p_warn = generate_status_icons_pil(size=(38, 38))
@@ -700,39 +725,20 @@ class LegacySensorQtGUI(QMainWindow):
         lbl_cred1.setStyleSheet(
             f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent;"
         )
-        lbl_cred2 = QLabel("PSCam4Win by BumbleTree", self.sidebar_frame)
+        lbl_cred2 = QLabel("PSCam4Win by BumbleTree & Moon36", self.sidebar_frame)
         lbl_cred2.setStyleSheet(
+            f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent;"
+        )
+        lbl_cred3 = QLabel("Made by Edd", self.sidebar_frame)
+        lbl_cred3.setStyleSheet(
             f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent;"
         )
         sidebar_layout.addWidget(lbl_cred1)
         sidebar_layout.addSpacing(2)
         sidebar_layout.addWidget(lbl_cred2)
-        sidebar_layout.addSpacing(8)
-
-        # 1.7 IPC Bridge Status Badge
-        ipc_badge = QFrame(self.sidebar_frame)
-        ipc_badge.setStyleSheet(f"""
-            QFrame {{
-                background-color: {PALETTE["status_ok_bg"]};
-                border: 1px solid {PALETTE["status_ok"]};
-                border-radius: 8px;
-            }}
-        """)
-        ipc_layout = QVBoxLayout(ipc_badge)
-        ipc_layout.setContentsMargins(10, 6, 10, 6)
-        ipc_layout.setSpacing(1)
-
-        lbl_ipc = QLabel("● IPC Bridge Ready", ipc_badge)
-        lbl_ipc.setStyleSheet(
-            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['status_ok']}; background: transparent; border: none;"
-        )
-        lbl_ipc_sub = QLabel("JDP1 (Pose) & JMI1 (Silhouette)", ipc_badge)
-        lbl_ipc_sub.setStyleSheet(
-            f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
-        )
-        ipc_layout.addWidget(lbl_ipc)
-        ipc_layout.addWidget(lbl_ipc_sub)
-        sidebar_layout.addWidget(ipc_badge)
+        sidebar_layout.addSpacing(2)
+        sidebar_layout.addWidget(lbl_cred3)
+        sidebar_layout.addSpacing(4)
 
         master_layout.addWidget(self.sidebar_frame)
 
@@ -794,15 +800,10 @@ class LegacySensorQtGUI(QMainWindow):
 
         footer_layout = QHBoxLayout()
         footer_layout.setContentsMargins(0, 2, 0, 0)
-        lbl_author = QLabel("Made by Edd <3", self.content_widget)
-        lbl_author.setStyleSheet(
-            f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['text_muted']}; background: transparent;"
-        )
         lbl_ver = QLabel(f"{APP_NAME} {VERSION_STRING}", self.content_widget)
         lbl_ver.setStyleSheet(
             f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['text_dim']}; background: transparent;"
         )
-        footer_layout.addWidget(lbl_author)
         footer_layout.addStretch()
         footer_layout.addWidget(lbl_ver)
         content_layout.addLayout(footer_layout)
@@ -1049,7 +1050,8 @@ class LegacySensorQtGUI(QMainWindow):
         cards_row.setSpacing(8)
 
         for pid, pdata in CALIB_PRESETS.items():
-            card = CalibPresetCard(pid, pdata, self.font_heading, self.font_body, main_card)
+            pix_act, pix_inact = self.mode_pixmaps.get(pid, (QPixmap(), QPixmap()))
+            card = CalibPresetCard(pid, pdata, self.font_heading, self.font_body, pix_act, pix_inact, main_card)
             card.clicked.connect(self._select_calib_preset)
             cards_row.addWidget(card)
             self.calib_cards[pid] = card
@@ -1090,15 +1092,16 @@ class LegacySensorQtGUI(QMainWindow):
         ah_layout.addLayout(ah_text, stretch=1)
         card_layout.addWidget(auto_h)
 
-        # Advanced toggle button
+        # Advanced settings controls (hidden for now per user request)
         self.btn_toggle_adv = QPushButton("Show Advanced Filter Settings ▼", main_card)
         self.btn_toggle_adv.setProperty("class", "btn_secondary")
         self.btn_toggle_adv.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_toggle_adv.clicked.connect(self._toggle_advanced_calib)
-        card_layout.addWidget(self.btn_toggle_adv)
+        self.btn_toggle_adv.setVisible(False)
 
-        # Advanced drawer
+        # Advanced drawer (hidden for now per user request)
         self.adv_drawer = QFrame(main_card)
+        self.adv_drawer.setVisible(False)
         self.adv_drawer.setStyleSheet(f"""
             QFrame {{
                 background-color: {PALETTE["bg_card"]};
@@ -1147,7 +1150,6 @@ class LegacySensorQtGUI(QMainWindow):
         adv_layout.addLayout(adv_actions)
 
         self.adv_drawer.setVisible(False)
-        card_layout.addWidget(self.adv_drawer)
 
         layout.addWidget(main_card)
         layout.addStretch()
