@@ -183,9 +183,22 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
   - Título ("CAMERA DEVICE") e subtítulo ("Active Video Source") agora possuem as mesmas linhas de base dos blocos de Resolução e Framerate.
   - O botão de atualizar (`↻`, 34x32px) foi reposicionado como botão companheiro diretamente ao lado direito do menu suspenso de seleção de câmera (`self.cb_cameras`), mantendo alturas alinhadas ao pixel.
 - **Card de Advertência Visual em "Experimental":**
-  - Inserido callout em tons âmbar suaves (`#FEF3C7` / `#FCD34D` / texto em `#92400E`) com ícone `⚠️` informando com clareza o caráter experimental das opções avançadas ("CUIDADO: As funções aqui estão em testes constantes, geralmente podem não funcionar como deveriam ou simplesmente só não funciona, isso pode afetar sua experiencia de jogo.").
+  - Inserido callout em tons âmbar suaves com ícone `⚠️` informando com clareza o caráter experimental das opções avançadas.
 - **Navegação Inteligente na Troca de Dispositivo:**
   - O método `_set_mode()` agora aciona `self._switch_tab("video")` automaticamente. Se o usuário estiver na aba de Calibração ou Experimental e alternar entre PlayStation Camera e Webcam Padrão na barra lateral, a janela retorna suavemente para a aba "Video Settings", exibindo de imediato as configurações do novo dispositivo.
+
+### 17. Unificação Total em Qt 6, Anti-Clipping e Tradução em Experimental (v0.2.6 Alpha)
+- **Desativação e Limpeza do Backend Tkinter (`gui.py`):**
+  - O módulo legado `ui/gui.py` (1.552 linhas) foi removido em definitivo, consolidando a arquitetura em 100% PySide6 / Qt 6.
+  - O ponto de entrada `main.py` e o pacote `ui` foram simplificados, removendo a flag legada `--gui` e instâncias de fallback desnecessárias.
+- **Correção de Clipping nos Blocos de Resolução e FPS:**
+  - Os blocos `block_res` e `block_fps` receberam `setWordWrap(True)` e altura ajustada para `108px`, permitindo que descrições técnicas de duas linhas caibam com perfeição em qualquer largura de janela (inclusive no tamanho mínimo de 920px).
+  - As descrições em inglês foram aprimoradas para maior concisão e clareza técnica.
+  - O parsing de presets foi reforçado com `MatchStartsWith` para sincronizar seleções contendo o sufixo `(Recommended)` sem quebrar a persistência em `config.json`.
+- **Tradução da Advertência de Experimental para Inglês:**
+  - O texto do callout de aviso da aba Experimental foi completamente traduzido para inglês fluente: *"CAUTION: Features here are under constant testing and development. They may not work as intended or may fail to function entirely, which could affect your gameplay experience."*
+- **Faxina de Recursos Duplicados e Órfãos:**
+  - Removidas as sobras `assets/camera.svg`, `assets/lab.svg` e `assets/icons/mode_.svg`. O pacote `assets` agora exporta diretamente os arquivos canônicos em `assets/icons/`.
 
 ---
 

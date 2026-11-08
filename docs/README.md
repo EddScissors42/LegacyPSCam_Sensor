@@ -66,7 +66,6 @@ LegacyPSCam_Sensor/
 │   └── config_manager.py       # config.json persistence
 ├── ui/                         # User Interface package
 │   ├── gui_qt.py               # Modern PlayStation-themed UI with fluid animations (PySide6 / Qt 6)
-│   ├── gui.py                  # PlayStation-themed control panel (Tkinter fallback)
 │   ├── theme.py                # Palette, fonts, and calibration presets
 │   └── icons.py                # Supersampled icons, SVGs, and status badges
 ├── assets/                     # Visual assets and media

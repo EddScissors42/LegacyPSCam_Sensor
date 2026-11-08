@@ -25,7 +25,7 @@ python -m pip install -r requirements.txt
 *(Ou manualmente: `python -m pip install opencv-python mediapipe numpy Pillow PySide6`)*
 
 > [!NOTE]
-> O pacote `PySide6` provê a interface gráfica de última geração baseada em Qt 6 com transições animadas inspiradas no PlayStation 5. Caso deseje executar em modo mínimo com Tkinter clássico, a biblioteca padrão do Python já inclui o `tkinter` nativamente.
+> O pacote `PySide6` provê a interface gráfica de alta performance baseada em Qt 6 com transições animadas inspiradas no console PlayStation 5.
 
 ---
 

@@ -82,7 +82,7 @@ Legacy PSCam Sensor is a high-performance, lightweight motion tracking sensor fo
   - `sensor/tracking_session.py`: Live tracking loop orchestrator and keyboard handlers.
   - `sensor/tracking_overlay.py`: OpenCV HUD, player silhouette shadow, neon contour, and skeleton renderer.
   - `sensor/config_manager.py`: Local settings reader and writer.
-- `ui/`: Modern Tkinter/ttk user interface (`ui/gui.py`).
+- `ui/`: Modern PlayStation-styled Qt 6 user interface (`ui/gui_qt.py`).
 - `assets/`: Visual assets and application icons (`assets/IconePSCAMERA.png`).
 - `models/`: Pre-trained Google MediaPipe neural network model (`models/pose_landmarker_lite.task`).
 - `tools/`: Utilities and official driver setup (`tools/PSCam4Win-Setup.exe`).

@@ -38,10 +38,12 @@ LegacyPSCam_Sensor/
 │   └── config_manager.py       # Gerenciamento e persistência das configurações (config.json)
 ├── ui/                         # Pacote da Interface Gráfica
 │   ├── __init__.py             # Exporta a classe LegacySensorGUI
-│   └── gui.py                  # Interface gráfica moderna dark em Tkinter / ttk
+│   ├── gui_qt.py               # Interface moderna estilo PlayStation em PySide6 / Qt 6
+│   ├── theme.py                # Paleta de cores, tipografia e presets
+│   └── icons.py                # Gerador e renderizador de ícones vetoriais
 ├── assets/                     # Recursos visuais e mídias
-│   ├── IconePSCAMERA.png       # Ícone da PlayStation 4 Camera
-│   └── models/                 # Modelos neurais locais
+│   ├── icons/                  # Ícones SVG e PNG da aplicação
+│   └── fonts/                  # Fontes TTF (Kanit, InterTight, NationalPark)
 ├── models/
 │   └── pose_landmarker_lite.task # Modelo pré-treinado do Google MediaPipe Pose
 ├── tools/
@@ -156,9 +158,9 @@ Todas as 9 suítes de teste integradas devem passar com sucesso (`9/9 PASSED`):
 
 ## 🚫 Restrições Operacionais
 
-- **Não altere dependências externas** a menos que estritamente solicitado pelo usuário. O projeto depende apenas de `opencv-python`, `mediapipe` e bibliotecas padrão (`tkinter`, `mmap`, `struct`, `threading`, `json`).
+- **Não altere dependências externas** a menos que estritamente solicitado pelo usuário. O projeto depende de `opencv-python`, `mediapipe`, `numpy`, `Pillow`, `PySide6` e bibliotecas padrão (`mmap`, `struct`, `threading`, `json`).
 - **Não delete arquivos de modelos** (`models/pose_landmarker_lite.task`) ou binários de suporte (`Kinect for Legacy DLL/Kinect10.dll` e `tools/PSCam4Win-Setup.exe`).
-- **Não bloqueie a thread principal do Tkinter:** Qualquer operação demorada de câmera ou tracking deve ser iniciada via thread dedicada (`threading.Thread(daemon=True)`).
+- **Não bloqueie a thread principal da UI (Qt / PySide6):** Qualquer operação demorada de câmera ou tracking deve ser iniciada via thread dedicada (`threading.Thread(daemon=True)`).
 - **Foco Exclusivo na PlayStation 4 Camera (PS4 Camera):** Ao lidar com recursos do PSCam4Win, mantenha o foco exclusivamente no hardware da PlayStation 4 Camera (chip OmniVision OV580 + sensores estéreo OV9713, 1280x800 @ 60 FPS, upload de firmware USB e câmera virtual). Ignore totalmente a câmera PS3 Eye ou periféricos do PS3.
 
 ---

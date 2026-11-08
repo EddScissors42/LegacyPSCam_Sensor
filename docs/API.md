@@ -267,7 +267,7 @@ As preferências do usuário são persistidas em `config.json` via `ConfigManage
 O ponto de entrada `main.py` aceita argumentos de linha de comando para controle direto:
 
 ```powershell
-python main.py [-h] [--start] [--mode {pscam,webcam}] [--camera CAMERA] [--gui {qt,tkinter}]
+python main.py [-h] [--start] [--mode {pscam,webcam}] [--camera CAMERA]
 ```
 
 | Argumento | Opções | Padrão | Descrição |
@@ -275,16 +275,14 @@ python main.py [-h] [--start] [--mode {pscam,webcam}] [--camera CAMERA] [--gui {
 | `--start` | Flag booleana | `False` | Inicia a sessão de rastreamento diretamente sem abrir a interface gráfica. |
 | `--mode` | `pscam`, `webcam` | Configurado em `config.json` | Força o modo de câmera a ser utilizado. |
 | `--camera` | Inteiro (`0`, `1`, ...) | Configurado em `config.json` | Força o índice da câmera de captura no OpenCV. |
-| `--gui` | `qt`, `tkinter` | `qt` | Seleciona o backend de interface gráfica (PlayStation 5 Qt6 moderno ou Tkinter legado). |
 
 ---
 
 ## 7. Pacote de Interface Gráfica (`ui`)
 
-O pacote `ui` expõe uma interface unificada para inicialização com suporte a dual-engine:
+O pacote `ui` expõe uma interface unificada baseada em **PySide6 (Qt 6)**:
 
-- `ui.launch_app(backend: str = "qt") -> int`: Inicializador universal. Inicializa o aplicativo Qt6 (`PySide6`) por padrão; caso o PySide6 não esteja instalado ou falhe, realiza fallback gracioso automático para o Tkinter.
+- `ui.launch_app() -> int`: Inicializador principal da interface gráfica Qt 6 (`PySide6`).
 - `ui.LegacySensorQtGUI`: Janela principal baseada em PySide6 / Qt 6, com `SlidingStackedWidget`, curvas de animação cúbicas, detecção de hotplug por sinais Qt e balão contextual de estado de hardware.
-- `ui.LegacySensorTkGUI`: Janela clássica em Tkinter mantida para ambientes mínimos.
-- `ui.LegacySensorGUI`: Alias padrão para `LegacySensorQtGUI` (se disponível) ou `LegacySensorTkGUI`.
+- `ui.LegacySensorGUI`: Alias padrão para `LegacySensorQtGUI`.
 - `ui.HAS_QT -> bool`: Booleano que indica se o PySide6 está instalado e operacional.

@@ -510,7 +510,7 @@ def test_project_structure():
     assert (BASE_DIR / "assets" / "icons" / "sliders.svg").exists(), "Asset sliders.svg must exist in assets/icons/"
     assert (BASE_DIR / "assets" / "icons" / "mode_balanced.svg").exists(), "Asset mode_balanced.svg must exist in assets/icons/"
     assert (BASE_DIR / "assets" / "icons" / "mode_competitive.svg").exists(), "Asset mode_competitive.svg must exist in assets/icons/"
-    assert (BASE_DIR / "assets" / "icons" / "mode_stable.svg").exists() or (BASE_DIR / "assets" / "icons" / "mode_.svg").exists(), "Asset mode_stable.svg must exist in assets/icons/"
+    assert (BASE_DIR / "assets" / "icons" / "mode_stable.svg").exists(), "Asset mode_stable.svg must exist in assets/icons/"
     assert (BASE_DIR / "assets" / "icons" / "lab.svg").exists(), "Asset lab.svg must exist in assets/icons/"
     assert (BASE_DIR / "assets" / "icons" / "arrow_down.png").exists() or (BASE_DIR / "assets" / "icons" / "arrow_down.svg").exists(), "Asset arrow_down must exist in assets/icons/"
     assert (BASE_DIR / "models" / "pose_landmarker_lite.task").exists(), "models/pose_landmarker_lite.task must exist"
@@ -525,7 +525,6 @@ def test_project_structure():
     import ui
     assert hasattr(ui, "LegacySensorGUI")
     assert hasattr(ui, "LegacySensorQtGUI")
-    assert hasattr(ui, "LegacySensorTkGUI")
     assert hasattr(ui, "launch_app")
     assert hasattr(ui, "PALETTE")
     assert hasattr(ui, "CALIB_PRESETS")

@@ -86,7 +86,7 @@ A suíte cobre 9 áreas fundamentais:
 
 | Teste | Módulo Testado | Critério de Sucesso |
 |---|---|---|
-| `test_project_structure` | `sensor/`, `ui/`, `assets/` | Integridade da estrutura modular, dual-engine GUI (`LegacySensorQtGUI` e `LegacySensorTkGUI`), `launch_app`, assets e instanciação offscreen Qt6. |
+| `test_project_structure` | `sensor/`, `ui/`, `assets/` | Integridade da estrutura modular, interface Qt 6 (`LegacySensorQtGUI`), `launch_app`, assets e instanciação offscreen Qt6. |
 | `test_config` | `sensor/config_manager.py` | Leitura, escrita, persistência e parsing de presets de resolução/FPS. |
 | `test_shared_memory` | `sensor/kinect_shared_memory.py` | Tamanho exato de 344 bytes, paridade seqlock, máscara e pacer de 33ms do Kinect10.dll. |
 | `test_hand_anchor` | `sensor/pose_filters.py` | Extrapolação correta do antebraço em coordenadas 3D e 2D. |

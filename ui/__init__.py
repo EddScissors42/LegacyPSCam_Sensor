@@ -1,7 +1,6 @@
 """
 Legacy PSCam Sensor - User Interface Package.
-Provides the modern PlayStation-themed Qt 6 interface (PySide6)
-with fallback to Tkinter.
+Provides the modern PlayStation-themed Qt 6 interface (PySide6).
 """
 import sys
 
@@ -28,9 +27,6 @@ from .icons import (
     generate_status_icons_pil,
 )
 
-# Tkinter fallback GUI
-from .gui import LegacySensorGUI as LegacySensorTkGUI
-
 # PySide6 modern Qt 6 GUI
 try:
     from .gui_qt import LegacySensorQtGUI
@@ -40,40 +36,27 @@ except ImportError:
     LegacySensorQtGUI = None
 
 # Default GUI class alias
-if HAS_QT:
-    LegacySensorGUI = LegacySensorQtGUI
-else:
-    LegacySensorGUI = LegacySensorTkGUI
+LegacySensorGUI = LegacySensorQtGUI
 
 
-def launch_app(backend: str = "qt") -> int:
+def launch_app() -> int:
     """
-    Launches the primary graphical interface.
-    Defaults to the modern PlayStation-themed Qt 6 interface (PySide6),
-    with automatic graceful fallback to Tkinter if Qt 6 is unavailable.
+    Launches the primary graphical interface using PySide6 (Qt 6).
     """
-    if backend == "qt" and HAS_QT:
-        try:
-            from PySide6.QtWidgets import QApplication
-            app = QApplication.instance() or QApplication(sys.argv)
-            window = LegacySensorQtGUI()
-            window.show()
-            return app.exec()
-        except Exception as e:
-            print(f"[WARN] Failed to launch Qt6 GUI ({e}). Falling back to Tkinter...")
+    if not HAS_QT:
+        print("[ERROR] PySide6 is not installed. Please install requirements: pip install -r requirements.txt")
+        return 1
 
-    # Fallback / explicit Tkinter mode
-    import tkinter as tk
-    root = tk.Tk()
-    app = LegacySensorTkGUI(root)
-    root.mainloop()
-    return 0
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication(sys.argv)
+    window = LegacySensorQtGUI()
+    window.show()
+    return app.exec()
 
 
 __all__ = [
     "LegacySensorGUI",
     "LegacySensorQtGUI",
-    "LegacySensorTkGUI",
     "HAS_QT",
     "launch_app",
     "PALETTE",

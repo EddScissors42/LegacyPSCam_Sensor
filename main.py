@@ -21,7 +21,6 @@ def run():
     parser.add_argument("--start", action="store_true", help="Start tracking directly without opening GUI menu")
     parser.add_argument("--mode", choices=["pscam", "webcam"], help="Force camera mode")
     parser.add_argument("--camera", type=int, help="Camera index to use")
-    parser.add_argument("--gui", choices=["qt", "tkinter"], default="qt", help="Choose GUI backend (default: qt)")
     args = parser.parse_args()
 
     cfg_mgr = ConfigManager()
@@ -36,7 +35,7 @@ def run():
         print("[INFO] Starting direct tracking session (--start)...")
         run_tracking_session(cfg)
     else:
-        sys.exit(launch_app(backend=args.gui))
+        sys.exit(launch_app())
 
 if __name__ == "__main__":
     run()

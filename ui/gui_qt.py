@@ -1077,7 +1077,7 @@ class LegacySensorQtGUI(QMainWindow):
         # Block 2: Resolution
         block_res = QFrame(self.webcam_card)
         block_res.setObjectName("settingBlockRes")
-        block_res.setFixedHeight(90)
+        block_res.setFixedHeight(108)
         block_res.setStyleSheet(f"""
             QFrame#settingBlockRes {{
                 background-color: #FFFFFF;
@@ -1098,15 +1098,16 @@ class LegacySensorQtGUI(QMainWindow):
         )
         res_layout.addWidget(lbl_res_title)
 
-        lbl_res_sub = QLabel("Output Frame Size", block_res)
+        lbl_res_sub = QLabel("Sharper picture, but higher CPU usage. The game still receives as 640x480.", block_res)
+        lbl_res_sub.setWordWrap(True)
         lbl_res_sub.setStyleSheet(
-            f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
+            f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent; border: none; line-height: 120%;"
         )
         res_layout.addWidget(lbl_res_sub)
 
         self.cb_res = QComboBox(block_res)
         self.cb_res.setFixedHeight(32)
-        self.cb_res.addItems(["640x480", "1280x720", "1920x1080"])
+        self.cb_res.addItems(["640x480 (Recommended)", "1280x720", "1920x1080"])
         self.cb_res.currentIndexChanged.connect(self._on_webcam_res_or_fps_changed)
         res_layout.addWidget(self.cb_res)
         row_res_fps.addWidget(block_res, stretch=1)
@@ -1114,7 +1115,7 @@ class LegacySensorQtGUI(QMainWindow):
         # Block 3: FPS
         block_fps = QFrame(self.webcam_card)
         block_fps.setObjectName("settingBlockFps")
-        block_fps.setFixedHeight(90)
+        block_fps.setFixedHeight(108)
         block_fps.setStyleSheet(f"""
             QFrame#settingBlockFps {{
                 background-color: #FFFFFF;
@@ -1135,15 +1136,16 @@ class LegacySensorQtGUI(QMainWindow):
         )
         fps_layout.addWidget(lbl_fps_title)
 
-        lbl_fps_sub = QLabel("Target Capture Speed", block_fps)
+        lbl_fps_sub = QLabel("Target capture speed. 60 FPS requires camera support and more CPU.", block_fps)
+        lbl_fps_sub.setWordWrap(True)
         lbl_fps_sub.setStyleSheet(
-            f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
+            f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent; border: none; line-height: 120%;"
         )
         fps_layout.addWidget(lbl_fps_sub)
 
         self.cb_fps = QComboBox(block_fps)
         self.cb_fps.setFixedHeight(32)
-        self.cb_fps.addItems(["30 FPS", "60 FPS"])
+        self.cb_fps.addItems(["30 FPS (Recommended)", "60 FPS"])
         self.cb_fps.currentIndexChanged.connect(self._on_webcam_res_or_fps_changed)
         fps_layout.addWidget(self.cb_fps)
         row_res_fps.addWidget(block_fps, stretch=1)
@@ -1355,8 +1357,8 @@ class LegacySensorQtGUI(QMainWindow):
         warn_layout.addWidget(lbl_warn_icon, alignment=Qt.AlignmentFlag.AlignTop)
 
         lbl_warn_text = QLabel(
-            "CUIDADO: As funções aqui estão em testes constantes, geralmente podem não funcionar "
-            "como deveriam ou simplesmente só não funciona, isso pode afetar sua experiencia de jogo.",
+            "CAUTION: Features here are under constant testing and development. "
+            "They may not work as intended or may fail to function entirely, which could affect your gameplay experience.",
             warn_box
         )
         lbl_warn_text.setWordWrap(True)
@@ -1590,9 +1592,9 @@ class LegacySensorQtGUI(QMainWindow):
         if hasattr(self, "cb_res") and hasattr(self, "cb_fps"):
             self.cb_res.blockSignals(True)
             self.cb_fps.blockSignals(True)
-            idx_r = self.cb_res.findText(res_str)
+            idx_r = self.cb_res.findText(res_str, Qt.MatchFlag.MatchStartsWith)
             self.cb_res.setCurrentIndex(max(0, idx_r))
-            idx_f = self.cb_fps.findText(fps_str)
+            idx_f = self.cb_fps.findText(fps_str, Qt.MatchFlag.MatchStartsWith)
             self.cb_fps.setCurrentIndex(max(0, idx_f))
             self.cb_res.blockSignals(False)
             self.cb_fps.blockSignals(False)
@@ -1818,9 +1820,9 @@ class LegacySensorQtGUI(QMainWindow):
     def _on_webcam_res_or_fps_changed(self):
         if not hasattr(self, "cb_res") or not hasattr(self, "cb_fps"):
             return
-        res = self.cb_res.currentText()
-        fps = self.cb_fps.currentText()
-        preset = f"{res} @ {fps}"
+        res = self.cb_res.currentText().split()[0]
+        fps_val = self.cb_fps.currentText().split()[0]
+        preset = f"{res} @ {fps_val} FPS"
         self.cfg["webcam_preset"] = preset
         if hasattr(self, "cb_preset"):
             self.cb_preset.blockSignals(True)
@@ -1840,12 +1842,12 @@ class LegacySensorQtGUI(QMainWindow):
                 self.cfg["webcam_preset"] = preset
                 if hasattr(self, "cb_res") and hasattr(self, "cb_fps"):
                     w, h, fps = parse_preset(preset)
-                    idx_r = self.cb_res.findText(f"{w}x{h}")
+                    idx_r = self.cb_res.findText(f"{w}x{h}", Qt.MatchFlag.MatchStartsWith)
                     if idx_r >= 0:
                         self.cb_res.blockSignals(True)
                         self.cb_res.setCurrentIndex(idx_r)
                         self.cb_res.blockSignals(False)
-                    idx_f = self.cb_fps.findText(f"{fps} FPS")
+                    idx_f = self.cb_fps.findText(f"{fps} FPS", Qt.MatchFlag.MatchStartsWith)
                     if idx_f >= 0:
                         self.cb_fps.blockSignals(True)
                         self.cb_fps.setCurrentIndex(idx_f)

@@ -22,11 +22,13 @@ LegacySensor_Lite/
 │   ├── tracking_overlay.py     # Renderização visual do esqueleto, silhueta sombreada e HUD
 │   └── config_manager.py       # Gerenciamento e persistência das configurações (config.json)
 ├── ui/                         # Pacote da Interface Gráfica
-│   ├── __init__.py             # Exporta a classe LegacySensorGUI
-│   └── gui.py                  # Interface gráfica moderna dark em Tkinter / ttk
+│   ├── __init__.py             # Exporta a classe LegacySensorGUI e launch_app
+│   ├── gui_qt.py               # Interface moderna estilo PlayStation em PySide6 / Qt 6
+│   ├── theme.py                # Paleta de cores, tipografia e presets
+│   └── icons.py                # Gerador e renderizador de ícones vetoriais
 ├── assets/                     # Recursos visuais e mídias
-│   ├── IconePSCAMERA.png       # Ícone da PlayStation 4 Camera
-│   └── models/                 # Modelos neurais locais
+│   ├── icons/                  # Ícones SVG e PNG da aplicação
+│   └── fonts/                  # Fontes TTF (Kanit, InterTight, NationalPark)
 ├── models/
 │   └── pose_landmarker_lite.task # Modelo pré-treinado do Google MediaPipe Pose
 ├── tools/
@@ -89,9 +91,9 @@ flowchart TD
     end
 
     subgraph UI_LAYER["Camada de Apresentação (ui/ e assets/)"]
-        GUI["ui.LegacySensorGUI\n(Tkinter / ttk Dark)"]
+        GUI["ui.LegacySensorQtGUI\n(PySide6 / Qt 6 PlayStation Theme)"]
         OVERLAY["sensor.TrackingOverlay\n(Silhueta, Contorno e HUD)"]
-        ASSETS["assets/\n(IconePSCAMERA.png)"]
+        ASSETS["assets/icons/\n(Ícones Vetoriais)"]
         CAM_MGR -.->|Frame Espelhado| OVERLAY
         MASK_GEN -.->|Máscara Espelhada| OVERLAY
         CALIBRATOR -.->|Coordenadas 2D| OVERLAY
@@ -105,12 +107,12 @@ flowchart TD
 
 ### 1. `main.py` — Despachante e Ponto de Entrada
 - **Responsabilidade:** Inicialização da aplicação, parsing de parâmetros da linha de comando (`--start`, `--mode`, `--camera`) e carregamento da GUI ou da sessão de rastreamento direto.
-- **Relações:** Instancia `ConfigManager` e aciona `gui.py` ou `tracking_session.py`.
+- **Relações:** Instancia `ConfigManager` e aciona `ui.launch_app()` ou `tracking_session.py`.
 
-### 2. `gui.py` — Interface do Usuário (Painel de Controle)
-- **Responsabilidade:** Interface visual em Tkinter com layout horizontal moderno, cantos arredondados, abas de navegação superiores em cartões cinza selecionáveis com ícones de engrenagem e sliders, paleta oficial PlayStation Blue (`#00439C`) e ícones de alta resolução. Permite alternar entre a **PlayStation Camera** e **Webcam Padrão**, selecionar perfis simplificados de rastreamento (**Equilibrado**, **Competitivo**, **Ultra Estável**), conta com calibração de altura 100% automática e oferece gaveta retrátil de ajustes avançados de filtros.
+### 2. `gui_qt.py` — Interface do Usuário (Painel de Controle PlayStation 6)
+- **Responsabilidade:** Interface visual moderna desenvolvida em **PySide6 (Qt 6)** com animações fluidas de transição entre abas (`SlidingStackedWidget`), layout dividido com barra lateral estilizada de seleção de câmera (PlayStation 4 Camera vs Webcam Padrão), abas superiores centralizadas ("Video Settings", "Calibration", "Experimental"), paleta oficial PlayStation Blue (`#00439C`), cards com sombras suaves e ícones vetoriais anti-aliased. Permite selecionar perfis de rastreamento (**Equilibrado**, **Competitivo**, **Ultra Estável**), conta com calibração automática e ajustes experimentais de Auto-Framing (FaceFollow PTZ).
 - **Ciclo de Vida do Driver e Hotplug Reativo:** Monitora a cada 1.0 segundo o hardware PnP e o ciclo de vida da PS4 Camera (`NOT_INSTALLED`, `DISCONNECTED`, `DRIVER_STOPPED`, `BOOTLOADER_UPLOADING`, `WAITING_VCAM`, `READY`).
-- **Threading Não-Bloqueante:** Tanto a enumeração de câmeras do OpenCV quanto a sessão de rastreamento executam em threads dedicadas (`threading.Thread(daemon=True)`), mantendo a janela do Tkinter totalmente fluida e sem congelamentos na UI.
+- **Threading Não-Bloqueante:** Tanto a enumeração de câmeras do OpenCV quanto a sessão de rastreamento executam em threads assíncronas dedicadas, mantendo a janela do Qt 6 totalmente fluida a 60 FPS e sem congelamentos na UI.
 
 ### 3. `camera_manager.py` — Gerenciamento de Câmera e Captura Assíncrona
 - **Classe `LatestFrameCamera`:** Executa um loop contínuo de captura de quadros em thread separada com um buffer atômico de profundidade 1 e contador monotônico de sequência (`frame_seq`). Com `read(only_new=True)`, o loop de rastreamento consome apenas quadros de hardware inéditos, eliminando 100% do reprocessamento de frames duplicados quando o loop roda mais rápido que a câmera.
