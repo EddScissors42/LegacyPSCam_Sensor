@@ -81,7 +81,11 @@ class LegacySensorGUI:
             self.icon_ps_act = self.icon_ps_inact = self.icon_web_act = self.icon_web_inact = None
 
         try:
-            self.icon_gear_act, self.icon_gear_inact, self.icon_sliders_act, self.icon_sliders_inact = generate_tab_icons()
+            tab_icons = generate_tab_icons()
+            self.icon_gear_act, self.icon_gear_inact = tab_icons[0], tab_icons[1]
+            self.icon_sliders_act, self.icon_sliders_inact = tab_icons[2], tab_icons[3]
+            if len(tab_icons) >= 6:
+                self.icon_lab_act, self.icon_lab_inact = tab_icons[4], tab_icons[5]
         except Exception as e:
             print(f"[WARN] Failed to render tab icons: {e}")
             self.icon_gear_act = self.icon_gear_inact = self.icon_sliders_act = self.icon_sliders_inact = None

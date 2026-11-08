@@ -156,16 +156,26 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
   - **Filtro FaceFollowPTZ (Auto-Framing com Zoom 1.22x):**
     - Rastreia dinamicamente os pontos faciais (`NOSE`, `LEFT_EAR`, `RIGHT_EAR`) com filtro EMA (`alpha = 0.20`) e deslocamento vertical (`y_bias = 0.06`).
     - Recorta e redimensiona suavemente o frame e a máscara enviados ao Just Dance (`Local\LegacyWebcamKinectImage`), mantendo o rosto do jogador focado, nítido e perfeitamente centralizado no quadrado de seleção de dançarinos.
-    - Pode ser ativado ou desativado livremente pelo usuário na aba de configurações de vídeo da interface gráfica.
+    - Pode ser ativado ou desativado livremente pelo usuário na aba dedicada **"Experimental"** da interface gráfica.
 
 ### 14. Cards Modernos de Status de Conexão com Ações Contextuais
 - **Melhoria de UX/UI:** Quando nenhuma PlayStation Camera ou Webcam USB estiver conectada, o balão de status torna-se o **único componente visível** na área de configurações, ocultando caixas de opções e opções adicionais até que uma câmera seja detectada.
 - **Componentes Visuais e Layout:**
-  - **Menu Superior Centralizado:** As abas "Video Settings" e "Calibration" ficam perfeitamente centralizadas no topo do painel principal, com a largura da aba de vídeo ajustada proporcionalmente (144px vs 126px) para eliminar sobras visuais.
+  - **Menu Superior Centralizado de 3 Abas:** As abas "Video Settings", "Calibration" e "Experimental" ficam perfeitamente centralizadas no topo do painel principal, cada uma com seu respectivo ícone supersampleado (`settings.svg`, `sliders.svg` e `lab.svg`).
   - **Ícones de Status Supersampleados (Pillow 4x LANCZOS):** Badge circular vermelho com "X" nítido e em negrito para desconexão/erro, badge âmbar para estados transitórios de firmware/driver, e badge verde com checkmark para conexão ativa.
   - **Diagnóstico em Tempo Real:** Exibe o status preciso do hardware e do serviço, como `"Driver Offline and Camera disconnected from USB Port"` ou `"Driver Online and Camera disconnected from USB Port"`.
   - **Botão de Ação Direto:** Botão plano estilizado com `PALETTE["blue_pastel"]` e texto em azul PlayStation (`PALETTE["blue_dark"]`) permitindo inicializar o PSCam4Win (`"Start PSCam4Win Driver"`) ou reescanear portas USB (`"Search for Webcams"`).
-  - **Transição Fluida Conectado/Desconectado:** O painel de opções da câmera e as "Opções Adicionais" (HUD, FaceFollow PTZ) só surgem na tela assim que o hardware/driver estiver no estado `READY`. Quando desconectado, voltam a ser recolhidos instantaneamente, mantendo a tela 100% limpa.
+  - **Transição Fluida Conectado/Desconectado:** O painel de opções da câmera e as "Opções Adicionais" (HUD) só surgem na tela assim que o hardware/driver estiver no estado `READY`. Quando desconectado, voltam a ser recolhidos instantaneamente, mantendo a tela 100% limpa.
+
+### 15. Menu "Experimental" e Seletores Lado a Lado de Resolução e FPS (v0.2.2 Alpha)
+- **Aba "Experimental" com Ícone de Laboratório (`lab.svg`):**
+  - Introduzida nova aba superior navegável entre as abas principais, equipada com o ícone `lab.svg` renderizado com 4x supersampling anti-aliased.
+  - Centraliza recursos experimentais e em teste, acomodando o **Auto-Frame (Digital PTZ)** com descrição detalhada de funcionamento.
+- **Divisão Lado a Lado de Resolução e Framerate (FPS):**
+  - No cartão de configurações de webcam ("Webcam Video Settings"), o antigo seletor único combinado foi substituído por dois blocos lado a lado (`QHBoxLayout`):
+    - **Bloco da Esquerda:** Seletor de Resolução (`640x480`, `1280x720`, `1920x1080`).
+    - **Bloco da Direita:** Seletor de Framerate / FPS (`30 FPS`, `60 FPS`).
+  - A combinação das escolhas é mapeada de forma transparente para `webcam_preset`, garantindo 100% de retrocompatibilidade com o pipeline de captura e testes automatizados.
 
 ---
 

@@ -1,6 +1,6 @@
 {
-    "camera_mode": "pscam",
-    "camera_index": 1,
+    "camera_mode": "webcam",
+    "camera_index": 0,
     "pscam_preset": "1280x800 @ 60 FPS",
     "webcam_preset": "640x480 @ 30 FPS",
     "mirror_horizontal": true,
@@ -25,7 +25,7 @@
     "slot_snap_enabled": true,
     "slot_snap_gain": 1.25,
     "slot_snap_deadzone": 0.06,
-    "face_follow_enabled": true,
+    "face_follow_enabled": false,
     "face_follow_zoom": 1.22,
     "face_follow_smoothing": 0.2,
     "face_follow_y_bias": 0.06

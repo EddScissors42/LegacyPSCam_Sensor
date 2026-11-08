@@ -213,7 +213,8 @@ def generate_tab_icons_pil(size=(18, 18), scale: int = 4):
     Renders supersampled PIL.Image RGBA icons for the top navigation tabs:
     1. Settings SVG icon for 'Video Settings' (active & inactive)
     2. Sliders SVG icon for 'Calibration' (active, inactive, & disabled)
-    Returns (settings_act, settings_inact, sliders_act, sliders_inact, sliders_disabled).
+    3. Lab SVG icon for 'Experimental' (active & inactive)
+    Returns (settings_act, settings_inact, sliders_act, sliders_inact, sliders_disabled, lab_act, lab_inact).
     """
     base_dir = Path(__file__).resolve().parent
     settings_candidates = [
@@ -232,6 +233,14 @@ def generate_tab_icons_pil(size=(18, 18), scale: int = 4):
     ]
     sliders_path = next((p for p in sliders_candidates if p.exists()), None)
 
+    lab_candidates = [
+        base_dir.parent / "assets" / "icons" / "lab.svg",
+        base_dir.parent / "assets" / "lab.svg",
+        base_dir / "assets" / "icons" / "lab.svg",
+        base_dir / "assets" / "lab.svg",
+    ]
+    lab_path = next((p for p in lab_candidates if p.exists()), None)
+
     col_act = "#0F172A"
     col_inact = "#64748B"
     col_disabled = "#94A3B8"
@@ -241,9 +250,19 @@ def generate_tab_icons_pil(size=(18, 18), scale: int = 4):
     slid_act = render_svg_icon_pil(sliders_path, size=size, color_hex=col_act, scale=scale)
     slid_inact = render_svg_icon_pil(sliders_path, size=size, color_hex=col_inact, scale=scale)
     slid_dis = render_svg_icon_pil(sliders_path, size=size, color_hex=col_disabled, scale=scale)
+    lab_act = render_svg_icon_pil(lab_path, size=size, color_hex=col_act, scale=scale)
+    lab_inact = render_svg_icon_pil(lab_path, size=size, color_hex=col_inact, scale=scale)
 
     # Procedural vector fallbacks if SVGs cannot be loaded/rendered
-    if set_act is None or set_inact is None or slid_act is None or slid_inact is None or slid_dis is None:
+    if (
+        set_act is None
+        or set_inact is None
+        or slid_act is None
+        or slid_inact is None
+        or slid_dis is None
+        or lab_act is None
+        or lab_inact is None
+    ):
         w, h = size[0] * scale, size[1] * scale
 
         def make_gear(color):
@@ -284,6 +303,30 @@ def generate_tab_icons_pil(size=(18, 18), scale: int = 4):
                 d.ellipse([kx - hole_r, y - hole_r, kx + hole_r, y + hole_r], fill=(0, 0, 0, 0))
             return img
 
+        def make_lab(color):
+            img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+            d = ImageDraw.Draw(img)
+            cx = w // 2
+            top_y = int(h * 0.12)
+            neck_bottom = int(h * 0.42)
+            neck_w = int(w * 0.20)
+            rim_w = int(w * 0.32)
+            bot_y = int(h * 0.88)
+            bot_w = int(w * 0.72)
+            d.rounded_rectangle(
+                [cx - rim_w // 2, top_y - int(1.5 * scale), cx + rim_w // 2, top_y + int(1.5 * scale)],
+                radius=int(1 * scale), fill=color
+            )
+            d.rectangle([cx - neck_w // 2, top_y, cx + neck_w // 2, neck_bottom], fill=color)
+            pts = [
+                (cx - neck_w // 2, neck_bottom),
+                (cx + neck_w // 2, neck_bottom),
+                (cx + bot_w // 2, bot_y),
+                (cx - bot_w // 2, bot_y),
+            ]
+            d.polygon(pts, fill=color)
+            return img
+
         col_act_tuple = (15, 23, 42, 255)
         col_inact_tuple = (100, 116, 139, 255)
         col_dis_tuple = (148, 163, 184, 255)
@@ -297,18 +340,24 @@ def generate_tab_icons_pil(size=(18, 18), scale: int = 4):
             slid_inact = make_sliders(col_inact_tuple)
         if slid_dis is None:
             slid_dis = make_sliders(col_dis_tuple)
+        if lab_act is None:
+            lab_act = make_lab(col_act_tuple)
+        if lab_inact is None:
+            lab_inact = make_lab(col_inact_tuple)
 
-    return set_act, set_inact, slid_act, slid_inact, slid_dis
+    return set_act, set_inact, slid_act, slid_inact, slid_dis, lab_act, lab_inact
 
 
 def generate_tab_icons():
     """Returns ImageTk.PhotoImage pairs for Tkinter top navigation tabs."""
-    g_act, g_inact, s_act, s_inact, _ = generate_tab_icons_pil(scale=1)
+    g_act, g_inact, s_act, s_inact, _, l_act, l_inact = generate_tab_icons_pil(scale=1)
     return (
         ImageTk.PhotoImage(g_act),
         ImageTk.PhotoImage(g_inact),
         ImageTk.PhotoImage(s_act),
         ImageTk.PhotoImage(s_inact),
+        ImageTk.PhotoImage(l_act),
+        ImageTk.PhotoImage(l_inact),
     )
 
 

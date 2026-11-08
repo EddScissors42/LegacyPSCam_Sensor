@@ -57,7 +57,7 @@ from ui.icons import (
 )
 from assets import ICON_PSCAMERA_PATH
 from version import WINDOW_TITLE, VERSION_STRING, APP_NAME
-from sensor.config_manager import ConfigManager, PRESETS_PSCAM, PRESETS_WEBCAM
+from sensor.config_manager import ConfigManager, parse_preset, PRESETS_PSCAM, PRESETS_WEBCAM
 from sensor.camera_manager import CameraManager
 from sensor.kinect_shared_memory import KinectBridge
 from sensor import tracking_session
@@ -453,15 +453,17 @@ class LegacySensorQtGUI(QMainWindow):
             self.pix_ps_act = self.pix_ps_inact = self.pix_web_act = self.pix_web_inact = QPixmap()
 
         try:
-            p_gear_act, p_gear_inact, p_slid_act, p_slid_inact, p_slid_dis = generate_tab_icons_pil(size=(18, 18), scale=4)
+            p_gear_act, p_gear_inact, p_slid_act, p_slid_inact, p_slid_dis, p_lab_act, p_lab_inact = generate_tab_icons_pil(size=(18, 18), scale=4)
             self.pix_gear_act = pil_to_qpixmap(p_gear_act, dpr=4.0)
             self.pix_gear_inact = pil_to_qpixmap(p_gear_inact, dpr=4.0)
             self.pix_slid_act = pil_to_qpixmap(p_slid_act, dpr=4.0)
             self.pix_slid_inact = pil_to_qpixmap(p_slid_inact, dpr=4.0)
             self.pix_slid_disabled = pil_to_qpixmap(p_slid_dis, dpr=4.0)
+            self.pix_lab_act = pil_to_qpixmap(p_lab_act, dpr=4.0)
+            self.pix_lab_inact = pil_to_qpixmap(p_lab_inact, dpr=4.0)
         except Exception as e:
             print(f"[WARN] Failed to load tab icons: {e}")
-            self.pix_gear_act = self.pix_gear_inact = self.pix_slid_act = self.pix_slid_inact = self.pix_slid_disabled = QPixmap()
+            self.pix_gear_act = self.pix_gear_inact = self.pix_slid_act = self.pix_slid_inact = self.pix_slid_disabled = self.pix_lab_act = self.pix_lab_inact = QPixmap()
 
         try:
             p_modes = generate_mode_icons_pil(size=(15, 15), scale=4)
@@ -779,10 +781,19 @@ class LegacySensorQtGUI(QMainWindow):
         self.btn_tab_calib.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_tab_calib.clicked.connect(lambda: self._switch_tab("calib"))
 
+        self.btn_tab_exp = QPushButton("  Experimental", self.content_widget)
+        self.btn_tab_exp.setFixedSize(142, 42)
+        self.btn_tab_exp.setIcon(QIcon(self.pix_lab_inact))
+        self.btn_tab_exp.setIconSize(QSize(18, 18))
+        self.btn_tab_exp.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_tab_exp.clicked.connect(lambda: self._switch_tab("exp"))
+
         top_nav_layout.addStretch()
         top_nav_layout.addWidget(self.btn_tab_video)
         top_nav_layout.addSpacing(10)
         top_nav_layout.addWidget(self.btn_tab_calib)
+        top_nav_layout.addSpacing(10)
+        top_nav_layout.addWidget(self.btn_tab_exp)
         top_nav_layout.addStretch()
         content_layout.addLayout(top_nav_layout)
         self._apply_tab_styles("video")
@@ -797,9 +808,10 @@ class LegacySensorQtGUI(QMainWindow):
         self.stacked_view = SlidingStackedWidget(self.content_widget)
         content_layout.addWidget(self.stacked_view, stretch=1)
 
-        # Build Page 0 (Video) & Page 1 (Calibration)
+        # Build Page 0 (Video), Page 1 (Calibration), & Page 2 (Experimental)
         self._build_video_view()
         self._build_calib_view()
+        self._build_exp_view()
 
         # 2.3 Bottom Action Area (PlayStation Blue CTA & Footer)
         self.btn_start = QPushButton("START TRACKING", self.content_widget)
@@ -988,17 +1000,44 @@ class LegacySensorQtGUI(QMainWindow):
         dev_row.addWidget(btn_refresh)
         web_conn_layout.addLayout(dev_row)
 
-        res_row = QHBoxLayout()
-        lbl_res = QLabel("Resolution / FPS:", self.webcam_card)
+        # Resolution & FPS side-by-side blocks
+        res_fps_layout = QHBoxLayout()
+        res_fps_layout.setSpacing(14)
+
+        # Block 1: Resolution
+        res_col = QVBoxLayout()
+        res_col.setSpacing(4)
+        lbl_res = QLabel("Resolution:", self.webcam_card)
         lbl_res.setStyleSheet(
             f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['text_main']}; background: transparent; border: none;"
         )
-        lbl_res.setFixedWidth(115)
+        self.cb_res = QComboBox(self.webcam_card)
+        self.cb_res.addItems(["640x480", "1280x720", "1920x1080"])
+        self.cb_res.currentIndexChanged.connect(self._on_webcam_res_or_fps_changed)
+        res_col.addWidget(lbl_res)
+        res_col.addWidget(self.cb_res)
+        res_fps_layout.addLayout(res_col, stretch=1)
+
+        # Block 2: FPS
+        fps_col = QVBoxLayout()
+        fps_col.setSpacing(4)
+        lbl_fps = QLabel("Framerate (FPS):", self.webcam_card)
+        lbl_fps.setStyleSheet(
+            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['text_main']}; background: transparent; border: none;"
+        )
+        self.cb_fps = QComboBox(self.webcam_card)
+        self.cb_fps.addItems(["30 FPS", "60 FPS"])
+        self.cb_fps.currentIndexChanged.connect(self._on_webcam_res_or_fps_changed)
+        fps_col.addWidget(lbl_fps)
+        fps_col.addWidget(self.cb_fps)
+        res_fps_layout.addLayout(fps_col, stretch=1)
+
+        web_conn_layout.addLayout(res_fps_layout)
+
+        # Backward compatibility handle for cb_preset
         self.cb_preset = QComboBox(self.webcam_card)
+        self.cb_preset.setVisible(False)
         self.cb_preset.currentIndexChanged.connect(self._on_preset_selected)
-        res_row.addWidget(lbl_res)
-        res_row.addWidget(self.cb_preset, stretch=1)
-        web_conn_layout.addLayout(res_row)
 
         layout.addWidget(self.webcam_card)
 
@@ -1021,11 +1060,6 @@ class LegacySensorQtGUI(QMainWindow):
         self.chk_hud.setChecked(self.cfg.get("show_hud", True))
         self.chk_hud.stateChanged.connect(self._on_display_options_changed)
         disp_layout.addWidget(self.chk_hud)
-
-        self.chk_face = QCheckBox("[EXPERIMENTAL] Auto-Frame player's face in Just Dance", self.display_card)
-        self.chk_face.setChecked(self.cfg.get("face_follow_enabled", True))
-        self.chk_face.stateChanged.connect(self._on_display_options_changed)
-        disp_layout.addWidget(self.chk_face)
 
         layout.addWidget(self.display_card)
         layout.addStretch()
@@ -1168,6 +1202,60 @@ class LegacySensorQtGUI(QMainWindow):
         self.stacked_view.addWidget(self.page_calib)
         self._update_calib_cards_ui()
 
+    def _build_exp_view(self):
+        """Constructs Page 2: Experimental Features."""
+        self.page_exp = QWidget()
+        layout = QVBoxLayout(self.page_exp)
+        layout.setContentsMargins(0, 4, 0, 0)
+        layout.setSpacing(12)
+
+        exp_card = QFrame(self.page_exp)
+        exp_card.setProperty("class", "card")
+        exp_layout = QVBoxLayout(exp_card)
+        exp_layout.setContentsMargins(16, 16, 16, 16)
+        exp_layout.setSpacing(12)
+
+        lbl_title = QLabel("EXPERIMENTAL FEATURES", exp_card)
+        lbl_title.setStyleSheet(
+            f"font-family: '{self.font_heading}'; font-size: 12px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent; border: none;"
+        )
+        exp_layout.addWidget(lbl_title)
+
+        # Auto-Frame Feature Box
+        auto_frame_box = QFrame(exp_card)
+        auto_frame_box.setStyleSheet(f"""
+            QFrame {{
+                background-color: {PALETTE["input_bg"]};
+                border: 1px solid {PALETTE["border_subtle"]};
+                border-radius: 8px;
+            }}
+        """)
+        af_layout = QVBoxLayout(auto_frame_box)
+        af_layout.setContentsMargins(14, 12, 14, 12)
+        af_layout.setSpacing(6)
+
+        self.chk_face = QCheckBox("Auto-Frame player's face in Just Dance (Digital PTZ)", auto_frame_box)
+        self.chk_face.setChecked(self.cfg.get("face_follow_enabled", True))
+        self.chk_face.stateChanged.connect(self._on_display_options_changed)
+        af_layout.addWidget(self.chk_face)
+
+        lbl_desc = QLabel(
+            "Dynamically tracks and frames the dancer's face and upper torso using real-time landmark tracking. "
+            "Smoothly pans and crops the game video stream sent to Just Dance PC while keeping 3D skeletal tracking unaffected.",
+            auto_frame_box
+        )
+        lbl_desc.setWordWrap(True)
+        lbl_desc.setStyleSheet(
+            f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
+        )
+        af_layout.addWidget(lbl_desc)
+
+        exp_layout.addWidget(auto_frame_box)
+        layout.addWidget(exp_card)
+        layout.addStretch()
+
+        self.stacked_view.addWidget(self.page_exp)
+
     # =========================================================================
     # UI STATE MANAGEMENT & VISIBILITY
     # =========================================================================
@@ -1241,29 +1329,38 @@ class LegacySensorQtGUI(QMainWindow):
         """
         accessible = self.is_camera_accessible()
 
+        # Video Tab
         if tab_id == "video":
             self.btn_tab_video.setStyleSheet(act_css)
             self.btn_tab_video.setIcon(QIcon(self.pix_gear_act))
-            if not accessible:
-                self.btn_tab_calib.setEnabled(False)
-                self.btn_tab_calib.setCursor(Qt.CursorShape.ForbiddenCursor)
-                self.btn_tab_calib.setStyleSheet(self._disabled_tab_css())
-                self.btn_tab_calib.setIcon(QIcon(self.pix_slid_disabled))
-            else:
-                self.btn_tab_calib.setEnabled(True)
-                self.btn_tab_calib.setCursor(Qt.CursorShape.PointingHandCursor)
-                self.btn_tab_calib.setStyleSheet(inact_css)
-                self.btn_tab_calib.setIcon(QIcon(self.pix_slid_inact))
         else:
-            if not accessible:
-                self._switch_tab("video")
-                return
-            self.btn_tab_calib.setEnabled(True)
-            self.btn_tab_calib.setCursor(Qt.CursorShape.PointingHandCursor)
-            self.btn_tab_calib.setStyleSheet(act_css)
-            self.btn_tab_calib.setIcon(QIcon(self.pix_slid_act))
             self.btn_tab_video.setStyleSheet(inact_css)
             self.btn_tab_video.setIcon(QIcon(self.pix_gear_inact))
+
+        # Calibration Tab (Access-Gated)
+        if not accessible:
+            self.btn_tab_calib.setEnabled(False)
+            self.btn_tab_calib.setCursor(Qt.CursorShape.ForbiddenCursor)
+            self.btn_tab_calib.setStyleSheet(self._disabled_tab_css())
+            self.btn_tab_calib.setIcon(QIcon(self.pix_slid_disabled))
+        else:
+            self.btn_tab_calib.setEnabled(True)
+            self.btn_tab_calib.setCursor(Qt.CursorShape.PointingHandCursor)
+            if tab_id == "calib":
+                self.btn_tab_calib.setStyleSheet(act_css)
+                self.btn_tab_calib.setIcon(QIcon(self.pix_slid_act))
+            else:
+                self.btn_tab_calib.setStyleSheet(inact_css)
+                self.btn_tab_calib.setIcon(QIcon(self.pix_slid_inact))
+
+        # Experimental Tab
+        if hasattr(self, "btn_tab_exp"):
+            if tab_id == "exp":
+                self.btn_tab_exp.setStyleSheet(act_css)
+                self.btn_tab_exp.setIcon(QIcon(self.pix_lab_act))
+            else:
+                self.btn_tab_exp.setStyleSheet(inact_css)
+                self.btn_tab_exp.setIcon(QIcon(self.pix_lab_inact))
 
     def _switch_tab(self, tab_id: str):
         if tab_id == "calib" and not self.is_camera_accessible():
@@ -1276,8 +1373,10 @@ class LegacySensorQtGUI(QMainWindow):
         if tab_id == "video":
             self.stacked_view.slide_to_index(0)
             self._update_video_view_visibility()
-        else:
+        elif tab_id == "calib":
             self.stacked_view.slide_to_index(1)
+        elif tab_id == "exp":
+            self.stacked_view.slide_to_index(2)
 
     def _set_mode(self, mode: str, animate: bool = True):
         self.cfg["camera_mode"] = mode
@@ -1338,13 +1437,27 @@ class LegacySensorQtGUI(QMainWindow):
         mode = self.cfg.get("camera_mode", "pscam")
         presets = PRESETS_PSCAM if mode == "pscam" else PRESETS_WEBCAM
         current = self.cfg.get("pscam_preset" if mode == "pscam" else "webcam_preset", presets[0])
+        w, h, fps = parse_preset(current)
+        res_str = f"{w}x{h}"
+        fps_str = f"{fps} FPS"
 
-        self.cb_preset.blockSignals(True)
-        self.cb_preset.clear()
-        self.cb_preset.addItems(presets)
-        idx = self.cb_preset.findText(current)
-        self.cb_preset.setCurrentIndex(max(0, idx))
-        self.cb_preset.blockSignals(False)
+        if hasattr(self, "cb_res") and hasattr(self, "cb_fps"):
+            self.cb_res.blockSignals(True)
+            self.cb_fps.blockSignals(True)
+            idx_r = self.cb_res.findText(res_str)
+            self.cb_res.setCurrentIndex(max(0, idx_r))
+            idx_f = self.cb_fps.findText(fps_str)
+            self.cb_fps.setCurrentIndex(max(0, idx_f))
+            self.cb_res.blockSignals(False)
+            self.cb_fps.blockSignals(False)
+
+        if hasattr(self, "cb_preset"):
+            self.cb_preset.blockSignals(True)
+            self.cb_preset.clear()
+            self.cb_preset.addItems(presets)
+            idx = self.cb_preset.findText(current)
+            self.cb_preset.setCurrentIndex(max(0, idx))
+            self.cb_preset.blockSignals(False)
 
     def _update_camera_dropdown_for_mode(self):
         mode = self.cfg.get("camera_mode", "pscam")
@@ -1543,13 +1656,41 @@ class LegacySensorQtGUI(QMainWindow):
                 self._save_settings()
                 break
 
-    def _on_preset_selected(self, index: int):
+    def _on_webcam_res_or_fps_changed(self):
+        if not hasattr(self, "cb_res") or not hasattr(self, "cb_fps"):
+            return
+        res = self.cb_res.currentText()
+        fps = self.cb_fps.currentText()
+        preset = f"{res} @ {fps}"
+        self.cfg["webcam_preset"] = preset
+        if hasattr(self, "cb_preset"):
+            self.cb_preset.blockSignals(True)
+            idx = self.cb_preset.findText(preset)
+            if idx >= 0:
+                self.cb_preset.setCurrentIndex(idx)
+            self.cb_preset.blockSignals(False)
+        self._save_settings()
+
+    def _on_preset_selected(self, index: int = 0):
         mode = self.cfg.get("camera_mode", "pscam")
-        preset = self.cb_preset.currentText()
-        if mode == "pscam":
-            self.cfg["pscam_preset"] = preset
-        else:
-            self.cfg["webcam_preset"] = preset
+        if hasattr(self, "cb_preset"):
+            preset = self.cb_preset.currentText()
+            if mode == "pscam":
+                self.cfg["pscam_preset"] = preset
+            else:
+                self.cfg["webcam_preset"] = preset
+                if hasattr(self, "cb_res") and hasattr(self, "cb_fps"):
+                    w, h, fps = parse_preset(preset)
+                    idx_r = self.cb_res.findText(f"{w}x{h}")
+                    if idx_r >= 0:
+                        self.cb_res.blockSignals(True)
+                        self.cb_res.setCurrentIndex(idx_r)
+                        self.cb_res.blockSignals(False)
+                    idx_f = self.cb_fps.findText(f"{fps} FPS")
+                    if idx_f >= 0:
+                        self.cb_fps.blockSignals(True)
+                        self.cb_fps.setCurrentIndex(idx_f)
+                        self.cb_fps.blockSignals(False)
         self._save_settings()
 
     def _on_display_options_changed(self):

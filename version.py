@@ -5,7 +5,7 @@ Standard:
 - Increment 2nd digit for major architectural changes or large refactorings (e.g. 0.1.2 -> 0.2.0)
 - Always include version number and '(Alpha)' in window titles and UI headers.
 """
-__version__ = "0.2.1"
+__version__ = "0.2.2"
 STAGE = "Alpha"
 VERSION_STRING = f"v{__version__} ({STAGE})"
 APP_NAME = "Legacy PSCam Sensor"

@@ -511,6 +511,7 @@ def test_project_structure():
     assert (BASE_DIR / "assets" / "icons" / "mode_balanced.svg").exists(), "Asset mode_balanced.svg must exist in assets/icons/"
     assert (BASE_DIR / "assets" / "icons" / "mode_competitive.svg").exists(), "Asset mode_competitive.svg must exist in assets/icons/"
     assert (BASE_DIR / "assets" / "icons" / "mode_stable.svg").exists() or (BASE_DIR / "assets" / "icons" / "mode_.svg").exists(), "Asset mode_stable.svg must exist in assets/icons/"
+    assert (BASE_DIR / "assets" / "icons" / "lab.svg").exists(), "Asset lab.svg must exist in assets/icons/"
     assert (BASE_DIR / "models" / "pose_landmarker_lite.task").exists(), "models/pose_landmarker_lite.task must exist"
 
     import sensor
@@ -546,6 +547,7 @@ def test_project_structure():
         assert not win.pix_gear_act.isNull(), "Settings icon pixmap must not be null"
         assert not win.pix_slid_act.isNull(), "Sliders icon pixmap must not be null"
         assert not win.pix_slid_disabled.isNull(), "Disabled sliders icon pixmap must not be null"
+        assert not win.pix_lab_act.isNull(), "Lab icon pixmap must not be null"
         assert win.pix_gear_act.devicePixelRatio() >= 2.0, "Icons must have High-DPI supersampling"
         assert "balanced" in win.mode_pixmaps and not win.mode_pixmaps["balanced"][0].isNull(), "Mode icon balanced must not be null"
         assert "competitive" in win.mode_pixmaps and not win.mode_pixmaps["competitive"][0].isNull(), "Mode icon competitive must not be null"
@@ -555,11 +557,19 @@ def test_project_structure():
         assert win.font_heading == "National Park", f"Expected National Park heading font, got {win.font_heading}"
         assert win.font_body == "Inter Tight", f"Expected Inter Tight body font, got {win.font_body}"
 
+        # Verification of Experimental tab and controls
+        assert hasattr(win, "btn_tab_exp"), "Experimental tab button must exist"
+        assert hasattr(win, "page_exp"), "Experimental page widget must exist"
+        assert hasattr(win, "cb_res") and hasattr(win, "cb_fps"), "Split resolution and FPS combos must exist in webcam card"
+        win._switch_tab("exp")
+        assert win.active_tab == "exp", "Should switch to experimental tab"
+
         # Calibration tab gating when camera is not connected
         if not win.is_camera_accessible():
             assert not win.btn_tab_calib.isEnabled(), "Calibration tab must be disabled when camera is not accessible"
             win._switch_tab("calib")
-            assert win.active_tab == "video", "Switching to calib must be prevented when camera is not accessible"
+            assert win.active_tab == "exp", "Switching to calib must be prevented when camera is not accessible"
+        win._switch_tab("video")
         win.close()
         app.processEvents()
 
