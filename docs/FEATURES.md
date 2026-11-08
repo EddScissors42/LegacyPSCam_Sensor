@@ -167,16 +167,15 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
   - **Botão de Ação Direto:** Botão plano estilizado com `PALETTE["blue_pastel"]` e texto em azul PlayStation (`PALETTE["blue_dark"]`) permitindo inicializar o PSCam4Win (`"Start PSCam4Win Driver"`) ou reescanear portas USB (`"Search for Webcams"`).
   - **Transição Fluida Conectado/Desconectado:** O painel de opções da câmera e as "Opções Adicionais" (HUD) só surgem na tela assim que o hardware/driver estiver no estado `READY`. Quando desconectado, voltam a ser recolhidos instantaneamente, mantendo a tela 100% limpa.
 
-### 15. Menu "Experimental" e Blocos com Contorno dos Cards de Calibração (v0.2.3 Alpha)
+### 15. Menu "Experimental", Layout Espaçoso e Seta Dropdown (v0.2.4 Alpha)
 - **Aba "Experimental" com Ícone de Laboratório (`lab.svg`):**
   - Introduzida nova aba superior navegável entre as abas principais, equipada com o ícone `lab.svg` renderizado com 4x supersampling anti-aliased.
   - Centraliza recursos experimentais e em teste, acomodando o **Auto-Frame (Digital PTZ)** com descrição detalhada de funcionamento.
-- **Blocos com Contorno Idêntico aos Cards de Calibração:**
-  - No cartão de configurações de webcam ("Webcam Video Settings"), os controles de **Dispositivo de Câmera**, **Resolução** e **FPS** foram divididos em 3 blocos/caixas individuais com o mesmo contorno visual arredondado (`border: 1px solid #E2E8F0; border-radius: 10px; background-color: #FFFFFF;`) e efeito hover (`#CBD5E1`) das caixas de seleção de calibração:
-    - **Bloco 1 (CAMERA DEVICE):** Título em azul escuro, botão de atualizar `↻` embutido no cabeçalho do bloco, subtítulo e seletor combobox com largura expandida.
-    - **Bloco 2 (RESOLUTION):** Título em azul escuro, subtítulo explicativo e seletor de resolução (`640x480`, `1280x720`, `1920x1080`).
-    - **Bloco 3 (FRAMERATE):** Título em azul escuro, subtítulo explicativo e seletor de taxa de quadros (`30 FPS`, `60 FPS`).
-  - A combinação das escolhas continua mapeada de forma transparente para `webcam_preset`, garantindo 100% de retrocompatibilidade com o pipeline de captura e testes automatizados.
+- **Blocos com Contorno dos Cards de Calibração (Dispositivo no Topo + Resolução e FPS Abaixo):**
+  - **Linha 1 (CAMERA DEVICE):** Bloco de largura total dedicado ao dispositivo de captura, eliminando aperto de nomes longos de câmeras USB. O botão de atualizar `↻` recebeu estilização personalizada com feedback de carregamento (`…`), sem causar flicker para a tela de câmera desconectada.
+  - **Linha 2 (RESOLUTION & FRAMERATE):** Blocos de Resolução e FPS posicionados lado a lado logo abaixo do bloco de câmera, com divisão 50/50 e ampla área de respiro visual.
+- **Ícone de Seta para Baixo (Dropdown Arrow):**
+  - Adicionado o ícone vetorial anti-aliased `arrow_down.png` e regra `QComboBox::down-arrow` no stylesheet Qt, restaurando a seta indicadora em todos os menus suspensos de seleção.
 
 ---
 

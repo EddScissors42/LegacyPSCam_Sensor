@@ -512,6 +512,7 @@ def test_project_structure():
     assert (BASE_DIR / "assets" / "icons" / "mode_competitive.svg").exists(), "Asset mode_competitive.svg must exist in assets/icons/"
     assert (BASE_DIR / "assets" / "icons" / "mode_stable.svg").exists() or (BASE_DIR / "assets" / "icons" / "mode_.svg").exists(), "Asset mode_stable.svg must exist in assets/icons/"
     assert (BASE_DIR / "assets" / "icons" / "lab.svg").exists(), "Asset lab.svg must exist in assets/icons/"
+    assert (BASE_DIR / "assets" / "icons" / "arrow_down.png").exists() or (BASE_DIR / "assets" / "icons" / "arrow_down.svg").exists(), "Asset arrow_down must exist in assets/icons/"
     assert (BASE_DIR / "models" / "pose_landmarker_lite.task").exists(), "models/pose_landmarker_lite.task must exist"
 
     import sensor
@@ -561,6 +562,7 @@ def test_project_structure():
         assert hasattr(win, "btn_tab_exp"), "Experimental tab button must exist"
         assert hasattr(win, "page_exp"), "Experimental page widget must exist"
         assert hasattr(win, "cb_res") and hasattr(win, "cb_fps"), "Split resolution and FPS combos must exist in webcam card"
+        assert hasattr(win, "btn_refresh"), "Refresh button in device card must exist"
         win._switch_tab("exp")
         assert win.active_tab == "exp", "Should switch to experimental tab"
 

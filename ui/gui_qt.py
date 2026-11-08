@@ -55,7 +55,7 @@ from ui.icons import (
     generate_mode_icons_pil,
     generate_status_icons_pil
 )
-from assets import ICON_PSCAMERA_PATH
+from assets import ICON_PSCAMERA_PATH, ICON_ARROW_DOWN_PATH
 from version import WINDOW_TITLE, VERSION_STRING, APP_NAME
 from sensor.config_manager import ConfigManager, parse_preset, PRESETS_PSCAM, PRESETS_WEBCAM
 from sensor.camera_manager import CameraManager
@@ -486,6 +486,7 @@ class LegacySensorQtGUI(QMainWindow):
 
     def _setup_style(self):
         """Applies the Crisp White & PlayStation Blue stylesheet (QSS)."""
+        arrow_url = str(ICON_ARROW_DOWN_PATH).replace("\\", "/")
         self.setStyleSheet(f"""
             QMainWindow, QWidget#centralWidget {{
                 background-color: {PALETTE["bg_window"]};
@@ -594,6 +595,14 @@ class LegacySensorQtGUI(QMainWindow):
                 background-color: {PALETTE["blue_pastel"]};
                 border-top-right-radius: 6px;
                 border-bottom-right-radius: 6px;
+            }}
+            QComboBox::drop-down:hover {{
+                background-color: {PALETTE["blue_pastel_hover"]};
+            }}
+            QComboBox::down-arrow {{
+                image: url("{arrow_url}");
+                width: 10px;
+                height: 7px;
             }}
             QComboBox QAbstractItemView {{
                 background-color: #FFFFFF;
@@ -988,14 +997,10 @@ class LegacySensorQtGUI(QMainWindow):
         )
         web_conn_layout.addWidget(lbl_wc_sub)
 
-        # 3 Setting Blocks (using the same card contour design as the Calibration Profile Cards)
-        blocks_row = QHBoxLayout()
-        blocks_row.setSpacing(10)
-
-        # Block 1: Camera Device
+        # 1. Row 1: Camera Device (Full width block)
         block_dev = QFrame(self.webcam_card)
         block_dev.setObjectName("settingBlockDev")
-        block_dev.setFixedHeight(108)
+        block_dev.setFixedHeight(88)
         block_dev.setStyleSheet(f"""
             QFrame#settingBlockDev {{
                 background-color: #FFFFFF;
@@ -1007,7 +1012,7 @@ class LegacySensorQtGUI(QMainWindow):
             }}
         """)
         dev_layout = QVBoxLayout(block_dev)
-        dev_layout.setContentsMargins(12, 10, 12, 10)
+        dev_layout.setContentsMargins(14, 10, 14, 10)
         dev_layout.setSpacing(4)
 
         dev_top_row = QHBoxLayout()
@@ -1017,15 +1022,38 @@ class LegacySensorQtGUI(QMainWindow):
         lbl_dev_title.setStyleSheet(
             f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent; border: none;"
         )
-        btn_refresh = QPushButton("↻", block_dev)
-        btn_refresh.setFixedSize(26, 22)
-        btn_refresh.setProperty("class", "btn_secondary")
-        btn_refresh.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_refresh.setToolTip("Scan / Refresh connected webcams")
-        btn_refresh.clicked.connect(self._refresh_cameras)
+        self.btn_refresh = QPushButton("↻", block_dev)
+        self.btn_refresh.setFixedSize(30, 24)
+        self.btn_refresh.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_refresh.setToolTip("Scan / Refresh connected webcams")
+        self.btn_refresh.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {PALETTE["blue_pastel"]};
+                color: {PALETTE["ps_blue"]};
+                font-family: '{self.font_heading}', sans-serif;
+                font-size: 15px;
+                font-weight: bold;
+                border: 1px solid #CBD5E1;
+                border-radius: 6px;
+                padding: 0px;
+            }}
+            QPushButton:hover {{
+                background-color: {PALETTE["blue_pastel_hover"]};
+                border-color: {PALETTE["ps_blue"]};
+            }}
+            QPushButton:pressed {{
+                background-color: #B8E2F2;
+            }}
+            QPushButton:disabled {{
+                background-color: {PALETTE["input_bg"]};
+                color: {PALETTE["text_muted"]};
+                border-color: {PALETTE["border_subtle"]};
+            }}
+        """)
+        self.btn_refresh.clicked.connect(self._refresh_cameras)
         dev_top_row.addWidget(lbl_dev_title)
         dev_top_row.addStretch()
-        dev_top_row.addWidget(btn_refresh)
+        dev_top_row.addWidget(self.btn_refresh)
         dev_layout.addLayout(dev_top_row)
 
         lbl_dev_sub = QLabel("Active Video Source", block_dev)
@@ -1037,12 +1065,16 @@ class LegacySensorQtGUI(QMainWindow):
         self.cb_cameras = QComboBox(block_dev)
         self.cb_cameras.currentIndexChanged.connect(self._on_camera_selected)
         dev_layout.addWidget(self.cb_cameras)
-        blocks_row.addWidget(block_dev, stretch=5)
+        web_conn_layout.addWidget(block_dev)
+
+        # 2. Row 2: Resolution & FPS side-by-side blocks below Camera Device
+        row_res_fps = QHBoxLayout()
+        row_res_fps.setSpacing(10)
 
         # Block 2: Resolution
         block_res = QFrame(self.webcam_card)
         block_res.setObjectName("settingBlockRes")
-        block_res.setFixedHeight(108)
+        block_res.setFixedHeight(88)
         block_res.setStyleSheet(f"""
             QFrame#settingBlockRes {{
                 background-color: #FFFFFF;
@@ -1054,7 +1086,7 @@ class LegacySensorQtGUI(QMainWindow):
             }}
         """)
         res_layout = QVBoxLayout(block_res)
-        res_layout.setContentsMargins(12, 10, 12, 10)
+        res_layout.setContentsMargins(14, 10, 14, 10)
         res_layout.setSpacing(4)
 
         lbl_res_title = QLabel("RESOLUTION", block_res)
@@ -1073,12 +1105,12 @@ class LegacySensorQtGUI(QMainWindow):
         self.cb_res.addItems(["640x480", "1280x720", "1920x1080"])
         self.cb_res.currentIndexChanged.connect(self._on_webcam_res_or_fps_changed)
         res_layout.addWidget(self.cb_res)
-        blocks_row.addWidget(block_res, stretch=3)
+        row_res_fps.addWidget(block_res, stretch=1)
 
         # Block 3: FPS
         block_fps = QFrame(self.webcam_card)
         block_fps.setObjectName("settingBlockFps")
-        block_fps.setFixedHeight(108)
+        block_fps.setFixedHeight(88)
         block_fps.setStyleSheet(f"""
             QFrame#settingBlockFps {{
                 background-color: #FFFFFF;
@@ -1090,7 +1122,7 @@ class LegacySensorQtGUI(QMainWindow):
             }}
         """)
         fps_layout = QVBoxLayout(block_fps)
-        fps_layout.setContentsMargins(12, 10, 12, 10)
+        fps_layout.setContentsMargins(14, 10, 14, 10)
         fps_layout.setSpacing(4)
 
         lbl_fps_title = QLabel("FRAMERATE (FPS)", block_fps)
@@ -1099,7 +1131,7 @@ class LegacySensorQtGUI(QMainWindow):
         )
         fps_layout.addWidget(lbl_fps_title)
 
-        lbl_fps_sub = QLabel("Capture Speed", block_fps)
+        lbl_fps_sub = QLabel("Target Capture Speed", block_fps)
         lbl_fps_sub.setStyleSheet(
             f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
         )
@@ -1109,9 +1141,9 @@ class LegacySensorQtGUI(QMainWindow):
         self.cb_fps.addItems(["30 FPS", "60 FPS"])
         self.cb_fps.currentIndexChanged.connect(self._on_webcam_res_or_fps_changed)
         fps_layout.addWidget(self.cb_fps)
-        blocks_row.addWidget(block_fps, stretch=3)
+        row_res_fps.addWidget(block_fps, stretch=1)
 
-        web_conn_layout.addLayout(blocks_row)
+        web_conn_layout.addLayout(row_res_fps)
 
         # Backward compatibility handle for cb_preset
         self.cb_preset = QComboBox(self.webcam_card)
@@ -1501,11 +1533,11 @@ class LegacySensorQtGUI(QMainWindow):
             if not webcams and not any(c.is_pscam for c in cams):
                 webcams = cams
 
-            if not webcams:
+            if not webcams and not self._is_refreshing_cams:
                 self.webcam_card.setVisible(False)
                 self.display_card.setVisible(False)
                 self.webcam_disconnected_box.setVisible(True)
-            else:
+            elif webcams:
                 self.webcam_disconnected_box.setVisible(False)
                 self.webcam_card.setVisible(True)
                 self.display_card.setVisible(True)
@@ -1542,7 +1574,7 @@ class LegacySensorQtGUI(QMainWindow):
         mode = self.cfg.get("camera_mode", "pscam")
         cams = getattr(self, "camera_list", [])
 
-        if self._is_refreshing_cams and not cams:
+        if self._is_refreshing_cams and not cams and not getattr(self, "camera_list", []):
             msg = "Searching for PlayStation®Camera..." if mode == "pscam" else "Searching for webcams..."
             self.cb_cameras.blockSignals(True)
             self.cb_cameras.clear()
@@ -1551,8 +1583,9 @@ class LegacySensorQtGUI(QMainWindow):
             if mode == "webcam":
                 self.lbl_webcam_conn_title.setText("Searching for webcams...")
                 self.lbl_webcam_info.setText("Scanning USB video capture devices...")
-                self.btn_refresh_webcam.setEnabled(False)
-                self.btn_refresh_webcam.setText("Searching...")
+                if hasattr(self, "btn_refresh_webcam"):
+                    self.btn_refresh_webcam.setEnabled(False)
+                    self.btn_refresh_webcam.setText("Searching...")
             self._update_video_view_visibility()
             return
 
@@ -1700,6 +1733,12 @@ class LegacySensorQtGUI(QMainWindow):
         if self._is_refreshing_cams or getattr(self, "is_tracking_active", False):
             return
         self._is_refreshing_cams = True
+        if hasattr(self, "btn_refresh"):
+            self.btn_refresh.setEnabled(False)
+            self.btn_refresh.setText("…")
+        if hasattr(self, "btn_refresh_webcam"):
+            self.btn_refresh_webcam.setEnabled(False)
+            self.btn_refresh_webcam.setText("Searching...")
 
         def worker():
             if getattr(self, "is_tracking_active", False) or getattr(self, "_is_closing", False):
@@ -1724,6 +1763,12 @@ class LegacySensorQtGUI(QMainWindow):
             return
         self._is_refreshing_cams = False
         self.camera_list = cams
+        if hasattr(self, "btn_refresh"):
+            self.btn_refresh.setEnabled(True)
+            self.btn_refresh.setText("↻")
+        if hasattr(self, "btn_refresh_webcam"):
+            self.btn_refresh_webcam.setEnabled(True)
+            self.btn_refresh_webcam.setText("Search for Webcams")
         self._update_pscam_status()
         self._update_camera_dropdown_for_mode()
 

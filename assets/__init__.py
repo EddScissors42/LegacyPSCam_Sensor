@@ -18,6 +18,7 @@ ICON_MODE_STABLE_PATH = (
     else (ICONS_DIR / "mode_.svg" if (ICONS_DIR / "mode_.svg").exists() else ASSETS_DIR / "mode_.svg")
 )
 ICON_LAB_PATH = ICONS_DIR / "lab.svg" if (ICONS_DIR / "lab.svg").exists() else ASSETS_DIR / "lab.svg"
+ICON_ARROW_DOWN_PATH = ICONS_DIR / "arrow_down.png" if (ICONS_DIR / "arrow_down.png").exists() else ICONS_DIR / "arrow_down.svg"
 
 MODELS_DIR = ASSETS_DIR.parent / "models"
 MODEL_POSE_PATH = MODELS_DIR / "pose_landmarker_lite.task"
@@ -33,6 +34,7 @@ __all__ = [
     "ICON_MODE_COMPETITIVE_PATH",
     "ICON_MODE_STABLE_PATH",
     "ICON_LAB_PATH",
+    "ICON_ARROW_DOWN_PATH",
     "MODELS_DIR",
     "MODEL_POSE_PATH",
 ]
