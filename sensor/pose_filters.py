@@ -179,10 +179,14 @@ class AdaptiveSmoother:
         self.speed_threshold = float(speed_threshold)
         self.prev_joints = None
         self.last_time = None
+        self.prev_pixel_joints = None
+        self.last_pixel_time = None
 
     def reset(self):
         self.prev_joints = None
         self.last_time = None
+        self.prev_pixel_joints = None
+        self.last_pixel_time = None
 
     def update_base_alpha(self, alpha):
         self.base_alpha = float(alpha)
@@ -233,6 +237,58 @@ class AdaptiveSmoother:
 
         self.prev_joints = smoothed
         return smoothed
+
+    def apply_pixel(self, pixel_joints, frame_w=640, frame_h=480, dt=None):
+        """
+        Dynamic 2D pixel EMA smoothing for HUD preview skeleton rendering.
+        Eliminates visual jitter on stationary poses while keeping fast dance swings instant.
+        Normalized both by frame resolution diagonal and delta-time (dt).
+        """
+        if not pixel_joints:
+            return pixel_joints
+
+        now = time.perf_counter()
+        if self.prev_pixel_joints is None or len(self.prev_pixel_joints) != len(pixel_joints):
+            self.prev_pixel_joints = [(float(p[0]), float(p[1]), float(p[2])) for p in pixel_joints]
+            self.last_pixel_time = now
+            return [(int(round(p[0])), int(round(p[1])), float(p[2])) for p in pixel_joints]
+
+        if dt is None:
+            if self.last_pixel_time is not None:
+                raw_dt = now - self.last_pixel_time
+                dt_sec = self.REF_DT if raw_dt < 0.002 else min(0.10, max(0.004, raw_dt))
+            else:
+                dt_sec = self.REF_DT
+        else:
+            dt_sec = min(0.10, max(0.004, float(dt)))
+        self.last_pixel_time = now
+
+        dt_scale = self.REF_DT / dt_sec
+        diag = max(320.0, math.hypot(frame_w, frame_h))
+        # Speed threshold in normalized screen diagonal units (~5% of screen diagonal per 30Hz tick)
+        px_threshold = max(0.025, self.speed_threshold * 0.35)
+
+        smoothed_float = []
+        smoothed_int = []
+        for i, (curr, prev) in enumerate(zip(pixel_joints, self.prev_pixel_joints)):
+            dx = (curr[0] - prev[0]) / diag
+            dy = (curr[1] - prev[1]) / diag
+            norm_speed = math.hypot(dx, dy) * dt_scale
+
+            ratio = min(1.0, max(0.0, norm_speed / px_threshold))
+            alpha = self.base_alpha + ratio * (self.alpha_fast - self.base_alpha)
+
+            if i in EXTREMITY_JOINTS:
+                alpha = min(0.96, alpha * 1.25)
+
+            nx = prev[0] + alpha * (curr[0] - prev[0])
+            ny = prev[1] + alpha * (curr[1] - prev[1])
+            nconf = float(curr[2])
+            smoothed_float.append((nx, ny, nconf))
+            smoothed_int.append((int(round(nx)), int(round(ny)), nconf))
+
+        self.prev_pixel_joints = smoothed_float
+        return smoothed_int
 
 
 class SkeletonCalibrator:

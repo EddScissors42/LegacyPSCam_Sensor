@@ -244,6 +244,18 @@ def test_adaptive_smoother():
     alpha_30 = out30[0][0] / 0.08
     alpha_60 = out60[0][0] / 0.04
     assert abs(alpha_30 - alpha_60) < 1e-5, f"Expected identical alpha across 30/60 FPS, got {alpha_30} vs {alpha_60}"
+
+    # Verify 2D pixel joints EMA smoothing (eliminates stationary jitter, responds fast to big moves)
+    px_s = AdaptiveSmoother(base_alpha=0.50, alpha_fast=0.90, speed_threshold=0.15)
+    px1 = [(320, 240, 0.95)] * 20
+    out_px1 = px_s.apply_pixel(px1, frame_w=640, frame_h=480, dt=1.0 / 30.0)
+    assert out_px1[0][:2] == (320, 240)
+    # Stationary micro-jitter (+2 px) is damped to +1 px
+    out_px2 = px_s.apply_pixel([(322, 242, 0.95)] * 20, frame_w=640, frame_h=480, dt=1.0 / 30.0)
+    assert out_px2[0][0] <= 321
+    # Fast swing (+200 px) snaps quickly towards target
+    out_px3 = px_s.apply_pixel([(520, 440, 0.95)] * 20, frame_w=640, frame_h=480, dt=1.0 / 30.0)
+    assert out_px3[0][0] > 480
     print("  -> AdaptiveSmoother PASSED")
 
 def test_calibrator():

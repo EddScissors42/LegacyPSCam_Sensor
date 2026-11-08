@@ -84,8 +84,8 @@ class PoseTracker:
 
     def _init_detector(self):
         base_options = python.BaseOptions(model_asset_path=str(self.model_path))
-        det_c = min(0.45, self.detection_confidence)
-        pres_c = min(0.35, self.detection_confidence)
+        det_c = float(np.clip(self.detection_confidence, 0.15, 0.90))
+        pres_c = float(np.clip(self.detection_confidence - 0.10, 0.15, 0.85))
         options = vision.PoseLandmarkerOptions(
             base_options=base_options,
             running_mode=vision.RunningMode.VIDEO,
@@ -96,7 +96,7 @@ class PoseTracker:
             output_segmentation_masks=True
         )
         self.detector = vision.PoseLandmarker.create_from_options(options)
-        print("[TRACKER] MediaPipe Pose Landmarker successfully initialized.")
+        print(f"[TRACKER] MediaPipe Pose Landmarker initialized (det={det_c:.2f}, pres={pres_c:.2f}).")
 
     def update_settings(self, smoothing_alpha=None, detection_confidence=None, target_height_m=None, cfg=None):
         if cfg is not None:
@@ -109,7 +109,7 @@ class PoseTracker:
         if target_height_m is not None:
             self.calibrator.target_height_m = float(target_height_m)
             self.calibrator.reset()
-        if detection_confidence is not None and abs(self.detection_confidence - detection_confidence) > 0.05:
+        if detection_confidence is not None and abs(self.detection_confidence - detection_confidence) > 0.02:
             self.detection_confidence = float(detection_confidence)
             self.close()
             self._init_detector()
@@ -440,8 +440,9 @@ class PoseTracker:
             px_foot_r,
         ]
 
-        # Apply 2D forearm anchor filter to keep hand landmarks locked during fast moves
+        # Apply 2D forearm anchor filter and 2D adaptive EMA smoothing for jitter-free HUD preview
         pixel_joints = self.hand_filter.apply_pixel(pixel_joints)
+        pixel_joints = self.smoother.apply_pixel(pixel_joints, frame_w=w, frame_h=h, dt=dt_infer)
 
         # 7. Generate player silhouette mask at native Kinect 320x240 resolution
         # (13x fewer pixels than 1280x800, eliminating full-res morphology & resize overhead)
