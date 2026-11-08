@@ -694,14 +694,15 @@ class LegacySensorGUI:
 
             lbl_tag = tk.Label(
                 hdr_row,
-                text=pdata["tag"],
+                text=pdata.get("tag", ""),
                 font=(self.font_family, 6, "bold"),
                 fg=PALETTE["text_muted"],
                 bg=PALETTE["input_bg"],
                 padx=4,
                 pady=2
             )
-            lbl_tag.pack(side=tk.RIGHT)
+            if pdata.get("tag"):
+                lbl_tag.pack(side=tk.RIGHT)
 
             lbl_sub_p = tk.Label(
                 card_frame,

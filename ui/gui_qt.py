@@ -279,7 +279,10 @@ class CalibPresetCard(QFrame):
         self.lbl_icon.setStyleSheet("background: transparent; border: none;")
 
         self.lbl_title = QLabel(pdata["title"], self)
-        self.lbl_tag = QLabel(pdata["tag"], self)
+        tag_text = pdata.get("tag", "")
+        self.lbl_tag = QLabel(tag_text, self)
+        if not tag_text:
+            self.lbl_tag.setVisible(False)
 
         top_row.addWidget(self.lbl_icon)
         top_row.addWidget(self.lbl_title)
