@@ -454,28 +454,7 @@ class LatestFrameCamera:
         self._open_and_negotiate()
 
     def _open_and_negotiate(self):
-        # 1. Fast Path for PlayStation 4 Camera: Direct PSCam4Win FrameBus Shared Memory
-        # Bypasses the 1-2s DirectShow virtual camera graph negotiation when FrameBus is already streaming.
-        if self.is_pscam and self.fb_reader is not None:
-            fb_frame = self.fb_reader.read_frame(only_new=False)
-            if fb_frame is not None and not self._is_black_frame(fb_frame):
-                h, w = fb_frame.shape[:2]
-                if w >= int(1.8 * h):
-                    fb_frame = fb_frame[:, :w // 2]
-                self.actual_w = fb_frame.shape[1]
-                self.actual_h = fb_frame.shape[0]
-                self.actual_fps = self.target_fps
-                self.latest_frame = fb_frame
-                self.latest_ret = True
-                self.frame_seq = 1
-                print(f"[CAMERA] PS4 Camera conectada diretamente via FrameBus (Slot {self.fb_reader.slot}): "
-                      f"{self.actual_w}x{self.actual_h}@{self.actual_fps}fps (Zero-Latency Bypass)")
-                self.running = True
-                self.thread = threading.Thread(target=self._capture_loop, daemon=True, name="CameraCaptureThread")
-                self.thread.start()
-                return
-
-        # 2. Standard DirectShow / MSMF Path (Webcams or PS Camera fallback if FrameBus is not yet active)
+        # Prefer CAP_DSHOW on Windows for fast startup and mode control
         self.cap = cv2.VideoCapture(self.camera_index, cv2.CAP_DSHOW)
         if not self.cap.isOpened():
             self.cap = cv2.VideoCapture(self.camera_index)
@@ -518,7 +497,7 @@ class LatestFrameCamera:
         return float(frame[::16, ::16].mean()) < 1.0
 
     def _capture_loop(self):
-        while self.running:
+        while self.running and self.cap and self.cap.isOpened():
             ret = False
             frame = None
 
@@ -530,23 +509,14 @@ class LatestFrameCamera:
                 if fb_frame is not None and not self._is_black_frame(fb_frame):
                     frame = fb_frame
                     ret = True
-                elif self.fb_reader.is_connected and (time.perf_counter() - self.fb_reader.last_frame_time) < 0.25:
+                elif self.fb_reader.is_connected and (time.perf_counter() - self.fb_reader.last_frame_time) < 0.15:
                     # FrameBus is actively streaming; wait briefly for the next 60 Hz hardware tick
                     time.sleep(0.0015)
                     continue
 
-            # 2. Standard DirectShow Path (or lazy fallback if FrameBus is inactive)
+            # 2. Standard DirectShow Path (or fallback if FrameBus is inactive)
             if not ret or frame is None:
-                if self.cap is None or not self.cap.isOpened():
-                    # Lazy-open DirectShow fallback only if FrameBus is unavailable
-                    try:
-                        self.cap = cv2.VideoCapture(self.camera_index, cv2.CAP_DSHOW)
-                        if not self.cap.isOpened():
-                            self.cap = cv2.VideoCapture(self.camera_index)
-                    except Exception:
-                        self.cap = None
-                if self.cap is not None and self.cap.isOpened():
-                    ret, frame = self.cap.read()
+                ret, frame = self.cap.read()
                 if self.is_pscam and (not ret or self._is_black_frame(frame)) and self.fb_reader is not None:
                     fb_frame = self.fb_reader.read_frame(only_new=False)
                     if fb_frame is not None and not self._is_black_frame(fb_frame):

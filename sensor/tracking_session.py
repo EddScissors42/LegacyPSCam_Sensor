@@ -36,6 +36,15 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
     """
     mode = config.get("camera_mode", "pscam")
     cam_idx = config.get("camera_index", 0)
+    if cam_idx < 0:
+        cams = CameraManager.enumerate_cameras()
+        ps_cams = [c for c in cams if c.is_pscam]
+        if mode == "pscam" and ps_cams:
+            cam_idx = ps_cams[0].index
+        elif cams:
+            cam_idx = cams[0].index
+        else:
+            cam_idx = 0
     preset_str = config.get("pscam_preset" if mode == "pscam" else "webcam_preset", "1280x800 @ 60 FPS" if mode == "pscam" else "640x480 @ 30 FPS")
     w, h, target_fps = parse_preset(preset_str)
     mirror = config.get("mirror_horizontal", True)

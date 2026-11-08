@@ -79,13 +79,11 @@ class PoseTracker:
         self.frame_index = 0
         self.last_timestamp_ms = 0
         self.last_infer_perf = None
-        self._infer_bgr_buf = None
-        self._infer_rgb_buf = None
 
     def _init_detector(self):
         base_options = python.BaseOptions(model_asset_path=str(self.model_path))
-        det_c = float(np.clip(self.detection_confidence, 0.15, 0.90))
-        pres_c = float(np.clip(self.detection_confidence - 0.10, 0.15, 0.85))
+        det_c = min(0.45, self.detection_confidence)
+        pres_c = min(0.35, self.detection_confidence)
         options = vision.PoseLandmarkerOptions(
             base_options=base_options,
             running_mode=vision.RunningMode.VIDEO,
@@ -96,7 +94,7 @@ class PoseTracker:
             output_segmentation_masks=True
         )
         self.detector = vision.PoseLandmarker.create_from_options(options)
-        print(f"[TRACKER] MediaPipe Pose Landmarker initialized (det={det_c:.2f}, pres={pres_c:.2f}).")
+        print(f"[TRACKER] MediaPipe Pose Landmarker successfully initialized (det={det_c:.2f}, pres={pres_c:.2f}).")
 
     def update_settings(self, smoothing_alpha=None, detection_confidence=None, target_height_m=None, cfg=None):
         if cfg is not None:
@@ -220,24 +218,7 @@ class PoseTracker:
             body_mask (np.ndarray): Binary silhouette mask (320x240 native Kinect resolution) with 255 for player.
         """
         h, w = frame_bgr.shape[:2]
-
-        # Fast pre-downscale for high-res frames (e.g. 1280x800 PS4 Camera) before RGB conversion:
-        # MediaPipe internally resizes to 256x256, and VIDEO mode requires consistent dimensions
-        # across calls. Normalizing >640px inputs to 640x480 avoids copying ~3MB/frame and prevents
-        # MediaPipe CalculatorGraph dimension-change assertions.
-        if w > self.INFER_W or h > self.INFER_H:
-            if self._infer_bgr_buf is None or self._infer_bgr_buf.shape[:2] != (self.INFER_H, self.INFER_W):
-                self._infer_bgr_buf = np.empty((self.INFER_H, self.INFER_W, 3), dtype=np.uint8)
-                self._infer_rgb_buf = np.empty((self.INFER_H, self.INFER_W, 3), dtype=np.uint8)
-            cv2.resize(frame_bgr, (self.INFER_W, self.INFER_H), dst=self._infer_bgr_buf, interpolation=cv2.INTER_LINEAR)
-            cv2.cvtColor(self._infer_bgr_buf, cv2.COLOR_BGR2RGB, dst=self._infer_rgb_buf)
-            frame_rgb = self._infer_rgb_buf
-        else:
-            if self._infer_rgb_buf is None or self._infer_rgb_buf.shape[:2] != (h, w):
-                self._infer_rgb_buf = np.empty((h, w, 3), dtype=np.uint8)
-            cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB, dst=self._infer_rgb_buf)
-            frame_rgb = self._infer_rgb_buf
-
+        frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_rgb)
 
         # Milliseconds strictly monotonic timestamp for VIDEO running mode

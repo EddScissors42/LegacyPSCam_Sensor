@@ -1365,6 +1365,8 @@ class LegacySensorQtGUI(QMainWindow):
             ps_cams = [c for c in cams if c.is_pscam]
             if ps_cams:
                 self.cfg["camera_index"] = ps_cams[0].index
+            elif not cams:
+                pass
             else:
                 self.cfg["camera_index"] = -1
         else:
@@ -1385,6 +1387,8 @@ class LegacySensorQtGUI(QMainWindow):
                         break
                 self.cb_cameras.setCurrentIndex(selected_idx)
                 self.cfg["camera_index"] = webcams[selected_idx].index
+            elif not cams:
+                pass
             else:
                 self.lbl_webcam_icon.setPixmap(self.pix_status_err)
                 self.lbl_webcam_conn_title.setText("Webcam not connected")
@@ -1498,20 +1502,24 @@ class LegacySensorQtGUI(QMainWindow):
         self._refresh_cameras_async()
 
     def _refresh_cameras_async(self):
-        if self._is_refreshing_cams:
+        if self._is_refreshing_cams or getattr(self, "is_tracking_active", False):
             return
         self._is_refreshing_cams = True
 
         def worker():
+            if getattr(self, "is_tracking_active", False) or getattr(self, "_is_closing", False):
+                self._is_refreshing_cams = False
+                return
             try:
                 cams = CameraManager.enumerate_cameras()
             except Exception:
                 cams = []
-            if not getattr(self, "_is_closing", False):
+            if not getattr(self, "_is_closing", False) and not getattr(self, "is_tracking_active", False):
                 try:
                     self.cameras_refreshed_signal.emit(cams)
                 except RuntimeError:
                     pass
+            self._is_refreshing_cams = False
 
         threading.Thread(target=worker, daemon=True).start()
 
