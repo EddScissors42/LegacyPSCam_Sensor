@@ -430,6 +430,8 @@ class LatestFrameCamera:
 
         self.latest_frame = None
         self.latest_ret = False
+        self.frame_seq = 0
+        self.last_consumed_seq = 0
         self.actual_w = target_w
         self.actual_h = target_h
         self.actual_fps = target_fps
@@ -523,6 +525,7 @@ class LatestFrameCamera:
             with self.lock:
                 self.latest_frame = frame
                 self.latest_ret = True
+                self.frame_seq += 1
                 self.actual_w = frame.shape[1]
                 self.actual_h = frame.shape[0]
                 self.fps_counter += 1
@@ -533,10 +536,17 @@ class LatestFrameCamera:
                     self.fps_counter = 0
                     self.fps_last_time = now
 
-    def read(self):
-        """Returns (ret, frame, measured_fps)."""
+    def read(self, only_new=False):
+        """
+        Returns (ret, frame, measured_fps).
+        When only_new=True, returns (False, None, measured_fps) if no new hardware frame
+        has arrived since the previous consumed read, preventing duplicate inference.
+        """
         with self.lock:
             if self.latest_frame is not None:
+                if only_new and self.frame_seq == self.last_consumed_seq:
+                    return False, None, self.measured_fps
+                self.last_consumed_seq = self.frame_seq
                 return self.latest_ret, self.latest_frame, self.measured_fps
             return False, None, 0.0
 

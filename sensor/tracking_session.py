@@ -112,13 +112,24 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
             if stop_event is not None and stop_event.is_set():
                 break
 
-            ret, frame, cam_fps = camera.read()
+            ret, frame, cam_fps = camera.read(only_new=True)
             if not ret or frame is None:
-                # Pump OpenCV event queue so window doesn't freeze during frame wait
-                key = cv2.waitKey(5) & 0xFF
+                # Pump OpenCV event queue and yield briefly until the next hardware frame arrives
+                key = cv2.waitKey(1) & 0xFF
                 if key in (27, ord('q'), ord('Q')):
                     break
-                time.sleep(0.005)
+                elif key in (ord('c'), ord('C')):
+                    tracker.recalibrate()
+                    print("[INFO] Height/skeleton recalibration triggered!")
+                elif key in (ord('m'), ord('M')):
+                    mirror = not mirror
+                    camera.set_mirror(mirror)
+                    print(f"[INFO] Mirroring toggled to: {mirror}")
+                elif key in (ord('h'), ord('H')):
+                    overlay.toggle_hud()
+                if cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1:
+                    break
+                time.sleep(0.0015)
                 continue
 
             # Process Pose on pristine RAW frame with MediaPipe (guarantees correct anatomical limbs)

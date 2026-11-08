@@ -214,8 +214,8 @@ def test_hand_anchor():
     print("  -> HandAnchorFilter PASSED")
 
 def test_adaptive_smoother():
-    print("[TEST] AdaptiveSmoother...")
-    smoother = AdaptiveSmoother(base_alpha=0.50, alpha_fast=0.90)
+    print("[TEST] AdaptiveSmoother (dt-normalized 30/60 FPS consistency)...")
+    smoother = AdaptiveSmoother(base_alpha=0.50, alpha_fast=0.90, speed_threshold=0.15)
     j1 = [(0.0, 0.0, 2.0, 1.0)] * 20
     # First frame initializes
     res1 = smoother.apply(j1)
@@ -223,13 +223,27 @@ def test_adaptive_smoother():
 
     # Small movement (stationary/slow jitter)
     j2 = [(0.002, 0.002, 2.0, 1.0)] * 20
-    res2 = smoother.apply(j2)
+    res2 = smoother.apply(j2, dt=1.0 / 30.0)
     assert res2[0][0] < 0.0016
 
     # Fast movement (dance swing)
     j3 = [(1.0, 1.0, 2.0, 1.0)] * 20
-    res3 = smoother.apply(j3)
+    res3 = smoother.apply(j3, dt=1.0 / 30.0)
     assert res3[0][0] > 0.6
+
+    # Verify FPS-independent velocity scaling:
+    # A 0.04m displacement at 60 FPS (dt = 1/60s) has the exact same physical speed (2.4 m/s)
+    # as a 0.08m displacement at 30 FPS (dt = 1/30s).
+    s30 = AdaptiveSmoother(base_alpha=0.50, alpha_fast=0.90, speed_threshold=0.15)
+    s60 = AdaptiveSmoother(base_alpha=0.50, alpha_fast=0.90, speed_threshold=0.15)
+    s30.apply(j1)
+    s60.apply(j1)
+    out30 = s30.apply([(0.08, 0.0, 2.0, 1.0)] * 20, dt=1.0 / 30.0)
+    out60 = s60.apply([(0.04, 0.0, 2.0, 1.0)] * 20, dt=1.0 / 60.0)
+    # Effective alpha (out / target_disp) must be identical between 30 FPS and 60 FPS!
+    alpha_30 = out30[0][0] / 0.08
+    alpha_60 = out60[0][0] / 0.04
+    assert abs(alpha_30 - alpha_60) < 1e-5, f"Expected identical alpha across 30/60 FPS, got {alpha_30} vs {alpha_60}"
     print("  -> AdaptiveSmoother PASSED")
 
 def test_calibrator():
@@ -374,9 +388,21 @@ def test_pose_tracker():
     assert out_frame.shape == (480, 640, 3)
     assert out_mask.shape == (240, 320)
 
+    # Test 320x240 native body mask generation
+    built_mask = tracker.build_body_mask(mock_lms, PoseTracker.MASK_INTERNAL_W, PoseTracker.MASK_INTERNAL_H)
+    assert built_mask.shape == (240, 320)
+    assert np.any(built_mask == 255)
+
     # Simulate fast burst frames in quick succession (< 1ms between calls)
     for _ in range(5):
         tracked, kinect_joints, px_joints, body_mask = tracker.process_frame(dummy)
+        assert tracked is False
+        assert body_mask is None
+
+    # Also test high-resolution 1280x800 frame pre-downscaling path
+    dummy_hd = np.zeros((800, 1280, 3), dtype=np.uint8)
+    for _ in range(3):
+        tracked, kinect_joints, px_joints, body_mask = tracker.process_frame(dummy_hd)
         assert tracked is False
         assert body_mask is None
 
@@ -384,16 +410,17 @@ def test_pose_tracker():
     print("  -> PoseTracker PASSED (Monotonic timestamp & FaceFollowPTZ validated)")
 
 def test_overlay():
-    print("[TEST] TrackingOverlay (silhouette & skeleton)...")
+    print("[TEST] TrackingOverlay (ROI silhouette, 320x240 upscaling & skeleton)...")
     overlay = TrackingOverlay(show_hud=True)
-    frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    frame = np.zeros((800, 1280, 3), dtype=np.uint8)
     px_joints = [(50 + i*15, 50 + i*15, 0.9) for i in range(20)]
-    dummy_mask = np.zeros((480, 640), dtype=np.uint8)
-    dummy_mask[50:150, 50:150] = 255
+    # Test with 320x240 native Kinect mask rendered onto a 1280x800 PS4 Camera frame
+    dummy_mask = np.zeros((240, 320), dtype=np.uint8)
+    dummy_mask[30:120, 40:140] = 255
     frame = overlay.draw_player_silhouette(frame, dummy_mask)
     frame = overlay.draw_skeleton(frame, px_joints)
     frame = overlay.draw_hud(frame, "PS Camera 60 FPS", True, 60.0, 59.8, True, True)
-    assert frame.shape == (480, 640, 3)
+    assert frame.shape == (800, 1280, 3)
     assert np.any(frame > 0)
     print("  -> TrackingOverlay PASSED")
 

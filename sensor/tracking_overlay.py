@@ -32,20 +32,57 @@ class TrackingOverlay:
         """
         Renders the player silhouette shadow ("sombrinha") and neon contour border.
         frame: BGR image (mirrored if preview is mirrored).
-        mask: binary uint8 mask (mirrored if preview is mirrored).
+        mask: binary uint8 mask (may be 320x240 native Kinect resolution or full frame size).
+        Uses low-res contour extraction and ROI-bounded blending to eliminate full-frame copies.
         """
         if mask is None or not np.any(mask):
             return frame
 
         try:
+            fh, fw = frame.shape[:2]
+            mh, mw = mask.shape[:2]
+
             contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             if not contours:
                 return frame
 
-            # 1. Semi-transparent filled glowing shadow ("sombrinha")
-            shadow = frame.copy()
-            cv2.drawContours(shadow, contours, -1, color, thickness=cv2.FILLED)
-            cv2.addWeighted(shadow, alpha, frame, 1.0 - alpha, 0, frame)
+            # Scale contours to frame resolution if mask is at 320x240 native resolution
+            if mh != fh or mw != fw:
+                sx = fw / float(mw)
+                sy = fh / float(mh)
+                scaled_contours = []
+                for c in contours:
+                    sc = np.empty_like(c, dtype=np.int32)
+                    sc[:, 0, 0] = np.clip(np.rint(c[:, 0, 0] * sx), 0, fw - 1).astype(np.int32)
+                    sc[:, 0, 1] = np.clip(np.rint(c[:, 0, 1] * sy), 0, fh - 1).astype(np.int32)
+                    scaled_contours.append(sc)
+                contours = scaled_contours
+
+            # Compute tight bounding box across all player contours to blend only the active ROI
+            x0, y0, x1, y1 = fw, fh, 0, 0
+            for c in contours:
+                bx, by, bw, bh = cv2.boundingRect(c)
+                if bx < x0:
+                    x0 = bx
+                if by < y0:
+                    y0 = by
+                if bx + bw > x1:
+                    x1 = bx + bw
+                if by + bh > y1:
+                    y1 = by + bh
+
+            x0 = max(0, x0)
+            y0 = max(0, y0)
+            x1 = min(fw, x1)
+            y1 = min(fh, y1)
+
+            if x1 > x0 and y1 > y0:
+                roi = frame[y0:y1, x0:x1]
+                shadow_roi = roi.copy()
+                offset_contours = [c - np.array([[[x0, y0]]], dtype=np.int32) for c in contours]
+                # 1. Semi-transparent filled glowing shadow ("sombrinha") inside player ROI only
+                cv2.drawContours(shadow_roi, offset_contours, -1, color, thickness=cv2.FILLED)
+                cv2.addWeighted(shadow_roi, alpha, roi, 1.0 - alpha, 0, roi)
 
             # 2. Crisp neon outline contour around the player
             cv2.drawContours(frame, contours, -1, color, 2, cv2.LINE_AA)
@@ -108,12 +145,18 @@ class TrackingOverlay:
 
         h, w = frame.shape[:2]
 
-        # Top HUD Banner (semi-transparent)
-        overlay = frame.copy()
-        cv2.rectangle(overlay, (0, 0), (w, 52), COLOR_BG_DARK, -1)
-        # Bottom Controls Banner
-        cv2.rectangle(overlay, (0, h - 34), (w, h), COLOR_BG_DARK, -1)
-        cv2.addWeighted(overlay, 0.78, frame, 0.22, 0, frame)
+        # Top HUD Banner (semi-transparent ROI slice - avoids full-frame copy)
+        top_h = min(52, h)
+        top_roi = frame[:top_h, :]
+        top_bg = np.full_like(top_roi, COLOR_BG_DARK)
+        cv2.addWeighted(top_bg, 0.78, top_roi, 0.22, 0, top_roi)
+
+        # Bottom Controls Banner (semi-transparent ROI slice)
+        if h > 52:
+            bot_y0 = max(top_h, h - 34)
+            bot_roi = frame[bot_y0:h, :]
+            bot_bg = np.full_like(bot_roi, COLOR_BG_DARK)
+            cv2.addWeighted(bot_bg, 0.78, bot_roi, 0.22, 0, bot_roi)
 
         # 1. Top Left: Title & Mode
         cv2.putText(frame, "LEGACY PSCAM SENSOR", (14, 24),

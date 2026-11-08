@@ -50,6 +50,15 @@ class PoseTracker:
     High-level Pose Tracking Engine wrapping MediaPipe Pose Tasks API,
     hand anchor filtering, smoothing, and Kinect calibration.
     """
+    # Native Kinect player segmentation mask resolution (320x240)
+    MASK_INTERNAL_W = 320
+    MASK_INTERNAL_H = 240
+    # Fixed MediaPipe input resolution (4:3 aspect ratio; normalized landmarks are resolution-independent)
+    INFER_W = 640
+    INFER_H = 480
+    _MORPH_KERNEL_SMALL = np.ones((3, 3), np.uint8)
+    _MORPH_KERNEL_LARGE = np.ones((7, 7), np.uint8)
+
     def __init__(self, model_path=None, detection_confidence=0.5, smoothing_alpha=0.55, target_height_m=1.75, cfg=None):
         self.model_path = Path(model_path) if model_path else DEFAULT_MODEL_PATH
         if not self.model_path.exists():
@@ -69,6 +78,9 @@ class PoseTracker:
         self.start_time = time.time()
         self.frame_index = 0
         self.last_timestamp_ms = 0
+        self.last_infer_perf = None
+        self._infer_bgr_buf = None
+        self._infer_rgb_buf = None
 
     def _init_detector(self):
         base_options = python.BaseOptions(model_asset_path=str(self.model_path))
@@ -115,6 +127,7 @@ class PoseTracker:
         Resilient to partial body / desk framing by synthesizing torso down to bottom frame.
         """
         mask = np.zeros((height, width), dtype=np.uint8)
+        scale_factor = min(width, height) / 480.0
 
         def pt(idx):
             if idx < len(norm_landmarks):
@@ -130,7 +143,7 @@ class PoseTracker:
         lh, rh = pt(23), pt(24)
 
         if ls and rs:
-            sh_w = max(20.0, math.hypot(rs[0] - ls[0], rs[1] - ls[1]))
+            sh_w = max(10.0 * scale_factor, math.hypot(rs[0] - ls[0], rs[1] - ls[1]))
             torso_h = int(sh_w * 1.45)
             bottom_y = min(height - 1, int(max(ls[1], rs[1]) + torso_h))
 
@@ -144,36 +157,37 @@ class PoseTracker:
             cv2.fillConvexPoly(mask, torso_pts, 255)
 
             # If torso reaches near bottom, fill down to boundary for seamless HUD silhouette
-            if bottom_y >= height - 6:
-                bot_poly = np.array([lh, rh, (min(width - 1, rh[0] + 15), height - 1), (max(0, lh[0] - 15), height - 1)], dtype=np.int32)
+            pad_x = max(8, int(15 * scale_factor))
+            if bottom_y >= height - max(3, int(6 * scale_factor)):
+                bot_poly = np.array([lh, rh, (min(width - 1, rh[0] + pad_x), height - 1), (max(0, lh[0] - pad_x), height - 1)], dtype=np.int32)
                 cv2.fillConvexPoly(mask, bot_poly, 255)
 
         # 2. Head & Neck
         nose = pt(0)
         if ls and rs:
-            shoulder_dist = max(20.0, math.hypot(rs[0] - ls[0], rs[1] - ls[1]))
-            head_radius = max(14, int(shoulder_dist * 0.30))
+            shoulder_dist = max(10.0 * scale_factor, math.hypot(rs[0] - ls[0], rs[1] - ls[1]))
+            head_radius = max(7, int(shoulder_dist * 0.30))
             mid_shoulder = ((ls[0] + rs[0]) // 2, (ls[1] + rs[1]) // 2)
             head_center = nose if nose else (mid_shoulder[0], max(0, mid_shoulder[1] - head_radius))
             cv2.circle(mask, head_center, head_radius, 255, -1)
-            cv2.line(mask, mid_shoulder, head_center, 255, max(8, int(shoulder_dist * 0.20)), cv2.LINE_AA)
+            cv2.line(mask, mid_shoulder, head_center, 255, max(4, int(shoulder_dist * 0.20)), cv2.LINE_AA)
 
         # 3. Limbs (Capsules proportional to body size)
         if ls and rs:
-            sh_w = max(20.0, math.hypot(rs[0] - ls[0], rs[1] - ls[1]))
-            thick_arm = max(12, int(sh_w * 0.22))
-            thick_forearm = max(10, int(sh_w * 0.18))
-            thick_hand = max(8, int(sh_w * 0.15))
-            thick_thigh = max(16, int(sh_w * 0.28))
-            thick_calf = max(14, int(sh_w * 0.22))
-            thick_foot = max(12, int(sh_w * 0.18))
+            sh_w = max(10.0 * scale_factor, math.hypot(rs[0] - ls[0], rs[1] - ls[1]))
+            thick_arm = max(6, int(sh_w * 0.22))
+            thick_forearm = max(5, int(sh_w * 0.18))
+            thick_hand = max(4, int(sh_w * 0.15))
+            thick_thigh = max(8, int(sh_w * 0.28))
+            thick_calf = max(7, int(sh_w * 0.22))
+            thick_foot = max(6, int(sh_w * 0.18))
         else:
-            thick_arm = 18
-            thick_forearm = 14
-            thick_hand = 12
-            thick_thigh = 22
-            thick_calf = 18
-            thick_foot = 14
+            thick_arm = max(8, int(18 * scale_factor))
+            thick_forearm = max(6, int(14 * scale_factor))
+            thick_hand = max(5, int(12 * scale_factor))
+            thick_thigh = max(10, int(22 * scale_factor))
+            thick_calf = max(8, int(18 * scale_factor))
+            thick_foot = max(6, int(14 * scale_factor))
 
         limbs = [
             (11, 13, thick_arm), (13, 15, thick_forearm), (15, 19, thick_hand),
@@ -186,11 +200,11 @@ class PoseTracker:
             pa, pb = pt(idx_a), pt(idx_b)
             if pa and pb:
                 cv2.line(mask, pa, pb, 255, thick, cv2.LINE_AA)
-                cv2.circle(mask, pa, thick // 2, 255, -1)
-                cv2.circle(mask, pb, thick // 2, 255, -1)
+                cv2.circle(mask, pa, max(2, thick // 2), 255, -1)
+                cv2.circle(mask, pb, max(2, thick // 2), 255, -1)
 
         # 4. Smooth and fuse into a continuous player contour
-        kernel = np.ones((7, 7), np.uint8)
+        kernel = self._MORPH_KERNEL_SMALL if width <= 360 else self._MORPH_KERNEL_LARGE
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
         mask = cv2.dilate(mask, kernel, iterations=1)
         return mask
@@ -203,14 +217,35 @@ class PoseTracker:
             tracked (bool): True if pose detected.
             kinect_joints (list): 20 joints in Kinect 3D space (x, y, z, conf).
             pixel_joints (list): 20 joints in pixel coordinates (px, py, conf) for HUD drawing.
-            body_mask (np.ndarray): Binary silhouette mask (height, width) with 255 for player.
+            body_mask (np.ndarray): Binary silhouette mask (320x240 native Kinect resolution) with 255 for player.
         """
         h, w = frame_bgr.shape[:2]
-        frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+
+        # Fast pre-downscale for high-res frames (e.g. 1280x800 PS4 Camera) before RGB conversion:
+        # MediaPipe internally resizes to 256x256, and VIDEO mode requires consistent dimensions
+        # across calls. Normalizing >640px inputs to 640x480 avoids copying ~3MB/frame and prevents
+        # MediaPipe CalculatorGraph dimension-change assertions.
+        if w > self.INFER_W or h > self.INFER_H:
+            if self._infer_bgr_buf is None or self._infer_bgr_buf.shape[:2] != (self.INFER_H, self.INFER_W):
+                self._infer_bgr_buf = np.empty((self.INFER_H, self.INFER_W, 3), dtype=np.uint8)
+                self._infer_rgb_buf = np.empty((self.INFER_H, self.INFER_W, 3), dtype=np.uint8)
+            cv2.resize(frame_bgr, (self.INFER_W, self.INFER_H), dst=self._infer_bgr_buf, interpolation=cv2.INTER_LINEAR)
+            cv2.cvtColor(self._infer_bgr_buf, cv2.COLOR_BGR2RGB, dst=self._infer_rgb_buf)
+            frame_rgb = self._infer_rgb_buf
+        else:
+            if self._infer_rgb_buf is None or self._infer_rgb_buf.shape[:2] != (h, w):
+                self._infer_rgb_buf = np.empty((h, w, 3), dtype=np.uint8)
+            cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB, dst=self._infer_rgb_buf)
+            frame_rgb = self._infer_rgb_buf
+
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_rgb)
 
         # Milliseconds strictly monotonic timestamp for VIDEO running mode
         self.frame_index += 1
+        now_perf = time.perf_counter()
+        dt_infer = (now_perf - self.last_infer_perf) if self.last_infer_perf is not None else None
+        self.last_infer_perf = now_perf
+
         now_ms = int((time.time() - self.start_time) * 1000)
         timestamp_ms = max(now_ms, self.frame_index)
         if timestamp_ms <= self.last_timestamp_ms:
@@ -337,8 +372,8 @@ class PoseTracker:
         # 4. Transform to Kinect v1 camera coordinate space (with hip height +1.0m)
         kinect_space = self.calibrator.transform(anchored)
 
-        # 4.1 Smooth anatomical gestures first (zero lag on body moves)
-        smoothed_kinect = self.smoother.apply(kinect_space)
+        # 4.1 Smooth anatomical gestures first (zero lag on body moves, dt-normalized across 30/60 FPS)
+        smoothed_kinect = self.smoother.apply(kinect_space, dt=dt_infer)
 
         # 4.2 Apply lateral camera-space translation for dancer slot selection
         translated = apply_camera_space_translation(smoothed_kinect, norm_lm, self.camera_x_tracker, self.cfg)
@@ -408,18 +443,20 @@ class PoseTracker:
         # Apply 2D forearm anchor filter to keep hand landmarks locked during fast moves
         pixel_joints = self.hand_filter.apply_pixel(pixel_joints)
 
-        # 7. Generate player silhouette mask (Neural mask fused with Anatomical mask)
+        # 7. Generate player silhouette mask at native Kinect 320x240 resolution
+        # (13x fewer pixels than 1280x800, eliminating full-res morphology & resize overhead)
+        mw, mh = self.MASK_INTERNAL_W, self.MASK_INTERNAL_H
         neural_mask = None
         if hasattr(result, 'segmentation_masks') and result.segmentation_masks:
             try:
                 seg_view = result.segmentation_masks[0].numpy_view()
                 neural_mask = (seg_view > 0.22).astype(np.uint8) * 255
-                if neural_mask.shape[0] != h or neural_mask.shape[1] != w:
-                    neural_mask = cv2.resize(neural_mask, (w, h), interpolation=cv2.INTER_LINEAR)
+                if neural_mask.shape[0] != mh or neural_mask.shape[1] != mw:
+                    neural_mask = cv2.resize(neural_mask, (mw, mh), interpolation=cv2.INTER_LINEAR)
             except Exception:
                 neural_mask = None
 
-        anatomical_mask = self.build_body_mask(norm_lm, w, h)
+        anatomical_mask = self.build_body_mask(norm_lm, mw, mh)
         if neural_mask is not None:
             body_mask = cv2.bitwise_or(neural_mask, anatomical_mask)
         else:

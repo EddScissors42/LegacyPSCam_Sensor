@@ -4,6 +4,7 @@ Provides Hand Anchor Extrapolation, Adaptive Dynamic EMA Smoothing,
 Multi-Tier Skeleton Height Calibration, Lateral Slot Selection, and FaceFollow PTZ.
 """
 import math
+import time
 import numpy as np
 import cv2
 
@@ -164,37 +165,60 @@ class HandAnchorFilter:
 
 class AdaptiveSmoother:
     """
-    Dynamic Exponential Moving Average (EMA) filter.
+    Dynamic Exponential Moving Average (EMA) filter with delta-time (dt) normalization.
     Higher smoothing (lower alpha) on stationary poses to eliminate jitter;
     Lower smoothing (higher alpha) on fast dance gestures for zero latency.
+    Normalized to a 30 Hz reference tick (dt_ref = 1/30s) so 60 FPS cameras
+    and 30 FPS webcams exhibit identical physical velocity response (m/s).
     """
+    REF_DT = 1.0 / 30.0
+
     def __init__(self, base_alpha=0.55, alpha_fast=0.92, speed_threshold=0.15):
         self.base_alpha = float(base_alpha)
         self.alpha_fast = float(alpha_fast)
         self.speed_threshold = float(speed_threshold)
         self.prev_joints = None
+        self.last_time = None
 
     def reset(self):
         self.prev_joints = None
+        self.last_time = None
 
     def update_base_alpha(self, alpha):
         self.base_alpha = float(alpha)
 
-    def apply(self, joints):
+    def apply(self, joints, dt=None):
+        now = time.perf_counter()
         if self.prev_joints is None or len(self.prev_joints) != len(joints):
             self.prev_joints = [tuple(j) for j in joints]
+            self.last_time = now
             return self.prev_joints
+
+        if dt is None:
+            if self.last_time is not None:
+                raw_dt = now - self.last_time
+                # If called in a tight synthetic burst (< 2ms), treat as reference tick
+                dt_sec = self.REF_DT if raw_dt < 0.002 else min(0.10, max(0.004, raw_dt))
+            else:
+                dt_sec = self.REF_DT
+        else:
+            dt_sec = min(0.10, max(0.004, float(dt)))
+        self.last_time = now
+
+        # Velocity scaling factor relative to 30 FPS reference (at 60 FPS, dt_scale ~ 2.0)
+        dt_scale = self.REF_DT / dt_sec
 
         smoothed = []
         for i, (curr, prev) in enumerate(zip(joints, self.prev_joints)):
-            # Calculate 3D velocity
+            # Calculate 3D displacement normalized to reference frame rate (physical velocity)
             dx = curr[0] - prev[0]
             dy = curr[1] - prev[1]
             dz = curr[2] - prev[2]
-            speed = math.sqrt(dx * dx + dy * dy + dz * dz)
+            disp = math.sqrt(dx * dx + dy * dy + dz * dz)
+            norm_speed = disp * dt_scale
 
-            # Ratio of speed over threshold
-            ratio = min(1.0, max(0.0, speed / self.speed_threshold))
+            # Ratio of physical speed over threshold
+            ratio = min(1.0, max(0.0, norm_speed / self.speed_threshold))
             alpha = self.base_alpha + ratio * (self.alpha_fast - self.base_alpha)
 
             # Boost extremities for snappy hand & foot movements
@@ -521,5 +545,19 @@ class FaceFollowPTZ:
         out_frame = cv2.resize(frame[y0:y1, x0:x1], (w, h), interpolation=cv2.INTER_LINEAR)
         out_mask = None
         if mask is not None:
-            out_mask = cv2.resize(mask[y0:y1, x0:x1], (mask.shape[1], mask.shape[0]), interpolation=cv2.INTER_NEAREST)
+            mh, mw = mask.shape[:2]
+            if mh == h and mw == w:
+                mx0, my0, mx1, my1 = x0, y0, x1, y1
+            else:
+                sx = mw / float(w)
+                sy = mh / float(h)
+                mcrop_w = max(40, int(round(crop_w * sx)))
+                mcrop_h = max(30, int(round(crop_h * sy)))
+                mcenter_x = int(self.cx * mw)
+                mcenter_y = int(self.cy * mh)
+                mx0 = int(np.clip(mcenter_x - mcrop_w // 2, 0, mw - mcrop_w))
+                my0 = int(np.clip(mcenter_y - mcrop_h // 2, 0, mh - mcrop_h))
+                mx1 = mx0 + mcrop_w
+                my1 = my0 + mcrop_h
+            out_mask = cv2.resize(mask[my0:my1, mx0:mx1], (mw, mh), interpolation=cv2.INTER_NEAREST)
         return out_frame, out_mask
