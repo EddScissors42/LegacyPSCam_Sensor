@@ -177,6 +177,16 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
 - **Ícone de Seta para Baixo (Dropdown Arrow):**
   - Adicionado o ícone vetorial anti-aliased `arrow_down.png` e regra `QComboBox::down-arrow` no stylesheet Qt, restaurando a seta indicadora em todos os menus suspensos de seleção.
 
+### 16. Alinhamento de Controles, Aviso em Experimental e Auto-Reset de Aba (v0.2.5 Alpha)
+- **Alinhamento e Pente Fino em "CAMERA DEVICE":**
+  - Estrutura anatômica vertical unificada entre `block_dev`, `block_res` e `block_fps` (altura fixa de 90px, margens internas 14x10px e espaçamento vertical de 4px).
+  - Título ("CAMERA DEVICE") e subtítulo ("Active Video Source") agora possuem as mesmas linhas de base dos blocos de Resolução e Framerate.
+  - O botão de atualizar (`↻`, 34x32px) foi reposicionado como botão companheiro diretamente ao lado direito do menu suspenso de seleção de câmera (`self.cb_cameras`), mantendo alturas alinhadas ao pixel.
+- **Card de Advertência Visual em "Experimental":**
+  - Inserido callout em tons âmbar suaves (`#FEF3C7` / `#FCD34D` / texto em `#92400E`) com ícone `⚠️` informando com clareza o caráter experimental das opções avançadas ("CUIDADO: As funções aqui estão em testes constantes, geralmente podem não funcionar como deveriam ou simplesmente só não funciona, isso pode afetar sua experiencia de jogo.").
+- **Navegação Inteligente na Troca de Dispositivo:**
+  - O método `_set_mode()` agora aciona `self._switch_tab("video")` automaticamente. Se o usuário estiver na aba de Calibração ou Experimental e alternar entre PlayStation Camera e Webcam Padrão na barra lateral, a janela retorna suavemente para a aba "Video Settings", exibindo de imediato as configurações do novo dispositivo.
+
 ---
 
 ## 🟡 Funcionalidades Parciais e ⏳ Roadmap Futuro

@@ -1000,7 +1000,7 @@ class LegacySensorQtGUI(QMainWindow):
         # 1. Row 1: Camera Device (Full width block)
         block_dev = QFrame(self.webcam_card)
         block_dev.setObjectName("settingBlockDev")
-        block_dev.setFixedHeight(88)
+        block_dev.setFixedHeight(90)
         block_dev.setStyleSheet(f"""
             QFrame#settingBlockDev {{
                 background-color: #FFFFFF;
@@ -1015,15 +1015,29 @@ class LegacySensorQtGUI(QMainWindow):
         dev_layout.setContentsMargins(14, 10, 14, 10)
         dev_layout.setSpacing(4)
 
-        dev_top_row = QHBoxLayout()
-        dev_top_row.setContentsMargins(0, 0, 0, 0)
-        dev_top_row.setSpacing(6)
         lbl_dev_title = QLabel("CAMERA DEVICE", block_dev)
         lbl_dev_title.setStyleSheet(
             f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent; border: none;"
         )
+        dev_layout.addWidget(lbl_dev_title)
+
+        lbl_dev_sub = QLabel("Active Video Source", block_dev)
+        lbl_dev_sub.setStyleSheet(
+            f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
+        )
+        dev_layout.addWidget(lbl_dev_sub)
+
+        dev_ctrl_row = QHBoxLayout()
+        dev_ctrl_row.setContentsMargins(0, 0, 0, 0)
+        dev_ctrl_row.setSpacing(6)
+
+        self.cb_cameras = QComboBox(block_dev)
+        self.cb_cameras.setFixedHeight(32)
+        self.cb_cameras.currentIndexChanged.connect(self._on_camera_selected)
+        dev_ctrl_row.addWidget(self.cb_cameras, stretch=1)
+
         self.btn_refresh = QPushButton("↻", block_dev)
-        self.btn_refresh.setFixedSize(30, 24)
+        self.btn_refresh.setFixedSize(34, 32)
         self.btn_refresh.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_refresh.setToolTip("Scan / Refresh connected webcams")
         self.btn_refresh.setStyleSheet(f"""
@@ -1051,20 +1065,9 @@ class LegacySensorQtGUI(QMainWindow):
             }}
         """)
         self.btn_refresh.clicked.connect(self._refresh_cameras)
-        dev_top_row.addWidget(lbl_dev_title)
-        dev_top_row.addStretch()
-        dev_top_row.addWidget(self.btn_refresh)
-        dev_layout.addLayout(dev_top_row)
+        dev_ctrl_row.addWidget(self.btn_refresh)
+        dev_layout.addLayout(dev_ctrl_row)
 
-        lbl_dev_sub = QLabel("Active Video Source", block_dev)
-        lbl_dev_sub.setStyleSheet(
-            f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
-        )
-        dev_layout.addWidget(lbl_dev_sub)
-
-        self.cb_cameras = QComboBox(block_dev)
-        self.cb_cameras.currentIndexChanged.connect(self._on_camera_selected)
-        dev_layout.addWidget(self.cb_cameras)
         web_conn_layout.addWidget(block_dev)
 
         # 2. Row 2: Resolution & FPS side-by-side blocks below Camera Device
@@ -1074,7 +1077,7 @@ class LegacySensorQtGUI(QMainWindow):
         # Block 2: Resolution
         block_res = QFrame(self.webcam_card)
         block_res.setObjectName("settingBlockRes")
-        block_res.setFixedHeight(88)
+        block_res.setFixedHeight(90)
         block_res.setStyleSheet(f"""
             QFrame#settingBlockRes {{
                 background-color: #FFFFFF;
@@ -1102,6 +1105,7 @@ class LegacySensorQtGUI(QMainWindow):
         res_layout.addWidget(lbl_res_sub)
 
         self.cb_res = QComboBox(block_res)
+        self.cb_res.setFixedHeight(32)
         self.cb_res.addItems(["640x480", "1280x720", "1920x1080"])
         self.cb_res.currentIndexChanged.connect(self._on_webcam_res_or_fps_changed)
         res_layout.addWidget(self.cb_res)
@@ -1110,7 +1114,7 @@ class LegacySensorQtGUI(QMainWindow):
         # Block 3: FPS
         block_fps = QFrame(self.webcam_card)
         block_fps.setObjectName("settingBlockFps")
-        block_fps.setFixedHeight(88)
+        block_fps.setFixedHeight(90)
         block_fps.setStyleSheet(f"""
             QFrame#settingBlockFps {{
                 background-color: #FFFFFF;
@@ -1138,6 +1142,7 @@ class LegacySensorQtGUI(QMainWindow):
         fps_layout.addWidget(lbl_fps_sub)
 
         self.cb_fps = QComboBox(block_fps)
+        self.cb_fps.setFixedHeight(32)
         self.cb_fps.addItems(["30 FPS", "60 FPS"])
         self.cb_fps.currentIndexChanged.connect(self._on_webcam_res_or_fps_changed)
         fps_layout.addWidget(self.cb_fps)
@@ -1332,6 +1337,35 @@ class LegacySensorQtGUI(QMainWindow):
         )
         exp_layout.addWidget(lbl_title)
 
+        # Warning Callout Box
+        warn_box = QFrame(exp_card)
+        warn_box.setStyleSheet("""
+            QFrame {
+                background-color: #FEF3C7;
+                border: 1px solid #FCD34D;
+                border-radius: 8px;
+            }
+        """)
+        warn_layout = QHBoxLayout(warn_box)
+        warn_layout.setContentsMargins(12, 10, 12, 10)
+        warn_layout.setSpacing(10)
+
+        lbl_warn_icon = QLabel("⚠️", warn_box)
+        lbl_warn_icon.setStyleSheet("font-size: 16px; background: transparent; border: none;")
+        warn_layout.addWidget(lbl_warn_icon, alignment=Qt.AlignmentFlag.AlignTop)
+
+        lbl_warn_text = QLabel(
+            "CUIDADO: As funções aqui estão em testes constantes, geralmente podem não funcionar "
+            "como deveriam ou simplesmente só não funciona, isso pode afetar sua experiencia de jogo.",
+            warn_box
+        )
+        lbl_warn_text.setWordWrap(True)
+        lbl_warn_text.setStyleSheet(
+            f"font-family: '{self.font_body}'; font-size: 11px; font-weight: 500; color: #92400E; background: transparent; border: none;"
+        )
+        warn_layout.addWidget(lbl_warn_text, stretch=1)
+        exp_layout.addWidget(warn_box)
+
         # Auto-Frame Feature Box
         auto_frame_box = QFrame(exp_card)
         auto_frame_box.setStyleSheet(f"""
@@ -1496,6 +1530,7 @@ class LegacySensorQtGUI(QMainWindow):
         self._update_camera_dropdown_for_mode()
         self._update_pscam_status()
         self._update_video_view_visibility()
+        self._switch_tab("video")
         self._save_settings()
 
     def _update_sidebar_buttons(self):
