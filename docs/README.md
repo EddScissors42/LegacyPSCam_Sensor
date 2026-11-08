@@ -36,6 +36,7 @@ All non-essential overhead has been removed while perfecting the core components
 | Auto-Framing / FaceFollow PTZ | Dynamic software pan/tilt/zoom (1.22x) keeping player face focused and centered in Just Dance. | Implemented |
 | Device Settings & Navigation Polish | Aligned controls anatomy, experimental safety notice, and auto-return to Video Settings on device toggle. | Implemented |
 | Camera Orientation Control | Real-time 0°, 90°, 180°, and 270° rotation block supporting inverted or sideways camera mounts. | Implemented |
+| Responsive Scroll & Anti-Collision | Transparent QScrollArea with minimum card heights preventing widget overlap on compact window sizes. | Implemented |
 | High-Resolution Windows Timer (1ms) | Python timer synchronization ensuring `Sleep(33)` in `Kinect10.dll` delivers solid 30 FPS. | Implemented |
 
 ---
@@ -55,7 +56,7 @@ All non-essential overhead has been removed while perfecting the core components
 ```
 LegacyPSCam_Sensor/
 ├── main.py                     # CLI launcher and entry point
-├── version.py                  # Official versioning & build metadata (v0.2.4 Alpha)
+├── version.py                  # Official versioning & build metadata (v0.2.8 Alpha)
 ├── test_suite.py               # 9 complete automated test suites
 ├── config.json                 # Saved user preferences
 ├── sensor/                     # Tracking Engine and AI package

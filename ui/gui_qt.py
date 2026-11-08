@@ -38,7 +38,7 @@ from PySide6.QtCore import (
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QComboBox, QCheckBox, QStackedWidget,
-    QFrame, QSlider, QMessageBox
+    QFrame, QSlider, QMessageBox, QScrollArea
 )
 from PySide6.QtGui import (
     QPixmap, QIcon, QImage
@@ -389,7 +389,7 @@ class LegacySensorQtGUI(QMainWindow):
         super().__init__(parent)
         self.setWindowTitle(WINDOW_TITLE)
         self.resize(960, 640)
-        self.setMinimumSize(920, 580)
+        self.setMinimumSize(920, 500)
         if ICON_PSCAMERA_PATH.exists():
             self.setWindowIcon(QIcon(str(ICON_PSCAMERA_PATH)))
 
@@ -649,6 +649,31 @@ class LegacySensorQtGUI(QMainWindow):
                 margin-bottom: -5px;
                 border-radius: 8px;
             }}
+            QScrollArea {{
+                background: transparent;
+                border: none;
+            }}
+            QScrollBar:vertical {{
+                border: none;
+                background: transparent;
+                width: 8px;
+                margin: 0px;
+            }}
+            QScrollBar::handle:vertical {{
+                background: #CBD5E1;
+                min-height: 28px;
+                border-radius: 4px;
+            }}
+            QScrollBar::handle:vertical:hover {{
+                background: #94A3B8;
+            }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                height: 0px;
+                background: none;
+            }}
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+                background: none;
+            }}
         """)
 
     def _build_ui(self):
@@ -842,11 +867,23 @@ class LegacySensorQtGUI(QMainWindow):
 
         master_layout.addWidget(self.content_widget, stretch=1)
 
+    def _create_scroll_page(self, page_widget: QWidget) -> QScrollArea:
+        """Wraps a page widget into a clean, smooth, borderless scroll area."""
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        scroll.viewport().setStyleSheet("background: transparent; border: none;")
+        scroll.setWidget(page_widget)
+        return scroll
+
     def _build_video_view(self):
         """Constructs Page 0: Video Settings."""
         self.page_video = QWidget()
         layout = QVBoxLayout(self.page_video)
-        layout.setContentsMargins(0, 4, 0, 0)
+        layout.setContentsMargins(0, 4, 6, 0)
         layout.setSpacing(12)
 
         # =====================================================================
@@ -981,6 +1018,7 @@ class LegacySensorQtGUI(QMainWindow):
         # 2.2 Connected Card
         self.webcam_card = QFrame(self.page_video)
         self.webcam_card.setProperty("class", "card")
+        self.webcam_card.setMinimumHeight(280)
         web_conn_layout = QVBoxLayout(self.webcam_card)
         web_conn_layout.setContentsMargins(16, 14, 16, 14)
         web_conn_layout.setSpacing(10)
@@ -1164,6 +1202,7 @@ class LegacySensorQtGUI(QMainWindow):
         # =====================================================================
         self.display_card = QFrame(self.page_video)
         self.display_card.setProperty("class", "card")
+        self.display_card.setMinimumHeight(195)
         disp_layout = QVBoxLayout(self.display_card)
         disp_layout.setContentsMargins(16, 14, 16, 14)
         disp_layout.setSpacing(10)
@@ -1230,13 +1269,14 @@ class LegacySensorQtGUI(QMainWindow):
         layout.addWidget(self.display_card)
         layout.addStretch()
 
-        self.stacked_view.addWidget(self.page_video)
+        self.scroll_video = self._create_scroll_page(self.page_video)
+        self.stacked_view.addWidget(self.scroll_video)
 
     def _build_calib_view(self):
         """Constructs Page 1: Calibration & Motion Profile."""
         self.page_calib = QWidget()
         layout = QVBoxLayout(self.page_calib)
-        layout.setContentsMargins(0, 4, 0, 0)
+        layout.setContentsMargins(0, 4, 6, 0)
         layout.setSpacing(10)
 
         main_card = QFrame(self.page_calib)
@@ -1365,14 +1405,15 @@ class LegacySensorQtGUI(QMainWindow):
         layout.addWidget(main_card)
         layout.addStretch()
 
-        self.stacked_view.addWidget(self.page_calib)
+        self.scroll_calib = self._create_scroll_page(self.page_calib)
+        self.stacked_view.addWidget(self.scroll_calib)
         self._update_calib_cards_ui()
 
     def _build_exp_view(self):
         """Constructs Page 2: Experimental Features."""
         self.page_exp = QWidget()
         layout = QVBoxLayout(self.page_exp)
-        layout.setContentsMargins(0, 4, 0, 0)
+        layout.setContentsMargins(0, 4, 6, 0)
         layout.setSpacing(12)
 
         exp_card = QFrame(self.page_exp)
@@ -1449,7 +1490,8 @@ class LegacySensorQtGUI(QMainWindow):
         layout.addWidget(exp_card)
         layout.addStretch()
 
-        self.stacked_view.addWidget(self.page_exp)
+        self.scroll_exp = self._create_scroll_page(self.page_exp)
+        self.stacked_view.addWidget(self.scroll_exp)
 
     # =========================================================================
     # UI STATE MANAGEMENT & VISIBILITY

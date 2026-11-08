@@ -211,6 +211,17 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
   - Persistência automática em `config.json` via chave `camera_orientation`.
   - Altura padrão da janela atualizada para 640px para conforto ergonômico e respiro entre os espaços.
 
+### 19. Scroll Area Responsivo e Proteção Anti-Colisão em Janelas Compactas (v0.2.8 Alpha)
+- **Eliminação de Sobreposição entre Blocos:**
+  - Corrigido o comportamento de colisão de widgets em janelas com altura reduzida (abaixo de 550px), onde a linha de Resolução e FPS sobrepunha o card de Dispositivo de Câmera.
+  - Implementada restrição de altura mínima nos espaços (`webcam_card.setMinimumHeight(280)` e `display_card.setMinimumHeight(195)`), impedindo que o layout engine do Qt comprima os blocos internos uns sobre os outros.
+- **Scroll Area Transparente e Minimalista (`QScrollArea`):**
+  - Implementado wrapper de visualização com rolagem através de `_create_scroll_page()`, integrado a todas as abas principais (`Video Settings`, `Calibration` e `Experimental`).
+  - Scroll vertical ativado automaticamente sob demanda (`ScrollBarAsNeeded`) e rolagem horizontal desativada (`ScrollBarAlwaysOff`).
+  - Estilização moderna de barra de rolagem (8px de largura, trilha transparente, pill handle arredondado `#CBD5E1` com hover `#94A3B8`).
+  - Margem lateral de respiro (gutter de 6px) para garantir que os contornos e sombras dos espaços não fiquem colados na borda da barra de rolagem.
+  - Redução da altura mínima da janela para `500px` (`setMinimumSize(920, 500)`), conferindo total responsividade a monitores pequenos ou janelas redimensionadas.
+
 ---
 
 ## 🟡 Funcionalidades Parciais e ⏳ Roadmap Futuro
