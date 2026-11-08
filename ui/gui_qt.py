@@ -982,57 +982,136 @@ class LegacySensorQtGUI(QMainWindow):
         )
         web_conn_layout.addWidget(lbl_wc_title)
 
-        dev_row = QHBoxLayout()
-        lbl_dev = QLabel("Device:", self.webcam_card)
-        lbl_dev.setStyleSheet(
-            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['text_main']}; background: transparent; border: none;"
+        lbl_wc_sub = QLabel("Select your camera device, resolution and target framerate.", self.webcam_card)
+        lbl_wc_sub.setStyleSheet(
+            f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
         )
-        lbl_dev.setFixedWidth(115)
-        self.cb_cameras = QComboBox(self.webcam_card)
-        self.cb_cameras.currentIndexChanged.connect(self._on_camera_selected)
-        btn_refresh = QPushButton("↻", self.webcam_card)
-        btn_refresh.setFixedSize(36, 32)
+        web_conn_layout.addWidget(lbl_wc_sub)
+
+        # 3 Setting Blocks (using the same card contour design as the Calibration Profile Cards)
+        blocks_row = QHBoxLayout()
+        blocks_row.setSpacing(10)
+
+        # Block 1: Camera Device
+        block_dev = QFrame(self.webcam_card)
+        block_dev.setObjectName("settingBlockDev")
+        block_dev.setFixedHeight(108)
+        block_dev.setStyleSheet(f"""
+            QFrame#settingBlockDev {{
+                background-color: #FFFFFF;
+                border: 1px solid {PALETTE["border_subtle"]};
+                border-radius: 10px;
+            }}
+            QFrame#settingBlockDev:hover {{
+                border-color: {PALETTE["input_border"]};
+            }}
+        """)
+        dev_layout = QVBoxLayout(block_dev)
+        dev_layout.setContentsMargins(12, 10, 12, 10)
+        dev_layout.setSpacing(4)
+
+        dev_top_row = QHBoxLayout()
+        dev_top_row.setContentsMargins(0, 0, 0, 0)
+        dev_top_row.setSpacing(6)
+        lbl_dev_title = QLabel("CAMERA DEVICE", block_dev)
+        lbl_dev_title.setStyleSheet(
+            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent; border: none;"
+        )
+        btn_refresh = QPushButton("↻", block_dev)
+        btn_refresh.setFixedSize(26, 22)
         btn_refresh.setProperty("class", "btn_secondary")
         btn_refresh.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_refresh.setToolTip("Scan / Refresh connected webcams")
         btn_refresh.clicked.connect(self._refresh_cameras)
-        dev_row.addWidget(lbl_dev)
-        dev_row.addWidget(self.cb_cameras, stretch=1)
-        dev_row.addWidget(btn_refresh)
-        web_conn_layout.addLayout(dev_row)
+        dev_top_row.addWidget(lbl_dev_title)
+        dev_top_row.addStretch()
+        dev_top_row.addWidget(btn_refresh)
+        dev_layout.addLayout(dev_top_row)
 
-        # Resolution & FPS side-by-side blocks
-        res_fps_layout = QHBoxLayout()
-        res_fps_layout.setSpacing(14)
-
-        # Block 1: Resolution
-        res_col = QVBoxLayout()
-        res_col.setSpacing(4)
-        lbl_res = QLabel("Resolution:", self.webcam_card)
-        lbl_res.setStyleSheet(
-            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['text_main']}; background: transparent; border: none;"
+        lbl_dev_sub = QLabel("Active Video Source", block_dev)
+        lbl_dev_sub.setStyleSheet(
+            f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
         )
-        self.cb_res = QComboBox(self.webcam_card)
+        dev_layout.addWidget(lbl_dev_sub)
+
+        self.cb_cameras = QComboBox(block_dev)
+        self.cb_cameras.currentIndexChanged.connect(self._on_camera_selected)
+        dev_layout.addWidget(self.cb_cameras)
+        blocks_row.addWidget(block_dev, stretch=5)
+
+        # Block 2: Resolution
+        block_res = QFrame(self.webcam_card)
+        block_res.setObjectName("settingBlockRes")
+        block_res.setFixedHeight(108)
+        block_res.setStyleSheet(f"""
+            QFrame#settingBlockRes {{
+                background-color: #FFFFFF;
+                border: 1px solid {PALETTE["border_subtle"]};
+                border-radius: 10px;
+            }}
+            QFrame#settingBlockRes:hover {{
+                border-color: {PALETTE["input_border"]};
+            }}
+        """)
+        res_layout = QVBoxLayout(block_res)
+        res_layout.setContentsMargins(12, 10, 12, 10)
+        res_layout.setSpacing(4)
+
+        lbl_res_title = QLabel("RESOLUTION", block_res)
+        lbl_res_title.setStyleSheet(
+            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent; border: none;"
+        )
+        res_layout.addWidget(lbl_res_title)
+
+        lbl_res_sub = QLabel("Output Frame Size", block_res)
+        lbl_res_sub.setStyleSheet(
+            f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
+        )
+        res_layout.addWidget(lbl_res_sub)
+
+        self.cb_res = QComboBox(block_res)
         self.cb_res.addItems(["640x480", "1280x720", "1920x1080"])
         self.cb_res.currentIndexChanged.connect(self._on_webcam_res_or_fps_changed)
-        res_col.addWidget(lbl_res)
-        res_col.addWidget(self.cb_res)
-        res_fps_layout.addLayout(res_col, stretch=1)
+        res_layout.addWidget(self.cb_res)
+        blocks_row.addWidget(block_res, stretch=3)
 
-        # Block 2: FPS
-        fps_col = QVBoxLayout()
-        fps_col.setSpacing(4)
-        lbl_fps = QLabel("Framerate (FPS):", self.webcam_card)
-        lbl_fps.setStyleSheet(
-            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['text_main']}; background: transparent; border: none;"
+        # Block 3: FPS
+        block_fps = QFrame(self.webcam_card)
+        block_fps.setObjectName("settingBlockFps")
+        block_fps.setFixedHeight(108)
+        block_fps.setStyleSheet(f"""
+            QFrame#settingBlockFps {{
+                background-color: #FFFFFF;
+                border: 1px solid {PALETTE["border_subtle"]};
+                border-radius: 10px;
+            }}
+            QFrame#settingBlockFps:hover {{
+                border-color: {PALETTE["input_border"]};
+            }}
+        """)
+        fps_layout = QVBoxLayout(block_fps)
+        fps_layout.setContentsMargins(12, 10, 12, 10)
+        fps_layout.setSpacing(4)
+
+        lbl_fps_title = QLabel("FRAMERATE (FPS)", block_fps)
+        lbl_fps_title.setStyleSheet(
+            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent; border: none;"
         )
-        self.cb_fps = QComboBox(self.webcam_card)
+        fps_layout.addWidget(lbl_fps_title)
+
+        lbl_fps_sub = QLabel("Capture Speed", block_fps)
+        lbl_fps_sub.setStyleSheet(
+            f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
+        )
+        fps_layout.addWidget(lbl_fps_sub)
+
+        self.cb_fps = QComboBox(block_fps)
         self.cb_fps.addItems(["30 FPS", "60 FPS"])
         self.cb_fps.currentIndexChanged.connect(self._on_webcam_res_or_fps_changed)
-        fps_col.addWidget(lbl_fps)
-        fps_col.addWidget(self.cb_fps)
-        res_fps_layout.addLayout(fps_col, stretch=1)
+        fps_layout.addWidget(self.cb_fps)
+        blocks_row.addWidget(block_fps, stretch=3)
 
-        web_conn_layout.addLayout(res_fps_layout)
+        web_conn_layout.addLayout(blocks_row)
 
         # Backward compatibility handle for cb_preset
         self.cb_preset = QComboBox(self.webcam_card)
