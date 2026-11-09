@@ -1566,20 +1566,20 @@ class LegacySensorQtGUI(QMainWindow):
         vp_det_layout.setContentsMargins(14, 12, 14, 12)
         vp_det_layout.setSpacing(10)
 
-        # Status & Live Accel readout row
-        info_row = QHBoxLayout()
+        # Status readout
         self.lbl_vphone_status = QLabel("Status: Disabled", self.vphone_details_frame)
         self.lbl_vphone_status.setStyleSheet(
             f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['text_muted']}; background: transparent; border: none;"
         )
+        vp_det_layout.addWidget(self.lbl_vphone_status)
+
+        # Live Accel readout (only visible while tracking is active)
         self.lbl_vphone_accel = QLabel("3D Accelerometer: X: +0.00G | Y: -1.00G | Z: +0.00G (0.0 m/s)", self.vphone_details_frame)
         self.lbl_vphone_accel.setStyleSheet(
             f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['ps_blue']}; background: transparent; border: none;"
         )
-        info_row.addWidget(self.lbl_vphone_status)
-        info_row.addStretch()
-        info_row.addWidget(self.lbl_vphone_accel)
-        vp_det_layout.addLayout(info_row)
+        self.lbl_vphone_accel.setVisible(getattr(self, "is_tracking_active", False))
+        vp_det_layout.addWidget(self.lbl_vphone_accel)
 
         # Hidden Host/Port fields (preserved for logic and persistence without UI clutter)
         self.txt_vphone_host = QLineEdit(str(self.cfg.get("virtual_phone_host", "127.0.0.1")), self)
@@ -2311,11 +2311,15 @@ class LegacySensorQtGUI(QMainWindow):
         self.lbl_vphone_status.setStyleSheet(
             f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {color}; background: transparent; border: none;"
         )
-        ax, ay, az = self.vphone.latest_accel
-        spd = getattr(self.vphone.accelerometer, "latest_speed", 0.0)
-        self.lbl_vphone_accel.setText(
-            f"3D Accelerometer: X: {ax:+.2f}G | Y: {ay:+.2f}G | Z: {az:+.2f}G ({spd:.1f} m/s)"
-        )
+        should_show_accel = getattr(self, "is_tracking_active", False)
+        if self.lbl_vphone_accel.isVisible() != should_show_accel:
+            self.lbl_vphone_accel.setVisible(should_show_accel)
+        if should_show_accel:
+            ax, ay, az = self.vphone.latest_accel
+            spd = getattr(self.vphone.accelerometer, "latest_speed", 0.0)
+            self.lbl_vphone_accel.setText(
+                f"3D Accelerometer: X: {ax:+.2f}G | Y: {ay:+.2f}G | Z: {az:+.2f}G ({spd:.1f} m/s)"
+            )
 
     def _select_calib_preset(self, preset_id: str):
         if preset_id not in CALIB_PRESETS:
@@ -2443,6 +2447,8 @@ class LegacySensorQtGUI(QMainWindow):
         self._save_settings()
 
         self.is_tracking_active = True
+        if hasattr(self, "lbl_vphone_accel"):
+            self.lbl_vphone_accel.setVisible(True)
         self.btn_start.setText("TRACKING IN PROGRESS...")
         self.btn_start.setEnabled(False)
         self.showMinimized()
@@ -2462,6 +2468,8 @@ class LegacySensorQtGUI(QMainWindow):
     @Slot(bool, str)
     def _on_tracking_finished(self, success: bool, err_msg: str):
         self.is_tracking_active = False
+        if hasattr(self, "lbl_vphone_accel"):
+            self.lbl_vphone_accel.setVisible(False)
         self.btn_start.setText("START TRACKING")
         self.btn_start.setEnabled(True)
         self.showNormal()
