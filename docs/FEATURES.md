@@ -223,7 +223,7 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
   - Margem lateral de respiro (gutter de 6px) para garantir que os contornos e sombras dos espaços não fiquem colados na borda da barra de rolagem.
   - Redução da altura mínima da janela para `500px` (`setMinimumSize(920, 500)`), conferindo total responsividade a monitores pequenos ou janelas redimensionadas.
 
-### 20. Celular Virtual — Emulador JD Controller via Movimento da Mão (v0.2.9–v0.2.13 Alpha)
+### 20. Celular Virtual — Emulador JD Controller via Movimento da Mão (v0.2.9–v0.2.14 Alpha)
 - **Problema resolvido:** Certas músicas e builds do Just Dance (como Just Dance 2022 PC Online / Dreyn) não possuem suporte a câmera/Kinect em todas as faixas ou operam exclusivamente via controle de mão / smartphone (protocolo WebSocket `/smartphone`). Além disso, movimentos rápidos (como giros de braço e batidas na coreografia de *Smalltown Boy*) pontuavam apenas "Ok" ou "Good", pois filtros estáticos atenuavam os picos dinâmicos de aceleração e introduziam atraso de fase.
 - **Solução Implementada (`sensor/virtual_phone.py` & `ui/gui_qt.py`):**
   - **Protocolo WebSocket Nativo UbiArt sobre WSS/TLS e WS (`v2.phonescoring.jd.ubisoft.com`):**
@@ -234,14 +234,15 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
     - **Filtro EMA Dinâmico com Latência Zero em Picos:** Em repouso ou movimentos lentos ($\le 0,20\text{ m/s}$), aplica $\alpha = 0,45$ para anular tremores e garantir orientação gravitacional estável; em passos rápidos e gestos intensos ($\ge 0,85\text{ m/s}$), eleva $\alpha$ instantaneamente para **$0,95$**, eliminando o atraso de 60 ms e preservando a precisão no tempo da batida musical.
     - **Aceleração Centrífuga / Rotacional ($\vec{a}_c = v_{\text{tang}}^2 / L$):** Simula a força centrífuga radial ao longo do antebraço durante giros e movimentos em arco (ex: estilo "Windmill" e sweeps de *Smalltown Boy*), gerando os vetores de força G esperados pelo classificador do jogo.
     - **Escalação Física Real de Força G:** Escalonamento calibrado para atingir picos de $3,5\text{G}$ a $5,5\text{G}$ em golpes velozes, cruzando o `HighThreshold` do Just Dance para registrar **"Perfect"** e **"Super"**.
-  - **Gravador de Telemetria CSV Embutido (`Gravar Log`):**
+  - **Gravador de Telemetria CSV Embutido (`Record Log`):**
     - Permite gravar em tempo real os dados de acelerômetro 3D, velocidade da mão, $\alpha$ do filtro e coordenadas em `logs/vphone_accel_<timestamp>.csv` para análise diagnóstica e comparação direta com logs de celulares reais.
-  - **Interface Unificada na Aba "Experimental" (Design Consistente com Calibração):**
+  - **Interface Unificada e Padronizada em Inglês (Design Consistente com Calibração):**
     - Chave geral **ON / OFF** com recolhimento dinâmico: quando desativado, toda a seção de acelerômetro e controles fica oculta para manter a interface limpa e direta.
-    - Indicador de status em tempo real e leitura ao vivo do acelerômetro 3D (`X / Y / Z` em G com indicador de velocidade linear em m/s).
+    - Indicador de status em tempo real e leitura ao vivo do acelerômetro 3D (`3D Accelerometer: X / Y / Z` em G com indicador de velocidade linear em m/s).
     - IP e Porta ocultos da visão para evitar poluição visual (mantendo valores padrão `127.0.0.1:8080` de forma transparente).
-    - Botões com contorno elegante (`border: 1px solid #CBD5E1`) para **Reconectar**, **Auto-Descobrir**, **Skip Finish** e **Gravar Log**.
-    - Tipografia de alto contraste com cores escuras explícitas (`#0F172A`) para "MÃO RASTREADA" e "SENSIBILIDADE", eliminando problemas de texto branco/invisível em temas escuros do Windows e seguindo rigorosamente o padrão visual da aba de Calibração.
+    - Botões com contorno elegante (`border: 1px solid #CBD5E1`) para **Reconnect**, **Auto-Find**, **Skip Finish** e **Record Log**.
+    - Atualização do cabeçalho da sidebar para `"ooomaga :O"` e dica de DLL clarificada para `"Copy Kinect10.dll to the game folder (only for Legacy Offline PC)"`.
+    - Tipografia de alto contraste com cores escuras explícitas (`#0F172A`) para "TRACKED HAND" e "SENSITIVITY", eliminando problemas de texto branco/invisível em temas escuros do Windows e seguindo rigorosamente o padrão visual da aba de Calibração.
 
 ---
 

@@ -735,7 +735,7 @@ class LegacySensorQtGUI(QMainWindow):
         )
         sidebar_layout.addWidget(lbl_brand)
 
-        lbl_edition = QLabel("for Legacy Offline PC", self.sidebar_frame)
+        lbl_edition = QLabel("ooomaga :O", self.sidebar_frame)
         lbl_edition.setStyleSheet(
             f"font-family: '{self.font_body}'; font-size: 11px; font-weight: bold; color: {PALETTE['text_muted']}; background: transparent;"
         )
@@ -791,7 +791,7 @@ class LegacySensorQtGUI(QMainWindow):
         sidebar_layout.addWidget(self.btn_dll_folder)
         sidebar_layout.addSpacing(6)
 
-        lbl_dll_tip = QLabel("Copy Kinect10.dll to the game\nfolder to enable motion capture.", self.sidebar_frame)
+        lbl_dll_tip = QLabel("Copy Kinect10.dll to the game folder\n(only for Legacy Offline PC).", self.sidebar_frame)
         lbl_dll_tip.setStyleSheet(
             f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent;"
         )
@@ -1284,7 +1284,7 @@ class LegacySensorQtGUI(QMainWindow):
 
         self.cb_orient = QComboBox(block_orient)
         self.cb_orient.setFixedHeight(32)
-        self.cb_orient.addItems(["0° (Padrão)", "90° (Horário)", "180° (Invertido)", "270° (Anti-horário)"])
+        self.cb_orient.addItems(["0° (Default)", "90° (Clockwise)", "180° (Inverted)", "270° (Counter-clockwise)"])
         curr_orient = self.cfg.get("camera_orientation", 0)
         orient_map = {0: 0, 90: 1, 180: 2, 270: 3}
         self.cb_orient.setCurrentIndex(orient_map.get(curr_orient, 0))
@@ -1533,7 +1533,7 @@ class LegacySensorQtGUI(QMainWindow):
         vp_layout.setContentsMargins(14, 12, 14, 12)
         vp_layout.setSpacing(8)
 
-        self.chk_vphone_enabled = QCheckBox("Celular Virtual (JD Controller via Câmera)", vphone_box)
+        self.chk_vphone_enabled = QCheckBox("Virtual Phone Controller (JD Controller via Camera)", vphone_box)
         self.chk_vphone_enabled.setStyleSheet(
             f"font-family: '{self.font_heading}'; font-size: 13px; font-weight: bold; color: {PALETTE['text_main']};"
         )
@@ -1542,8 +1542,8 @@ class LegacySensorQtGUI(QMainWindow):
         vp_layout.addWidget(self.chk_vphone_enabled)
 
         lbl_vp_desc = QLabel(
-            "Simula um smartphone conectado ao Just Dance via WebSocket/TLS (/smartphone) e converte o movimento "
-            "da sua mão na câmera em comandos de acelerômetro 3D para músicas que só suportam controle de mão.",
+            "Emulates a smartphone connected to Just Dance via WebSocket/TLS (/smartphone) and converts your hand motion "
+            "in the camera into 3D accelerometer commands for songs that only support hand controllers.",
             vphone_box
         )
         lbl_vp_desc.setWordWrap(True)
@@ -1568,11 +1568,11 @@ class LegacySensorQtGUI(QMainWindow):
 
         # Status & Live Accel readout row
         info_row = QHBoxLayout()
-        self.lbl_vphone_status = QLabel("Status: Desativado", self.vphone_details_frame)
+        self.lbl_vphone_status = QLabel("Status: Disabled", self.vphone_details_frame)
         self.lbl_vphone_status.setStyleSheet(
             f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['text_muted']}; background: transparent; border: none;"
         )
-        self.lbl_vphone_accel = QLabel("Acelerômetro 3D: X: +0.00G | Y: -1.00G | Z: +0.00G", self.vphone_details_frame)
+        self.lbl_vphone_accel = QLabel("3D Accelerometer: X: +0.00G | Y: -1.00G | Z: +0.00G (0.0 m/s)", self.vphone_details_frame)
         self.lbl_vphone_accel.setStyleSheet(
             f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['ps_blue']}; background: transparent; border: none;"
         )
@@ -1587,7 +1587,7 @@ class LegacySensorQtGUI(QMainWindow):
         self.txt_vphone_port = QLineEdit(str(self.cfg.get("virtual_phone_port", 8080)), self)
         self.txt_vphone_port.setVisible(False)
 
-        # Action buttons row (Reconnect, Auto-Descobrir, Skip Finish)
+        # Action buttons row (Reconnect, Auto-Find, Skip Finish, Record Log)
         btn_row = QHBoxLayout()
         btn_row.setSpacing(8)
 
@@ -1618,12 +1618,12 @@ class LegacySensorQtGUI(QMainWindow):
         """
         self._btn_vphone_outline_style = btn_outline_style
 
-        self.btn_vphone_reconnect = QPushButton("Reconectar", self.vphone_details_frame)
+        self.btn_vphone_reconnect = QPushButton("Reconnect", self.vphone_details_frame)
         self.btn_vphone_reconnect.setStyleSheet(btn_outline_style)
         self.btn_vphone_reconnect.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_vphone_reconnect.clicked.connect(self._on_vphone_reconnect_clicked)
 
-        self.btn_vphone_discover = QPushButton("Auto-Descobrir", self.vphone_details_frame)
+        self.btn_vphone_discover = QPushButton("Auto-Find", self.vphone_details_frame)
         self.btn_vphone_discover.setStyleSheet(btn_outline_style)
         self.btn_vphone_discover.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_vphone_discover.clicked.connect(self._on_vphone_discover_clicked)
@@ -1631,13 +1631,13 @@ class LegacySensorQtGUI(QMainWindow):
         self.btn_vphone_ftue = QPushButton("Skip Finish", self.vphone_details_frame)
         self.btn_vphone_ftue.setStyleSheet(btn_outline_style)
         self.btn_vphone_ftue.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_vphone_ftue.setToolTip("Pula a tela de tutorial Finish no celular")
+        self.btn_vphone_ftue.setToolTip("Skips the phone tutorial Finish screen")
         self.btn_vphone_ftue.clicked.connect(lambda: self.vphone.send_input("FTUE_FINISH"))
 
-        self.btn_vphone_log = QPushButton("Gravar Log", self.vphone_details_frame)
+        self.btn_vphone_log = QPushButton("Record Log", self.vphone_details_frame)
         self.btn_vphone_log.setStyleSheet(btn_outline_style)
         self.btn_vphone_log.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_vphone_log.setToolTip("Grava telemetria de acelerômetro (CSV) para análise e comparação com celular real")
+        self.btn_vphone_log.setToolTip("Records accelerometer telemetry (CSV) for analysis and comparison with real phones")
         self.btn_vphone_log.clicked.connect(self._toggle_vphone_logging)
 
         btn_row.addWidget(self.btn_vphone_reconnect)
@@ -1654,12 +1654,12 @@ class LegacySensorQtGUI(QMainWindow):
         # Hand block
         hand_box = QVBoxLayout()
         hand_box.setSpacing(4)
-        lbl_hand = QLabel("MÃO RASTREADA", self.vphone_details_frame)
+        lbl_hand = QLabel("TRACKED HAND", self.vphone_details_frame)
         lbl_hand.setStyleSheet(
             f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['text_main']}; background: transparent; border: none;"
         )
         self.cb_vphone_hand = QComboBox(self.vphone_details_frame)
-        self.cb_vphone_hand.addItems(["Mão Direita (Padrão)", "Mão Esquerda"])
+        self.cb_vphone_hand.addItems(["Right Hand (Default)", "Left Hand"])
         saved_hand = str(self.cfg.get("virtual_phone_hand", "right")).lower()
         self.cb_vphone_hand.setCurrentIndex(1 if saved_hand == "left" else 0)
         self.cb_vphone_hand.setStyleSheet(f"""
@@ -1686,7 +1686,7 @@ class LegacySensorQtGUI(QMainWindow):
         sens_box = QVBoxLayout()
         sens_box.setSpacing(4)
         sens_val = float(self.cfg.get("virtual_phone_sensitivity", 1.2))
-        self.lbl_vphone_sens = QLabel(f"SENSIBILIDADE: {sens_val:.2f}x (PADRÃO: 1.20x)", self.vphone_details_frame)
+        self.lbl_vphone_sens = QLabel(f"SENSITIVITY: {sens_val:.2f}x (DEFAULT: 1.20x)", self.vphone_details_frame)
         self.lbl_vphone_sens.setStyleSheet(
             f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['text_main']}; background: transparent; border: none;"
         )
@@ -2190,7 +2190,7 @@ class LegacySensorQtGUI(QMainWindow):
 
     def _on_vphone_sens_changed(self, val: int):
         sens = round(val / 100.0, 2)
-        self.lbl_vphone_sens.setText(f"SENSIBILIDADE: {sens:.2f}x (PADRÃO: 1.20x)")
+        self.lbl_vphone_sens.setText(f"SENSITIVITY: {sens:.2f}x (DEFAULT: 1.20x)")
         self.cfg["virtual_phone_sensitivity"] = sens
         self.vphone.configure(sensitivity=sens)
         self._save_settings()
@@ -2227,7 +2227,7 @@ class LegacySensorQtGUI(QMainWindow):
 
     def _on_vphone_discover_clicked(self):
         self.btn_vphone_discover.setEnabled(False)
-        self.btn_vphone_discover.setText("Buscando...")
+        self.btn_vphone_discover.setText("Searching...")
 
         def _discover_worker():
             res = self.vphone.discover_server(timeout=1.2)
@@ -2245,7 +2245,7 @@ class LegacySensorQtGUI(QMainWindow):
     @Slot(str, int, str)
     def _on_vphone_discover_finished(self, ip: str, port: int, code: str):
         self.btn_vphone_discover.setEnabled(True)
-        self.btn_vphone_discover.setText("Auto-Descobrir")
+        self.btn_vphone_discover.setText("Auto-Find")
         if ip:
             self.txt_vphone_host.setText(ip)
             if port > 0:
@@ -2254,24 +2254,24 @@ class LegacySensorQtGUI(QMainWindow):
             self._save_settings()
             if self.vphone.enabled:
                 self.vphone.request_reconnect()
-            info_code = f" (Código: {code})" if code else ""
+            info_code = f" (Pairing Code: {code})" if code else ""
             QMessageBox.information(
                 self,
-                "Servidor Just Dance Encontrado",
-                f"Jogo detectado em {ip}:{port}{info_code}!"
+                "Just Dance Server Found",
+                f"Game detected at {ip}:{port}{info_code}!"
             )
         else:
             QMessageBox.information(
                 self,
-                "Auto-Descoberta UDP",
-                "Nenhuma resposta UDP na porta 6000/7000.\n"
-                "Se o jogo estiver aberto no mesmo PC, a porta padrão 8080 já funciona diretamente."
+                "UDP Auto-Discovery",
+                "No UDP response on port 6000/7000.\n"
+                "If the game is running on the same PC, port 8080 works directly."
             )
 
     def _toggle_vphone_logging(self):
         if not self.vphone.is_logging:
             path = self.vphone.set_logging(True)
-            self.btn_vphone_log.setText("⏹ Parar Log")
+            self.btn_vphone_log.setText("⏹ Stop Log")
             self.btn_vphone_log.setStyleSheet(f"""
                 QPushButton {{
                     background-color: {PALETTE["blue_pastel"]};
@@ -2287,14 +2287,14 @@ class LegacySensorQtGUI(QMainWindow):
         else:
             saved_path = self.vphone.log_path
             self.vphone.set_logging(False)
-            self.btn_vphone_log.setText("Gravar Log")
+            self.btn_vphone_log.setText("Record Log")
             self.btn_vphone_log.setStyleSheet(getattr(self, "_btn_vphone_outline_style", ""))
             if saved_path and os.path.exists(saved_path):
                 QMessageBox.information(
                     self,
-                    "Gravação de Telemetria Concluída",
-                    f"Log CSV de acelerômetro salvo com sucesso em:\n{saved_path}\n\n"
-                    "Arquivo pronto para análise e comparação com dados do celular real."
+                    "Telemetry Recording Finished",
+                    f"Accelerometer CSV log saved successfully to:\n{saved_path}\n\n"
+                    "File ready for analysis and comparison with real smartphone data."
                 )
 
     def _update_vphone_ui_readout(self):
@@ -2314,7 +2314,7 @@ class LegacySensorQtGUI(QMainWindow):
         ax, ay, az = self.vphone.latest_accel
         spd = getattr(self.vphone.accelerometer, "latest_speed", 0.0)
         self.lbl_vphone_accel.setText(
-            f"Acelerômetro 3D: X: {ax:+.2f}G | Y: {ay:+.2f}G | Z: {az:+.2f}G ({spd:.1f} m/s)"
+            f"3D Accelerometer: X: {ax:+.2f}G | Y: {ay:+.2f}G | Z: {az:+.2f}G ({spd:.1f} m/s)"
         )
 
     def _select_calib_preset(self, preset_id: str):

@@ -300,7 +300,7 @@ class _MinimalWebSocketClient:
                     sock = None
 
         if sock is None:
-            raise ConnectionError(f"Falha ao conectar WebSocket em {self.host}:{self.port}: {last_err}")
+            raise ConnectionError(f"Failed to connect WebSocket on {self.host}:{self.port}: {last_err}")
 
         # Set a short read timeout for non-blocking polling loop
         sock.settimeout(0.02)
@@ -331,21 +331,21 @@ class _MinimalWebSocketClient:
         while b"\r\n\r\n" not in response:
             chunk = sock.recv(1024)
             if not chunk:
-                raise ConnectionError("Servidor fechou a conexão durante o handshake HTTP.")
+                raise ConnectionError("Server closed connection during HTTP handshake.")
             response += chunk
             if len(response) > 8192:
-                raise ConnectionError("Cabeçalho HTTP WebSocket excedeu o tamanho limite.")
+                raise ConnectionError("WebSocket HTTP header exceeded size limit.")
 
         header_part, leftover = response.split(b"\r\n\r\n", 1)
         status_line = header_part.splitlines()[0].decode("latin1", errors="replace")
         if "101" not in status_line:
-            raise ConnectionError(f"Handshake WebSocket rejeitado: {status_line}")
+            raise ConnectionError(f"WebSocket handshake rejected: {status_line}")
 
         expected_accept = base64.b64encode(
             hashlib.sha1((ws_key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode("ascii")).digest()
         ).decode("ascii")
         if expected_accept.encode("ascii") not in header_part:
-            raise ConnectionError("Chave Sec-WebSocket-Accept inválida.")
+            raise ConnectionError("Invalid Sec-WebSocket-Accept key.")
 
         self._rx_buf.clear()
         if leftover:
@@ -353,7 +353,7 @@ class _MinimalWebSocketClient:
 
     def send_text(self, text: str) -> None:
         if not self.connected or self._sock is None:
-            raise ConnectionError("WebSocket não conectado.")
+            raise ConnectionError("WebSocket not connected.")
         payload = text.encode("utf-8")
         length = len(payload)
 
@@ -393,7 +393,7 @@ class _MinimalWebSocketClient:
                 time.sleep(0.005)
                 continue
             if not chunk:
-                raise ConnectionError("Conexão encerrada pelo jogo.")
+                raise ConnectionError("Connection closed by game.")
             self._rx_buf.extend(chunk)
         out = bytes(self._rx_buf[:n])
         del self._rx_buf[:n]
@@ -410,7 +410,7 @@ class _MinimalWebSocketClient:
                 try:
                     chunk = self._sock.recv(2048)
                     if not chunk:
-                        raise ConnectionError("Conexão WebSocket fechada.")
+                        raise ConnectionError("WebSocket connection closed.")
                     self._rx_buf.extend(chunk)
                 except (socket.timeout, ssl.SSLWantReadError, BlockingIOError):
                     break
@@ -445,7 +445,7 @@ class _MinimalWebSocketClient:
                 messages.append(payload.decode("utf-8", errors="replace"))
             elif opcode == 0x8:  # Close frame
                 self.close()
-                raise ConnectionError("Servidor WebSocket enviou frame CLOSE.")
+                raise ConnectionError("WebSocket server sent CLOSE frame.")
             elif opcode == 0x9:  # Ping -> send Pong
                 self._send_pong(bytes(payload))
 
@@ -505,7 +505,7 @@ class VirtualPhoneController:
         self._phone_id: int = 0
         self._player_name: str = ""
         self._pairing_code: str = ""
-        self._status_text: str = "Desativado"
+        self._status_text: str = "Disabled"
         self._last_error: str = ""
 
         # Dynamic command overrides supplied by JD_InputCollectionPhoneData
@@ -633,7 +633,7 @@ class VirtualPhoneController:
             return
         self._stop_event.clear()
         self._reconnect_event.clear()
-        self._status_text = f"Conectando a {self.host}:{self.port}..."
+        self._status_text = f"Connecting to {self.host}:{self.port}..."
         self._thread = threading.Thread(target=self._worker_loop, name="VirtualPhoneWorker", daemon=True)
         self._thread.start()
 
@@ -643,7 +643,7 @@ class VirtualPhoneController:
         self._reconnect_event.set()
         self._connected = False
         self._handshake_complete = False
-        self._status_text = "Desativado"
+        self._status_text = "Disabled"
         if self._logging_enabled:
             self.set_logging(False)
 
@@ -652,7 +652,7 @@ class VirtualPhoneController:
         if not self._enabled:
             self.start()
         else:
-            self._status_text = f"Reconectando a {self.host}:{self.port}..."
+            self._status_text = f"Reconnecting to {self.host}:{self.port}..."
             self._reconnect_event.set()
 
     # ------------------------------------------------------------------
@@ -836,14 +836,14 @@ class VirtualPhoneController:
 
             ws = _MinimalWebSocketClient(self.host, self.port, WS_ENDPOINT, WS_SUBPROTOCOL)
             try:
-                code_suffix = f" [Código: {self._pairing_code}]" if self._pairing_code else ""
-                self._status_text = f"Conectando a {self.host}:{self.port}{code_suffix}..."
+                code_suffix = f" [Code: {self._pairing_code}]" if self._pairing_code else ""
+                self._status_text = f"Connecting to {self.host}:{self.port}{code_suffix}..."
                 ws.connect(timeout=2.0, prefer_tls=True)
                 self._connected = True
                 self._handshake_complete = False
                 self._player_name = ""
                 proto_tag = "WSS/TLS" if ws.is_tls else "WS"
-                self._status_text = f"Conectado ({proto_tag}) — Aguardando Handshake..."
+                self._status_text = f"Connected ({proto_tag}) — Awaiting Handshake..."
 
                 # Step 1: Send JD_PhoneDataCmdHandshakeHello
                 hello_pkt = self.build_root_packet(
@@ -875,7 +875,7 @@ class VirtualPhoneController:
                         wait_secs = now - hello_sent_ts
                         if wait_secs >= 1.2:
                             self._status_text = (
-                                f"Conectado ({proto_tag}{code_suffix}) — Foque na janela do jogo para ativar!"
+                                f"Connected ({proto_tag}{code_suffix}) — Focus game window to activate!"
                             )
                         continue
 
@@ -905,8 +905,8 @@ class VirtualPhoneController:
                 self._handshake_complete = False
                 self._last_error = str(exc)
                 if self._enabled and not self._stop_event.is_set():
-                    code_suffix = f" (Jogo ativo • Código: {self._pairing_code})" if self._pairing_code else ""
-                    self._status_text = f"Verificando jogo em {self.host}:{self.port}{code_suffix}..."
+                    code_suffix = f" (Game active • Code: {self._pairing_code})" if self._pairing_code else ""
+                    self._status_text = f"Checking game on {self.host}:{self.port}{code_suffix}..."
             finally:
                 ws.close()
                 self._connected = False
@@ -916,7 +916,7 @@ class VirtualPhoneController:
             if self._enabled and not self._stop_event.is_set() and not self._reconnect_event.is_set():
                 self._reconnect_event.wait(timeout=1.0)
 
-        self._status_text = "Desativado"
+        self._status_text = "Disabled"
 
     def _compute_current_sample(self, now: float) -> Tuple[float, float, float]:
         """Returns the current accelerometer sample (from test shake, live camera, or idle gravity)."""
@@ -937,8 +937,8 @@ class VirtualPhoneController:
         return self._latest_accel
 
     def _format_connected_status(self) -> str:
-        player_part = f" • Jogador: {self._player_name}" if self._player_name else ""
-        mode_part = "Pontuação Ativa" if self._scoring_enabled else "Conectado ao Jogo"
+        player_part = f" • Player: {self._player_name}" if self._player_name else ""
+        mode_part = "Scoring Active" if self._scoring_enabled else "Connected to Game"
         return f"{mode_part}{player_part} (ID: {self._phone_id})"
 
     def _handle_incoming_message(self, ws: _MinimalWebSocketClient, raw_msg: str) -> None:
@@ -959,7 +959,7 @@ class VirtualPhoneController:
             self._phone_id = int(msg.get("phoneID", 0))
             sync_pkt = self.build_root_packet("JD_PhoneDataCmdSync", phoneID=self._phone_id)
             ws.send_text(sync_pkt)
-            self._status_text = f"Sincronizando com o Jogo (ID {self._phone_id})..."
+            self._status_text = f"Syncing with Game (ID {self._phone_id})..."
 
         elif cls_name == "JD_PhoneDataCmdSyncStart":
             # Step 3: Game started sync phase
