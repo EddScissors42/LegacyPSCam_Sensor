@@ -1728,21 +1728,24 @@ class LegacySensorQtGUI(QMainWindow):
         shortcuts_row.setSpacing(8)
 
         btn_back = QPushButton("↩ VOLTAR", ctrl_card)
+        btn_ftue = QPushButton("⏭ PULAR FINISH", ctrl_card)
         btn_start_song = QPushButton("▶ INICIAR MÚSICA", ctrl_card)
         btn_pause = QPushButton("⏸ PAUSAR", ctrl_card)
         btn_shake = QPushButton("👋 Testar Pulso (Shake)", ctrl_card)
 
-        for b in (btn_back, btn_start_song, btn_pause, btn_shake):
+        for b in (btn_back, btn_ftue, btn_start_song, btn_pause, btn_shake):
             b.setProperty("class", "btn_secondary")
             b.setCursor(Qt.CursorShape.PointingHandCursor)
             b.setFixedHeight(32)
 
         btn_back.clicked.connect(lambda: self.vphone.send_input("BACK"))
+        btn_ftue.clicked.connect(lambda: self.vphone.send_input("FTUE_FINISH"))
         btn_start_song.clicked.connect(lambda: self.vphone.send_input("START_GAME"))
         btn_pause.clicked.connect(lambda: self.vphone.send_input("PAUSE"))
         btn_shake.clicked.connect(lambda: self.vphone.trigger_test_shake(1.5))
 
         shortcuts_row.addWidget(btn_back)
+        shortcuts_row.addWidget(btn_ftue)
         shortcuts_row.addWidget(btn_start_song)
         shortcuts_row.addWidget(btn_pause)
         shortcuts_row.addWidget(btn_shake)

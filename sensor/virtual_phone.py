@@ -461,6 +461,7 @@ class VirtualPhoneController:
         self._latest_accel: Tuple[float, float, float] = (0.0, -1.0, 0.0)
         self._last_joint_update_ts: float = 0.0
         self._shake_until_ts: float = 0.0
+        self._ftue_until_ts: float = 0.0
 
         self._cmd_queue: "queue.Queue[str]" = queue.Queue()
         self._stop_event = threading.Event()
@@ -736,6 +737,7 @@ class VirtualPhoneController:
                 hello_sent_ts = time.perf_counter()
 
                 last_accel_sent_ts = 0.0
+                last_ftue_sent_ts = 0.0
                 accel_interval = 1.0 / 60.0  # 60 Hz accelerometer stream
 
                 while not self._stop_event.is_set() and self._enabled and not self._reconnect_event.is_set():
@@ -755,6 +757,13 @@ class VirtualPhoneController:
                                 f"Conectado ({proto_tag}{code_suffix}) — Foque na janela do jogo para ativar!"
                             )
                         continue
+
+                    # 1.5 Auto-skip Phone FTUE ("Finish" tutorial steps 1..4) whenever active
+                    if now < self._ftue_until_ts and (now - last_ftue_sent_ts) >= 0.40:
+                        last_ftue_sent_ts = now
+                        ws.send_text(
+                            self.build_root_packet("JD_Custom_PhoneCommandData", identifier="PHONE_FTUE_FINISH")
+                        )
 
                     # 2. Flush queued UI / menu commands once handshake is complete
                     while not self._cmd_queue.empty():
@@ -867,9 +876,14 @@ class VirtualPhoneController:
             self._scoring_enabled = bool(msg.get("enable", msg.get("enabled", True)))
             self._status_text = self._format_connected_status()
 
-        elif cls_name in ("JD_PhoneUiData", "JD_TriggerTransition_ConsoleCommandData"):
+        elif cls_name in ("JD_PhoneUiData", "JD_PhoneUiSetupData", "JD_PhoneUiShortcutData", "JD_TriggerTransition_ConsoleCommandData"):
             if not self._handshake_complete:
                 self._handshake_complete = True
+            if "JD_PhoneUiFTUE" in raw_msg or "PHONE_FTUE_FINISH" in raw_msg:
+                self._ftue_until_ts = time.perf_counter() + 4.0
+                ws.send_text(
+                    self.build_root_packet("JD_Custom_PhoneCommandData", identifier="PHONE_FTUE_FINISH")
+                )
             self._status_text = self._format_connected_status()
 
 
