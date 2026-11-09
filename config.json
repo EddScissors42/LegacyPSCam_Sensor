@@ -2,7 +2,7 @@
     "camera_mode": "webcam",
     "camera_index": 0,
     "pscam_preset": "1280x800 @ 60 FPS",
-    "webcam_preset": "640x480 @ 30 FPS",
+    "webcam_preset": "640x480 @ 60 FPS",
     "mirror_horizontal": true,
     "tracking_preset": "balanced",
     "smoothing_alpha": 0.55,
@@ -29,5 +29,11 @@
     "face_follow_zoom": 1.22,
     "face_follow_smoothing": 0.2,
     "face_follow_y_bias": 0.06,
+    "virtual_phone_enabled": false,
+    "virtual_phone_host": "127.0.0.1",
+    "virtual_phone_port": 8080,
+    "virtual_phone_hand": "right",
+    "virtual_phone_sensitivity": 1.2,
+    "virtual_phone_name": "Legacy PSCam Phone",
     "camera_orientation": 0
 }

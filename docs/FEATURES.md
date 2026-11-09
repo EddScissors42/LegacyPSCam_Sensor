@@ -223,7 +223,7 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
   - Margem lateral de respiro (gutter de 6px) para garantir que os contornos e sombras dos espaços não fiquem colados na borda da barra de rolagem.
   - Redução da altura mínima da janela para `500px` (`setMinimumSize(920, 500)`), conferindo total responsividade a monitores pequenos ou janelas redimensionadas.
 
-### 20. Aba "Celular Virtual" — Emulador JD Controller via Movimento da Mão (v0.2.9–v0.2.10 Alpha)
+### 20. Celular Virtual — Emulador JD Controller via Movimento da Mão (v0.2.9–v0.2.12 Alpha)
 - **Problema resolvido:** Certas músicas e builds do Just Dance (como Just Dance 2022 PC Online / Dreyn) não possuem suporte a câmera/Kinect em todas as faixas ou operam exclusivamente via controle de mão / smartphone (protocolo WebSocket `/smartphone`).
 - **Solução Implementada (`sensor/virtual_phone.py` & `ui/gui_qt.py`):**
   - **Protocolo WebSocket Nativo UbiArt sobre WSS/TLS e WS (`v2.phonescoring.jd.ubisoft.com`):**
@@ -232,10 +232,12 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
     - Suporte dinâmico a `JD_ProfilePhoneUiData` (exibindo o nome do perfil do jogador conectado) e `JD_InputCollectionPhoneData` (`availableInput` com booleanos `touchOn: true/false`).
   - **Motor Físico `HandAccelerometer` (Mão 3D -> Acelerômetro 3 Eixos):**
     - Converte a velocidade, aceleração linear ($\Delta \vec{v} / \Delta t$) e inclinação do antebraço (`Elbow -> Wrist -> Hand`) da mão escolhida (Direita ou Esquerda) em vetores de força G (`[ax, ay, az]` limitados a $\pm 8.0\text{G}$) transmitidos a 60 Hz em pacotes `JD_PhoneScoringData`.
-  - **Integração na Aba "Experimental" (Bloco Dedicado & Minimalista):**
-    - Chave geral **ON / OFF**, indicador de status em tempo real e leitura ao vivo do acelerômetro 3D (`X / Y / Z` em G).
-    - Configuração de IP/Porta, botão de reconexão, auto-descoberta UDP, seleção de mão (Direita/Esquerda) e slider de sensibilidade (`0.40x` a `2.50x`).
-    - Botão de atalho rápido dedicado **"⏭ Pular Finish"** para avançar instantaneamente pelo tutorial inicial (`PHONE_FTUE_FINISH`), mantendo o layout 100% limpo e sem poluição visual de botões de navegação não essenciais.
+  - **Interface Unificada na Aba "Experimental" (Design Consistente com Calibração):**
+    - Chave geral **ON / OFF** com recolhimento dinâmico: quando desativado, toda a seção de acelerômetro e controles fica oculta para manter a interface limpa e direta.
+    - Indicador de status em tempo real e leitura ao vivo do acelerômetro 3D (`X / Y / Z` em G).
+    - IP e Porta ocultos da visão para evitar poluição visual (mantendo valores padrão `127.0.0.1:8080` de forma transparente).
+    - Botões com contorno elegante (`border: 1px solid #CBD5E1`) para **Reconectar**, **Auto-Descobrir** e **Skip Finish** (sem emojis).
+    - Tipografia de alto contraste com cores escuras explícitas (`#0F172A`) para "MÃO RASTREADA" e "SENSIBILIDADE", eliminando problemas de texto branco/invisível em temas escuros do Windows e seguindo rigorosamente o padrão visual da aba de Calibração.
 
 ---
 

@@ -1552,90 +1552,150 @@ class LegacySensorQtGUI(QMainWindow):
         )
         vp_layout.addWidget(lbl_vp_desc)
 
+        # Status & Controls Container (Hidden when Virtual Phone is disabled)
+        self.vphone_details_frame = QFrame(vphone_box)
+        self.vphone_details_frame.setObjectName("vphone_details_frame")
+        self.vphone_details_frame.setStyleSheet(f"""
+            QFrame#vphone_details_frame {{
+                background-color: {PALETTE["bg_card"]};
+                border: 1px solid {PALETTE["border_subtle"]};
+                border-radius: 8px;
+            }}
+        """)
+        vp_det_layout = QVBoxLayout(self.vphone_details_frame)
+        vp_det_layout.setContentsMargins(14, 12, 14, 12)
+        vp_det_layout.setSpacing(10)
+
         # Status & Live Accel readout row
         info_row = QHBoxLayout()
-        self.lbl_vphone_status = QLabel("Status: Desativado", vphone_box)
+        self.lbl_vphone_status = QLabel("Status: Desativado", self.vphone_details_frame)
         self.lbl_vphone_status.setStyleSheet(
-            f"font-family: '{self.font_body}'; font-size: 11px; font-weight: bold; color: {PALETTE['text_muted']}; background: transparent; border: none;"
+            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['text_muted']}; background: transparent; border: none;"
         )
-        self.lbl_vphone_accel = QLabel("Acelerômetro 3D: X: +0.00G | Y: -1.00G | Z: +0.00G", vphone_box)
+        self.lbl_vphone_accel = QLabel("Acelerômetro 3D: X: +0.00G | Y: -1.00G | Z: +0.00G", self.vphone_details_frame)
         self.lbl_vphone_accel.setStyleSheet(
-            f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['ps_blue']}; background: transparent; border: none;"
+            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['ps_blue']}; background: transparent; border: none;"
         )
         info_row.addWidget(self.lbl_vphone_status)
         info_row.addStretch()
         info_row.addWidget(self.lbl_vphone_accel)
-        vp_layout.addLayout(info_row)
+        vp_det_layout.addLayout(info_row)
 
-        # Connection settings & Skip Finish row
-        net_row = QHBoxLayout()
-        net_row.setSpacing(8)
+        # Hidden Host/Port fields (preserved for logic and persistence without UI clutter)
+        self.txt_vphone_host = QLineEdit(str(self.cfg.get("virtual_phone_host", "127.0.0.1")), self)
+        self.txt_vphone_host.setVisible(False)
+        self.txt_vphone_port = QLineEdit(str(self.cfg.get("virtual_phone_port", 8080)), self)
+        self.txt_vphone_port.setVisible(False)
 
-        lbl_ip = QLabel("IP:", vphone_box)
-        lbl_ip.setStyleSheet(f"font-family: '{self.font_body}'; font-size: 11px; font-weight: bold;")
-        self.txt_vphone_host = QLineEdit(str(self.cfg.get("virtual_phone_host", "127.0.0.1")), vphone_box)
-        self.txt_vphone_host.setFixedWidth(110)
-        self.txt_vphone_host.editingFinished.connect(self._on_vphone_config_changed)
+        # Action buttons row (Reconnect, Auto-Descobrir, Skip Finish)
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
 
-        lbl_port = QLabel("Porta:", vphone_box)
-        lbl_port.setStyleSheet(f"font-family: '{self.font_body}'; font-size: 11px; font-weight: bold;")
-        self.txt_vphone_port = QLineEdit(str(self.cfg.get("virtual_phone_port", 8080)), vphone_box)
-        self.txt_vphone_port.setFixedWidth(60)
-        self.txt_vphone_port.editingFinished.connect(self._on_vphone_config_changed)
+        btn_outline_style = f"""
+            QPushButton {{
+                background-color: #FFFFFF;
+                color: {PALETTE["text_main"]};
+                font-family: '{self.font_heading}', sans-serif;
+                font-size: 11px;
+                font-weight: bold;
+                border: 1px solid {PALETTE["tab_gray_border"]};
+                border-radius: 6px;
+                padding: 6px 14px;
+            }}
+            QPushButton:hover {{
+                background-color: {PALETTE["tab_gray_hover"]};
+                border-color: {PALETTE["ps_blue"]};
+                color: {PALETTE["ps_blue"]};
+            }}
+            QPushButton:pressed {{
+                background-color: {PALETTE["tab_gray_act"]};
+            }}
+            QPushButton:disabled {{
+                background-color: #F8FAFC;
+                color: {PALETTE["text_muted"]};
+                border-color: {PALETTE["border_subtle"]};
+            }}
+        """
 
-        self.btn_vphone_reconnect = QPushButton("Reconectar", vphone_box)
-        self.btn_vphone_reconnect.setProperty("class", "btn_secondary")
+        self.btn_vphone_reconnect = QPushButton("Reconectar", self.vphone_details_frame)
+        self.btn_vphone_reconnect.setStyleSheet(btn_outline_style)
         self.btn_vphone_reconnect.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_vphone_reconnect.clicked.connect(self._on_vphone_reconnect_clicked)
 
-        self.btn_vphone_discover = QPushButton("Auto-Descobrir", vphone_box)
-        self.btn_vphone_discover.setProperty("class", "btn_secondary")
+        self.btn_vphone_discover = QPushButton("Auto-Descobrir", self.vphone_details_frame)
+        self.btn_vphone_discover.setStyleSheet(btn_outline_style)
         self.btn_vphone_discover.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_vphone_discover.clicked.connect(self._on_vphone_discover_clicked)
 
-        self.btn_vphone_ftue = QPushButton("⏭ Pular Finish", vphone_box)
-        self.btn_vphone_ftue.setProperty("class", "btn_secondary")
+        self.btn_vphone_ftue = QPushButton("Skip Finish", self.vphone_details_frame)
+        self.btn_vphone_ftue.setStyleSheet(btn_outline_style)
         self.btn_vphone_ftue.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_vphone_ftue.setToolTip("Pula a tela de tutorial Finish no celular")
         self.btn_vphone_ftue.clicked.connect(lambda: self.vphone.send_input("FTUE_FINISH"))
 
-        net_row.addWidget(lbl_ip)
-        net_row.addWidget(self.txt_vphone_host)
-        net_row.addWidget(lbl_port)
-        net_row.addWidget(self.txt_vphone_port)
-        net_row.addWidget(self.btn_vphone_reconnect)
-        net_row.addWidget(self.btn_vphone_discover)
-        net_row.addWidget(self.btn_vphone_ftue)
-        net_row.addStretch()
-        vp_layout.addLayout(net_row)
+        btn_row.addWidget(self.btn_vphone_reconnect)
+        btn_row.addWidget(self.btn_vphone_discover)
+        btn_row.addWidget(self.btn_vphone_ftue)
+        btn_row.addStretch()
+        vp_det_layout.addLayout(btn_row)
 
-        # Hand selection & sensitivity row
-        hand_row = QHBoxLayout()
-        hand_row.setSpacing(10)
+        # Settings row: Hand Selection & Sensitivity Slider
+        settings_row = QHBoxLayout()
+        settings_row.setSpacing(16)
 
-        lbl_hand = QLabel("Mão Rastreada:", vphone_box)
-        lbl_hand.setStyleSheet(f"font-family: '{self.font_body}'; font-size: 11px; font-weight: bold;")
-        self.cb_vphone_hand = QComboBox(vphone_box)
+        # Hand block
+        hand_box = QVBoxLayout()
+        hand_box.setSpacing(4)
+        lbl_hand = QLabel("MÃO RASTREADA", self.vphone_details_frame)
+        lbl_hand.setStyleSheet(
+            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['text_main']}; background: transparent; border: none;"
+        )
+        self.cb_vphone_hand = QComboBox(self.vphone_details_frame)
         self.cb_vphone_hand.addItems(["Mão Direita (Padrão)", "Mão Esquerda"])
         saved_hand = str(self.cfg.get("virtual_phone_hand", "right")).lower()
         self.cb_vphone_hand.setCurrentIndex(1 if saved_hand == "left" else 0)
+        self.cb_vphone_hand.setStyleSheet(f"""
+            QComboBox {{
+                background-color: #FFFFFF;
+                color: {PALETTE['text_main']};
+                font-family: '{self.font_body}', sans-serif;
+                border: 1px solid {PALETTE['tab_gray_border']};
+                border-radius: 6px;
+                padding: 6px 12px;
+                font-size: 11px;
+                font-weight: 500;
+                min-width: 160px;
+            }}
+            QComboBox:hover {{
+                border-color: {PALETTE['ps_blue']};
+            }}
+        """)
         self.cb_vphone_hand.currentIndexChanged.connect(self._on_vphone_config_changed)
+        hand_box.addWidget(lbl_hand)
+        hand_box.addWidget(self.cb_vphone_hand)
 
+        # Sensitivity block
+        sens_box = QVBoxLayout()
+        sens_box.setSpacing(4)
         sens_val = float(self.cfg.get("virtual_phone_sensitivity", 1.2))
-        self.lbl_vphone_sens = QLabel(f"Sensibilidade: {sens_val:.2f}x", vphone_box)
-        self.lbl_vphone_sens.setStyleSheet(f"font-family: '{self.font_body}'; font-size: 11px; font-weight: bold;")
+        self.lbl_vphone_sens = QLabel(f"SENSIBILIDADE: {sens_val:.2f}x (PADRÃO: 1.20x)", self.vphone_details_frame)
+        self.lbl_vphone_sens.setStyleSheet(
+            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['text_main']}; background: transparent; border: none;"
+        )
 
-        self.slider_vphone_sens = QSlider(Qt.Orientation.Horizontal, vphone_box)
+        self.slider_vphone_sens = QSlider(Qt.Orientation.Horizontal, self.vphone_details_frame)
         self.slider_vphone_sens.setRange(40, 250)
         self.slider_vphone_sens.setValue(int(round(sens_val * 100)))
         self.slider_vphone_sens.valueChanged.connect(self._on_vphone_sens_changed)
+        sens_box.addWidget(self.lbl_vphone_sens)
+        sens_box.addWidget(self.slider_vphone_sens)
 
-        hand_row.addWidget(lbl_hand)
-        hand_row.addWidget(self.cb_vphone_hand)
-        hand_row.addSpacing(6)
-        hand_row.addWidget(self.lbl_vphone_sens)
-        hand_row.addWidget(self.slider_vphone_sens, stretch=1)
-        vp_layout.addLayout(hand_row)
+        settings_row.addLayout(hand_box, stretch=0)
+        settings_row.addLayout(sens_box, stretch=1)
+        vp_det_layout.addLayout(settings_row)
+
+        vp_layout.addWidget(self.vphone_details_frame)
+        self.vphone_details_frame.setVisible(self.chk_vphone_enabled.isChecked())
 
         exp_layout.addWidget(vphone_box)
         layout.addWidget(exp_card)
@@ -2113,6 +2173,8 @@ class LegacySensorQtGUI(QMainWindow):
     def _on_vphone_toggle_changed(self):
         enabled = self.chk_vphone_enabled.isChecked()
         self.cfg["virtual_phone_enabled"] = enabled
+        if hasattr(self, "vphone_details_frame"):
+            self.vphone_details_frame.setVisible(enabled)
         self._apply_vphone_settings_to_controller()
         self.vphone.set_enabled(enabled)
         self._save_settings()
@@ -2120,7 +2182,7 @@ class LegacySensorQtGUI(QMainWindow):
 
     def _on_vphone_sens_changed(self, val: int):
         sens = round(val / 100.0, 2)
-        self.lbl_vphone_sens.setText(f"Sensibilidade do Movimento: {sens:.2f}x")
+        self.lbl_vphone_sens.setText(f"SENSIBILIDADE: {sens:.2f}x (PADRÃO: 1.20x)")
         self.cfg["virtual_phone_sensitivity"] = sens
         self.vphone.configure(sensitivity=sens)
         self._save_settings()
@@ -2175,7 +2237,7 @@ class LegacySensorQtGUI(QMainWindow):
     @Slot(str, int, str)
     def _on_vphone_discover_finished(self, ip: str, port: int, code: str):
         self.btn_vphone_discover.setEnabled(True)
-        self.btn_vphone_discover.setText("Auto-Descobrir (UDP)")
+        self.btn_vphone_discover.setText("Auto-Descobrir")
         if ip:
             self.txt_vphone_host.setText(ip)
             if port > 0:
@@ -2195,7 +2257,7 @@ class LegacySensorQtGUI(QMainWindow):
                 self,
                 "Auto-Descoberta UDP",
                 "Nenhuma resposta UDP na porta 6000/7000.\n"
-                "Se o jogo estiver aberto no mesmo PC, o IP padrão 127.0.0.1 e porta 8080 já funcionam diretamente."
+                "Se o jogo estiver aberto no mesmo PC, a porta padrão 8080 já funciona diretamente."
             )
 
     def _update_vphone_ui_readout(self):
@@ -2210,7 +2272,7 @@ class LegacySensorQtGUI(QMainWindow):
         else:
             color = PALETTE["text_muted"]
         self.lbl_vphone_status.setStyleSheet(
-            f"font-family: '{self.font_body}'; font-size: 11px; font-weight: bold; color: {color}; background: transparent; border: none;"
+            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {color}; background: transparent; border: none;"
         )
         ax, ay, az = self.vphone.latest_accel
         self.lbl_vphone_accel.setText(
