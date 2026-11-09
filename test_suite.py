@@ -560,15 +560,13 @@ def test_project_structure():
         assert win.font_heading == "National Park", f"Expected National Park heading font, got {win.font_heading}"
         assert win.font_body == "Inter Tight", f"Expected Inter Tight body font, got {win.font_body}"
 
-        # Verification of Experimental & Celular Virtual tabs and controls
+        # Verification of Experimental tab and Virtual Phone controls inside it
         assert hasattr(win, "btn_tab_exp"), "Experimental tab button must exist"
         assert hasattr(win, "page_exp"), "Experimental page widget must exist"
-        assert hasattr(win, "btn_tab_vphone"), "Celular Virtual tab button must exist"
-        assert hasattr(win, "page_vphone"), "Celular Virtual page widget must exist"
+        assert hasattr(win, "chk_vphone_enabled"), "Celular Virtual toggle must exist in Experimental"
+        assert hasattr(win, "btn_vphone_ftue"), "Skip Finish button must exist in Celular Virtual block"
         assert hasattr(win, "cb_res") and hasattr(win, "cb_fps"), "Split resolution and FPS combos must exist in webcam card"
         assert hasattr(win, "btn_refresh"), "Refresh button in device card must exist"
-        win._switch_tab("vphone")
-        assert win.active_tab == "vphone", "Should switch to Celular Virtual tab"
         win._switch_tab("exp")
         assert win.active_tab == "exp", "Should switch to experimental tab"
 

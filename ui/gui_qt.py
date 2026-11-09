@@ -854,19 +854,12 @@ class LegacySensorQtGUI(QMainWindow):
         self.btn_tab_exp.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_tab_exp.clicked.connect(lambda: self._switch_tab("exp"))
 
-        self.btn_tab_vphone = QPushButton("Celular Virtual", self.content_widget)
-        self.btn_tab_vphone.setFixedSize(136, 42)
-        self.btn_tab_vphone.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_tab_vphone.clicked.connect(lambda: self._switch_tab("vphone"))
-
         top_nav_layout.addStretch()
         top_nav_layout.addWidget(self.btn_tab_video)
         top_nav_layout.addSpacing(10)
         top_nav_layout.addWidget(self.btn_tab_calib)
         top_nav_layout.addSpacing(10)
         top_nav_layout.addWidget(self.btn_tab_exp)
-        top_nav_layout.addSpacing(10)
-        top_nav_layout.addWidget(self.btn_tab_vphone)
         top_nav_layout.addStretch()
         content_layout.addLayout(top_nav_layout)
         self._apply_tab_styles("video")
@@ -881,11 +874,10 @@ class LegacySensorQtGUI(QMainWindow):
         self.stacked_view = SlidingStackedWidget(self.content_widget)
         content_layout.addWidget(self.stacked_view, stretch=1)
 
-        # Build Page 0 (Video), Page 1 (Calibration), Page 2 (Experimental), & Page 3 (Celular Virtual)
+        # Build Page 0 (Video), Page 1 (Calibration) & Page 2 (Experimental)
         self._build_video_view()
         self._build_calib_view()
         self._build_exp_view()
-        self._build_vphone_view()
 
         # 2.3 Bottom Action Area (PlayStation Blue CTA & Footer)
         self.btn_start = QPushButton("START TRACKING", self.content_widget)
@@ -1527,121 +1519,85 @@ class LegacySensorQtGUI(QMainWindow):
         af_layout.addWidget(lbl_desc)
 
         exp_layout.addWidget(auto_frame_box)
-        layout.addWidget(exp_card)
-        layout.addStretch()
 
-        self.scroll_exp = self._create_scroll_page(self.page_exp)
-        self.stacked_view.addWidget(self.scroll_exp)
-
-    def _build_vphone_view(self):
-        """Constructs Page 3: Celular Virtual (Virtual Phone Controller for Just Dance)."""
-        self.page_vphone = QWidget()
-        layout = QVBoxLayout(self.page_vphone)
-        layout.setContentsMargins(0, 4, 6, 0)
-        layout.setSpacing(12)
-
-        # -----------------------------------------------------------------
-        # 1. Card Principal: ON/OFF & Status em Tempo Real
-        # -----------------------------------------------------------------
-        status_card = QFrame(self.page_vphone)
-        status_card.setProperty("class", "card")
-        status_layout = QVBoxLayout(status_card)
-        status_layout.setContentsMargins(16, 14, 16, 14)
-        status_layout.setSpacing(8)
-
-        lbl_title = QLabel("CELULAR VIRTUAL (JD CONTROLLER VIA CÂMERA)", status_card)
-        lbl_title.setStyleSheet(
-            f"font-family: '{self.font_heading}'; font-size: 12px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent; border: none;"
-        )
-        status_layout.addWidget(lbl_title)
-
-        lbl_sub = QLabel(
-            "Simula um smartphone conectado ao Just Dance via WebSocket local (/smartphone) e converte o movimento "
-            "da sua mão na câmera em comandos de acelerômetro 3D para músicas que só suportam controle de mão.",
-            status_card
-        )
-        lbl_sub.setWordWrap(True)
-        lbl_sub.setStyleSheet(
-            f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
-        )
-        status_layout.addWidget(lbl_sub)
-
-        toggle_box = QFrame(status_card)
-        toggle_box.setStyleSheet(f"""
+        # Virtual Phone Controller Feature Box (Single Block)
+        vphone_box = QFrame(exp_card)
+        vphone_box.setStyleSheet(f"""
             QFrame {{
                 background-color: {PALETTE["input_bg"]};
                 border: 1px solid {PALETTE["border_subtle"]};
                 border-radius: 8px;
             }}
         """)
-        tb_layout = QVBoxLayout(toggle_box)
-        tb_layout.setContentsMargins(12, 10, 12, 10)
-        tb_layout.setSpacing(6)
+        vp_layout = QVBoxLayout(vphone_box)
+        vp_layout.setContentsMargins(14, 12, 14, 12)
+        vp_layout.setSpacing(8)
 
-        self.chk_vphone_enabled = QCheckBox("Ativar Celular Virtual (ON / OFF)", toggle_box)
+        self.chk_vphone_enabled = QCheckBox("Celular Virtual (JD Controller via Câmera)", vphone_box)
         self.chk_vphone_enabled.setStyleSheet(
             f"font-family: '{self.font_heading}'; font-size: 13px; font-weight: bold; color: {PALETTE['text_main']};"
         )
         self.chk_vphone_enabled.setChecked(bool(self.cfg.get("virtual_phone_enabled", False)))
         self.chk_vphone_enabled.stateChanged.connect(self._on_vphone_toggle_changed)
-        tb_layout.addWidget(self.chk_vphone_enabled)
+        vp_layout.addWidget(self.chk_vphone_enabled)
 
+        lbl_vp_desc = QLabel(
+            "Simula um smartphone conectado ao Just Dance via WebSocket/TLS (/smartphone) e converte o movimento "
+            "da sua mão na câmera em comandos de acelerômetro 3D para músicas que só suportam controle de mão.",
+            vphone_box
+        )
+        lbl_vp_desc.setWordWrap(True)
+        lbl_vp_desc.setStyleSheet(
+            f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
+        )
+        vp_layout.addWidget(lbl_vp_desc)
+
+        # Status & Live Accel readout row
         info_row = QHBoxLayout()
-        self.lbl_vphone_status = QLabel("Status: Desativado", toggle_box)
+        self.lbl_vphone_status = QLabel("Status: Desativado", vphone_box)
         self.lbl_vphone_status.setStyleSheet(
             f"font-family: '{self.font_body}'; font-size: 11px; font-weight: bold; color: {PALETTE['text_muted']}; background: transparent; border: none;"
         )
-        self.lbl_vphone_accel = QLabel("Acelerômetro 3D: X: +0.00G | Y: -1.00G | Z: +0.00G", toggle_box)
+        self.lbl_vphone_accel = QLabel("Acelerômetro 3D: X: +0.00G | Y: -1.00G | Z: +0.00G", vphone_box)
         self.lbl_vphone_accel.setStyleSheet(
             f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['ps_blue']}; background: transparent; border: none;"
         )
         info_row.addWidget(self.lbl_vphone_status)
         info_row.addStretch()
         info_row.addWidget(self.lbl_vphone_accel)
-        tb_layout.addLayout(info_row)
+        vp_layout.addLayout(info_row)
 
-        status_layout.addWidget(toggle_box)
-        layout.addWidget(status_card)
-
-        # -----------------------------------------------------------------
-        # 2. Card de Configuração: Rede (IP/Porta), Mão e Sensibilidade
-        # -----------------------------------------------------------------
-        cfg_card = QFrame(self.page_vphone)
-        cfg_card.setProperty("class", "card")
-        cfg_layout = QVBoxLayout(cfg_card)
-        cfg_layout.setContentsMargins(16, 14, 16, 14)
-        cfg_layout.setSpacing(10)
-
-        lbl_cfg_title = QLabel("CONFIGURAÇÕES DE CONEXÃO E RASTREAMENTO", cfg_card)
-        lbl_cfg_title.setStyleSheet(
-            f"font-family: '{self.font_heading}'; font-size: 12px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent; border: none;"
-        )
-        cfg_layout.addWidget(lbl_cfg_title)
-
+        # Connection settings & Skip Finish row
         net_row = QHBoxLayout()
         net_row.setSpacing(8)
 
-        lbl_ip = QLabel("IP do Jogo:", cfg_card)
+        lbl_ip = QLabel("IP:", vphone_box)
         lbl_ip.setStyleSheet(f"font-family: '{self.font_body}'; font-size: 11px; font-weight: bold;")
-        self.txt_vphone_host = QLineEdit(str(self.cfg.get("virtual_phone_host", "127.0.0.1")), cfg_card)
-        self.txt_vphone_host.setFixedWidth(115)
+        self.txt_vphone_host = QLineEdit(str(self.cfg.get("virtual_phone_host", "127.0.0.1")), vphone_box)
+        self.txt_vphone_host.setFixedWidth(110)
         self.txt_vphone_host.editingFinished.connect(self._on_vphone_config_changed)
 
-        lbl_port = QLabel("Porta WS:", cfg_card)
+        lbl_port = QLabel("Porta:", vphone_box)
         lbl_port.setStyleSheet(f"font-family: '{self.font_body}'; font-size: 11px; font-weight: bold;")
-        self.txt_vphone_port = QLineEdit(str(self.cfg.get("virtual_phone_port", 8080)), cfg_card)
-        self.txt_vphone_port.setFixedWidth(68)
+        self.txt_vphone_port = QLineEdit(str(self.cfg.get("virtual_phone_port", 8080)), vphone_box)
+        self.txt_vphone_port.setFixedWidth(60)
         self.txt_vphone_port.editingFinished.connect(self._on_vphone_config_changed)
 
-        self.btn_vphone_reconnect = QPushButton("Reconectar", cfg_card)
+        self.btn_vphone_reconnect = QPushButton("Reconectar", vphone_box)
         self.btn_vphone_reconnect.setProperty("class", "btn_secondary")
         self.btn_vphone_reconnect.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_vphone_reconnect.clicked.connect(self._on_vphone_reconnect_clicked)
 
-        self.btn_vphone_discover = QPushButton("Auto-Descobrir (UDP)", cfg_card)
+        self.btn_vphone_discover = QPushButton("Auto-Descobrir", vphone_box)
         self.btn_vphone_discover.setProperty("class", "btn_secondary")
         self.btn_vphone_discover.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_vphone_discover.clicked.connect(self._on_vphone_discover_clicked)
+
+        self.btn_vphone_ftue = QPushButton("⏭ Pular Finish", vphone_box)
+        self.btn_vphone_ftue.setProperty("class", "btn_secondary")
+        self.btn_vphone_ftue.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_vphone_ftue.setToolTip("Pula a tela de tutorial Finish no celular")
+        self.btn_vphone_ftue.clicked.connect(lambda: self.vphone.send_input("FTUE_FINISH"))
 
         net_row.addWidget(lbl_ip)
         net_row.addWidget(self.txt_vphone_host)
@@ -1649,113 +1605,44 @@ class LegacySensorQtGUI(QMainWindow):
         net_row.addWidget(self.txt_vphone_port)
         net_row.addWidget(self.btn_vphone_reconnect)
         net_row.addWidget(self.btn_vphone_discover)
+        net_row.addWidget(self.btn_vphone_ftue)
         net_row.addStretch()
-        cfg_layout.addLayout(net_row)
+        vp_layout.addLayout(net_row)
 
         # Hand selection & sensitivity row
         hand_row = QHBoxLayout()
-        hand_row.setSpacing(12)
+        hand_row.setSpacing(10)
 
-        lbl_hand = QLabel("Mão Rastreada:", cfg_card)
+        lbl_hand = QLabel("Mão Rastreada:", vphone_box)
         lbl_hand.setStyleSheet(f"font-family: '{self.font_body}'; font-size: 11px; font-weight: bold;")
-        self.cb_vphone_hand = QComboBox(cfg_card)
+        self.cb_vphone_hand = QComboBox(vphone_box)
         self.cb_vphone_hand.addItems(["Mão Direita (Padrão)", "Mão Esquerda"])
         saved_hand = str(self.cfg.get("virtual_phone_hand", "right")).lower()
         self.cb_vphone_hand.setCurrentIndex(1 if saved_hand == "left" else 0)
         self.cb_vphone_hand.currentIndexChanged.connect(self._on_vphone_config_changed)
 
         sens_val = float(self.cfg.get("virtual_phone_sensitivity", 1.2))
-        self.lbl_vphone_sens = QLabel(f"Sensibilidade do Movimento: {sens_val:.2f}x", cfg_card)
+        self.lbl_vphone_sens = QLabel(f"Sensibilidade: {sens_val:.2f}x", vphone_box)
         self.lbl_vphone_sens.setStyleSheet(f"font-family: '{self.font_body}'; font-size: 11px; font-weight: bold;")
 
-        self.slider_vphone_sens = QSlider(Qt.Orientation.Horizontal, cfg_card)
+        self.slider_vphone_sens = QSlider(Qt.Orientation.Horizontal, vphone_box)
         self.slider_vphone_sens.setRange(40, 250)
         self.slider_vphone_sens.setValue(int(round(sens_val * 100)))
         self.slider_vphone_sens.valueChanged.connect(self._on_vphone_sens_changed)
 
         hand_row.addWidget(lbl_hand)
         hand_row.addWidget(self.cb_vphone_hand)
-        hand_row.addSpacing(8)
+        hand_row.addSpacing(6)
         hand_row.addWidget(self.lbl_vphone_sens)
         hand_row.addWidget(self.slider_vphone_sens, stretch=1)
-        cfg_layout.addLayout(hand_row)
+        vp_layout.addLayout(hand_row)
 
-        layout.addWidget(cfg_card)
-
-        # -----------------------------------------------------------------
-        # 3. Card de Teste e Navegação no Menu do Jogo
-        # -----------------------------------------------------------------
-        ctrl_card = QFrame(self.page_vphone)
-        ctrl_card.setProperty("class", "card")
-        ctrl_layout = QVBoxLayout(ctrl_card)
-        ctrl_layout.setContentsMargins(16, 14, 16, 14)
-        ctrl_layout.setSpacing(10)
-
-        lbl_ctrl_title = QLabel("CONTROLES DE NAVEGAÇÃO NO MENU E TESTE RÁPIDO", ctrl_card)
-        lbl_ctrl_title.setStyleSheet(
-            f"font-family: '{self.font_heading}'; font-size: 12px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent; border: none;"
-        )
-        ctrl_layout.addWidget(lbl_ctrl_title)
-
-        dpad_grid = QGridLayout()
-        dpad_grid.setSpacing(6)
-
-        btn_up = QPushButton("▲ CIMA", ctrl_card)
-        btn_down = QPushButton("▼ BAIXO", ctrl_card)
-        btn_left = QPushButton("◄ ESQUERDA", ctrl_card)
-        btn_right = QPushButton("► DIREITA", ctrl_card)
-        btn_ok = QPushButton("● CONFIRMAR (OK)", ctrl_card)
-
-        for b in (btn_up, btn_down, btn_left, btn_right, btn_ok):
-            b.setProperty("class", "btn_secondary")
-            b.setCursor(Qt.CursorShape.PointingHandCursor)
-            b.setFixedHeight(32)
-
-        btn_up.clicked.connect(lambda: self.vphone.send_input("UP"))
-        btn_down.clicked.connect(lambda: self.vphone.send_input("DOWN"))
-        btn_left.clicked.connect(lambda: self.vphone.send_input("LEFT"))
-        btn_right.clicked.connect(lambda: self.vphone.send_input("RIGHT"))
-        btn_ok.clicked.connect(lambda: self.vphone.send_input("VALID"))
-
-        dpad_grid.addWidget(btn_up, 0, 1)
-        dpad_grid.addWidget(btn_left, 1, 0)
-        dpad_grid.addWidget(btn_ok, 1, 1)
-        dpad_grid.addWidget(btn_right, 1, 2)
-        dpad_grid.addWidget(btn_down, 2, 1)
-        ctrl_layout.addLayout(dpad_grid)
-
-        shortcuts_row = QHBoxLayout()
-        shortcuts_row.setSpacing(8)
-
-        btn_back = QPushButton("↩ VOLTAR", ctrl_card)
-        btn_ftue = QPushButton("⏭ PULAR FINISH", ctrl_card)
-        btn_start_song = QPushButton("▶ INICIAR MÚSICA", ctrl_card)
-        btn_pause = QPushButton("⏸ PAUSAR", ctrl_card)
-        btn_shake = QPushButton("👋 Testar Pulso (Shake)", ctrl_card)
-
-        for b in (btn_back, btn_ftue, btn_start_song, btn_pause, btn_shake):
-            b.setProperty("class", "btn_secondary")
-            b.setCursor(Qt.CursorShape.PointingHandCursor)
-            b.setFixedHeight(32)
-
-        btn_back.clicked.connect(lambda: self.vphone.send_input("BACK"))
-        btn_ftue.clicked.connect(lambda: self.vphone.send_input("FTUE_FINISH"))
-        btn_start_song.clicked.connect(lambda: self.vphone.send_input("START_GAME"))
-        btn_pause.clicked.connect(lambda: self.vphone.send_input("PAUSE"))
-        btn_shake.clicked.connect(lambda: self.vphone.trigger_test_shake(1.5))
-
-        shortcuts_row.addWidget(btn_back)
-        shortcuts_row.addWidget(btn_ftue)
-        shortcuts_row.addWidget(btn_start_song)
-        shortcuts_row.addWidget(btn_pause)
-        shortcuts_row.addWidget(btn_shake)
-        ctrl_layout.addLayout(shortcuts_row)
-
-        layout.addWidget(ctrl_card)
+        exp_layout.addWidget(vphone_box)
+        layout.addWidget(exp_card)
         layout.addStretch()
 
-        self.scroll_vphone = self._create_scroll_page(self.page_vphone)
-        self.stacked_view.addWidget(self.scroll_vphone)
+        self.scroll_exp = self._create_scroll_page(self.page_exp)
+        self.stacked_view.addWidget(self.scroll_exp)
         self._update_vphone_ui_readout()
 
     # =========================================================================
@@ -1864,13 +1751,6 @@ class LegacySensorQtGUI(QMainWindow):
                 self.btn_tab_exp.setStyleSheet(inact_css)
                 self.btn_tab_exp.setIcon(QIcon(self.pix_lab_inact))
 
-        # Celular Virtual Tab (Basic text tab without icon)
-        if hasattr(self, "btn_tab_vphone"):
-            if tab_id == "vphone":
-                self.btn_tab_vphone.setStyleSheet(act_css)
-            else:
-                self.btn_tab_vphone.setStyleSheet(inact_css)
-
     def _switch_tab(self, tab_id: str):
         if tab_id == "calib" and not self.is_camera_accessible():
             return
@@ -1886,8 +1766,6 @@ class LegacySensorQtGUI(QMainWindow):
             self.stacked_view.slide_to_index(1)
         elif tab_id == "exp":
             self.stacked_view.slide_to_index(2)
-        elif tab_id == "vphone":
-            self.stacked_view.slide_to_index(3)
 
     def _set_mode(self, mode: str, animate: bool = True):
         self.cfg["camera_mode"] = mode

@@ -232,10 +232,10 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
     - Suporte dinâmico a `JD_ProfilePhoneUiData` (exibindo o nome do perfil do jogador conectado) e `JD_InputCollectionPhoneData` (`availableInput` com booleanos `touchOn: true/false`).
   - **Motor Físico `HandAccelerometer` (Mão 3D -> Acelerômetro 3 Eixos):**
     - Converte a velocidade, aceleração linear ($\Delta \vec{v} / \Delta t$) e inclinação do antebraço (`Elbow -> Wrist -> Hand`) da mão escolhida (Direita ou Esquerda) em vetores de força G (`[ax, ay, az]` limitados a $\pm 8.0\text{G}$) transmitidos a 60 Hz em pacotes `JD_PhoneScoringData`.
-  - **Aba "Celular Virtual" no Menu Superior:**
+  - **Integração na Aba "Experimental" (Bloco Dedicado & Minimalista):**
     - Chave geral **ON / OFF**, indicador de status em tempo real e leitura ao vivo do acelerômetro 3D (`X / Y / Z` em G).
     - Configuração de IP/Porta, botão de reconexão, auto-descoberta UDP, seleção de mão (Direita/Esquerda) e slider de sensibilidade (`0.40x` a `2.50x`).
-    - Controles direcionais de menu (`CIMA`, `BAIXO`, `ESQUERDA`, `DIREITA`, `CONFIRMAR (OK)` com hashes `StringID` oficiais da engine UbiArt) e atalhos rápidos (`VOLTAR`, `INICIAR MÚSICA`, `PAUSAR` e `Testar Pulso (Shake)`).
+    - Botão de atalho rápido dedicado **"⏭ Pular Finish"** para avançar instantaneamente pelo tutorial inicial (`PHONE_FTUE_FINISH`), mantendo o layout 100% limpo e sem poluição visual de botões de navegação não essenciais.
 
 ---
 
