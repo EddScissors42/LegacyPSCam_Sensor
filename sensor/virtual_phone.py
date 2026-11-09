@@ -465,7 +465,28 @@ class _MinimalWebSocketClient:
             except OSError:
                 pass
 
+    def _send_close_frame(self, code: int = 1000) -> None:
+        """Sends an RFC 6455 opcode 0x8 Close frame so the game immediately frees the player slot."""
+        if not self.connected or self._sock is None:
+            return
+        payload = struct.pack("!H", code)
+        mask_key = os.urandom(4)
+        frame = bytearray([0x88, 0x80 | 2])
+        frame.extend(mask_key)
+        for i, b in enumerate(payload):
+            frame.append(b ^ mask_key[i & 3])
+        with self._send_lock:
+            try:
+                self._sock.sendall(frame)
+            except OSError:
+                pass
+
     def close(self) -> None:
+        if self.connected and self._sock is not None:
+            try:
+                self._send_close_frame(1000)
+            except Exception:
+                pass
         self.connected = False
         self._rx_buf.clear()
         sock = self._sock
@@ -937,9 +958,10 @@ class VirtualPhoneController:
         return self._latest_accel
 
     def _format_connected_status(self) -> str:
-        player_part = f" • Player: {self._player_name}" if self._player_name else ""
+        player_slot = f"Player {self._phone_id + 1}"
+        player_part = f" • {self._player_name} ({player_slot})" if self._player_name else f" • {player_slot}"
         mode_part = "Scoring Active" if self._scoring_enabled else "Connected to Game"
-        return f"{mode_part}{player_part} (ID: {self._phone_id})"
+        return f"{mode_part}{player_part}"
 
     def _handle_incoming_message(self, ws: _MinimalWebSocketClient, raw_msg: str) -> None:
         try:

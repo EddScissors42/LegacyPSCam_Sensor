@@ -192,8 +192,15 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
                 kinect_frame, kinect_mask = display_frame, display_mask
 
             # Update Shared Memory for Just Dance PC (Pose JDP1, 640x480 Image and 320x240 Player Mask JMI1 & JMI2)
+            # When Virtual Phone is active, mute the Kinect pose channel so Kinect10.dll does NOT
+            # spawn an unwanted duplicate ghost player (Player 1) alongside the phone.
             if is_tracked and kinect_joints:
-                bridge.write(kinect_joints, kinect_frame, kinect_mask, tracked=True)
+                if vphone.enabled:
+                    bridge.pose.write_empty()
+                    bridge.pose_v2.write_empty()
+                    bridge.image.write_image_and_mask(kinect_frame, kinect_mask, tracked=True)
+                else:
+                    bridge.write(kinect_joints, kinect_frame, kinect_mask, tracked=True)
             else:
                 bridge.write_empty()
 
@@ -234,6 +241,9 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
                 print(f"[INFO] Mirroring toggled to: {mirror}")
             elif key in (ord('h'), ord('H')):
                 overlay.toggle_hud()
+            elif key in (13, 32):  # Enter or Space: Send VALID / OK to game via Virtual Phone
+                if vphone.enabled:
+                    vphone.send_input("VALID")
 
             # Check if user clicked window close button (X)
             if cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1:
