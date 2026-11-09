@@ -1616,6 +1616,7 @@ class LegacySensorQtGUI(QMainWindow):
                 border-color: {PALETTE["border_subtle"]};
             }}
         """
+        self._btn_vphone_outline_style = btn_outline_style
 
         self.btn_vphone_reconnect = QPushButton("Reconectar", self.vphone_details_frame)
         self.btn_vphone_reconnect.setStyleSheet(btn_outline_style)
@@ -1633,9 +1634,16 @@ class LegacySensorQtGUI(QMainWindow):
         self.btn_vphone_ftue.setToolTip("Pula a tela de tutorial Finish no celular")
         self.btn_vphone_ftue.clicked.connect(lambda: self.vphone.send_input("FTUE_FINISH"))
 
+        self.btn_vphone_log = QPushButton("Gravar Log", self.vphone_details_frame)
+        self.btn_vphone_log.setStyleSheet(btn_outline_style)
+        self.btn_vphone_log.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_vphone_log.setToolTip("Grava telemetria de acelerômetro (CSV) para análise e comparação com celular real")
+        self.btn_vphone_log.clicked.connect(self._toggle_vphone_logging)
+
         btn_row.addWidget(self.btn_vphone_reconnect)
         btn_row.addWidget(self.btn_vphone_discover)
         btn_row.addWidget(self.btn_vphone_ftue)
+        btn_row.addWidget(self.btn_vphone_log)
         btn_row.addStretch()
         vp_det_layout.addLayout(btn_row)
 
@@ -2260,6 +2268,35 @@ class LegacySensorQtGUI(QMainWindow):
                 "Se o jogo estiver aberto no mesmo PC, a porta padrão 8080 já funciona diretamente."
             )
 
+    def _toggle_vphone_logging(self):
+        if not self.vphone.is_logging:
+            path = self.vphone.set_logging(True)
+            self.btn_vphone_log.setText("⏹ Parar Log")
+            self.btn_vphone_log.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {PALETTE["blue_pastel"]};
+                    color: {PALETTE["blue_dark"]};
+                    font-family: '{self.font_heading}', sans-serif;
+                    font-size: 11px;
+                    font-weight: bold;
+                    border: 1px solid {PALETTE["ps_blue"]};
+                    border-radius: 6px;
+                    padding: 6px 14px;
+                }}
+            """)
+        else:
+            saved_path = self.vphone.log_path
+            self.vphone.set_logging(False)
+            self.btn_vphone_log.setText("Gravar Log")
+            self.btn_vphone_log.setStyleSheet(getattr(self, "_btn_vphone_outline_style", ""))
+            if saved_path and os.path.exists(saved_path):
+                QMessageBox.information(
+                    self,
+                    "Gravação de Telemetria Concluída",
+                    f"Log CSV de acelerômetro salvo com sucesso em:\n{saved_path}\n\n"
+                    "Arquivo pronto para análise e comparação com dados do celular real."
+                )
+
     def _update_vphone_ui_readout(self):
         if not hasattr(self, "lbl_vphone_status") or not hasattr(self, "lbl_vphone_accel"):
             return
@@ -2275,8 +2312,9 @@ class LegacySensorQtGUI(QMainWindow):
             f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {color}; background: transparent; border: none;"
         )
         ax, ay, az = self.vphone.latest_accel
+        spd = getattr(self.vphone.accelerometer, "latest_speed", 0.0)
         self.lbl_vphone_accel.setText(
-            f"Acelerômetro 3D: X: {ax:+.2f}G | Y: {ay:+.2f}G | Z: {az:+.2f}G"
+            f"Acelerômetro 3D: X: {ax:+.2f}G | Y: {ay:+.2f}G | Z: {az:+.2f}G ({spd:.1f} m/s)"
         )
 
     def _select_calib_preset(self, preset_id: str):
