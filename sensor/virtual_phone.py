@@ -17,6 +17,7 @@ import math
 import os
 import queue
 import socket
+import ssl
 import struct
 import threading
 import time
@@ -182,8 +183,9 @@ class HandAccelerometer:
 
 class _MinimalWebSocketClient:
     """
-    Lightweight, zero-dependency RFC 6455 WebSocket client over standard TCP socket.
-    Supports text frames, ping/pong, and clean close.
+    Lightweight, zero-dependency RFC 6455 WebSocket client supporting both
+    TLS/SSL (wss://, used by Just Dance 2022 CivetWeb) and plain TCP (ws://) fallback.
+    Supports text frames, ping/pong, buffered reads, and clean close.
     """
 
     def __init__(self, host: str, port: int, path: str = WS_ENDPOINT, subprotocol: str = WS_SUBPROTOCOL) -> None:
@@ -192,15 +194,67 @@ class _MinimalWebSocketClient:
         self.path = path
         self.subprotocol = subprotocol
         self._sock: Optional[socket.socket] = None
+        self._rx_buf = bytearray()
         self._send_lock = threading.Lock()
         self.connected = False
+        self.is_tls = False
 
-    def connect(self, timeout: float = 2.5) -> None:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(timeout)
-        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        sock.connect((self.host, self.port))
+    def _open_socket(self, timeout: float, use_tls: bool) -> socket.socket:
+        raw_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        raw_sock.settimeout(timeout)
+        raw_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        try:
+            raw_sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        except OSError:
+            pass
+        raw_sock.connect((self.host, self.port))
+        if not use_tls:
+            return raw_sock
 
+        try:
+            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            tls_sock = ctx.wrap_socket(raw_sock, server_hostname=self.host)
+            tls_sock.settimeout(timeout)
+            return tls_sock
+        except Exception:
+            try:
+                raw_sock.close()
+            except OSError:
+                pass
+            raise
+
+    def connect(self, timeout: float = 2.5, prefer_tls: bool = True) -> None:
+        self.close()
+        sock: Optional[socket.socket] = None
+        modes = [True, False] if prefer_tls else [False, True]
+        last_err: Optional[Exception] = None
+
+        for use_tls in modes:
+            try:
+                sock = self._open_socket(timeout=timeout, use_tls=use_tls)
+                self._perform_ws_handshake(sock)
+                self.is_tls = use_tls
+                break
+            except Exception as err:
+                last_err = err
+                if sock is not None:
+                    try:
+                        sock.close()
+                    except OSError:
+                        pass
+                    sock = None
+
+        if sock is None:
+            raise ConnectionError(f"Falha ao conectar WebSocket em {self.host}:{self.port}: {last_err}")
+
+        # Set a short read timeout for non-blocking polling loop
+        sock.settimeout(0.02)
+        self._sock = sock
+        self.connected = True
+
+    def _perform_ws_handshake(self, sock: socket.socket) -> None:
         key_bytes = os.urandom(16)
         ws_key = base64.b64encode(key_bytes).decode("ascii")
 
@@ -212,7 +266,7 @@ class _MinimalWebSocketClient:
             f"Sec-WebSocket-Key: {ws_key}",
             "Sec-WebSocket-Version: 13",
             f"Sec-WebSocket-Protocol: {self.subprotocol}",
-            "Origin: http://ubisoft.com",
+            "Origin: https://ubisoft.com",
             "",
             "",
         ]
@@ -224,30 +278,25 @@ class _MinimalWebSocketClient:
         while b"\r\n\r\n" not in response:
             chunk = sock.recv(1024)
             if not chunk:
-                sock.close()
                 raise ConnectionError("Servidor fechou a conexão durante o handshake HTTP.")
             response += chunk
             if len(response) > 8192:
-                sock.close()
                 raise ConnectionError("Cabeçalho HTTP WebSocket excedeu o tamanho limite.")
 
-        header_part, _ = response.split(b"\r\n\r\n", 1)
+        header_part, leftover = response.split(b"\r\n\r\n", 1)
         status_line = header_part.splitlines()[0].decode("latin1", errors="replace")
         if "101" not in status_line:
-            sock.close()
             raise ConnectionError(f"Handshake WebSocket rejeitado: {status_line}")
 
         expected_accept = base64.b64encode(
             hashlib.sha1((ws_key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode("ascii")).digest()
         ).decode("ascii")
         if expected_accept.encode("ascii") not in header_part:
-            sock.close()
             raise ConnectionError("Chave Sec-WebSocket-Accept inválida.")
 
-        # Set a short read timeout for non-blocking polling loop
-        sock.settimeout(0.02)
-        self._sock = sock
-        self.connected = True
+        self._rx_buf.clear()
+        if leftover:
+            self._rx_buf.extend(leftover)
 
     def send_text(self, text: str) -> None:
         if not self.connected or self._sock is None:
@@ -276,17 +325,26 @@ class _MinimalWebSocketClient:
         frame.extend(masked_payload)
 
         with self._send_lock:
-            self._sock.sendall(frame)
+            try:
+                self._sock.sendall(frame)
+            except (socket.timeout, ssl.SSLWantWriteError, BlockingIOError):
+                # Game window may be temporarily unfocused and its recv buffer full; ignore transient block
+                pass
 
     def _recv_exact(self, n: int) -> bytes:
         assert self._sock is not None
-        buf = bytearray()
-        while len(buf) < n:
-            chunk = self._sock.recv(n - len(buf))
+        while len(self._rx_buf) < n:
+            try:
+                chunk = self._sock.recv(max(1024, n - len(self._rx_buf)))
+            except (ssl.SSLWantReadError, BlockingIOError):
+                time.sleep(0.005)
+                continue
             if not chunk:
                 raise ConnectionError("Conexão encerrada pelo jogo.")
-            buf.extend(chunk)
-        return bytes(buf)
+            self._rx_buf.extend(chunk)
+        out = bytes(self._rx_buf[:n])
+        del self._rx_buf[:n]
+        return out
 
     def recv_messages(self) -> List[str]:
         """Reads any available WebSocket text frames without blocking longer than socket timeout."""
@@ -295,15 +353,19 @@ class _MinimalWebSocketClient:
 
         messages: List[str] = []
         while True:
-            try:
-                hdr = self._sock.recv(2)
-                if not hdr:
-                    raise ConnectionError("Conexão WebSocket fechada.")
-                if len(hdr) < 2:
-                    hdr += self._recv_exact(2 - len(hdr))
-            except socket.timeout:
+            if len(self._rx_buf) < 2:
+                try:
+                    chunk = self._sock.recv(2048)
+                    if not chunk:
+                        raise ConnectionError("Conexão WebSocket fechada.")
+                    self._rx_buf.extend(chunk)
+                except (socket.timeout, ssl.SSLWantReadError, BlockingIOError):
+                    break
+
+            if len(self._rx_buf) < 2:
                 break
 
+            hdr = self._recv_exact(2)
             b0, b1 = hdr[0], hdr[1]
             opcode = b0 & 0x0F
             masked = (b1 & 0x80) != 0
@@ -352,6 +414,7 @@ class _MinimalWebSocketClient:
 
     def close(self) -> None:
         self.connected = False
+        self._rx_buf.clear()
         sock = self._sock
         self._sock = None
         if sock is not None:
@@ -364,8 +427,9 @@ class _MinimalWebSocketClient:
 class VirtualPhoneController:
     """
     Manages the background WebSocket connection to Just Dance (UbiArt Smartphone Manager),
-    handles the 5-step pairing handshake, streams 60Hz accelerometer samples from camera
-    hand tracking, and dispatches menu navigation commands.
+    handles the 5-step pairing handshake over WSS/TLS (or WS), stays alive even when the
+    game window is unfocused (AFK/paused main loop), streams 60Hz accelerometer samples
+    from camera hand tracking, and dispatches menu navigation commands.
     """
 
     def __init__(
@@ -386,8 +450,13 @@ class VirtualPhoneController:
         self._handshake_complete = False
         self._scoring_enabled = True
         self._phone_id: int = 0
+        self._player_name: str = ""
+        self._pairing_code: str = ""
         self._status_text: str = "Desativado"
         self._last_error: str = ""
+
+        # Dynamic command overrides supplied by JD_InputCollectionPhoneData
+        self._available_inputs: Dict[str, str] = {}
 
         self._latest_accel: Tuple[float, float, float] = (0.0, -1.0, 0.0)
         self._last_joint_update_ts: float = 0.0
@@ -538,10 +607,21 @@ class VirtualPhoneController:
         """
         act = action.upper().strip()
         if act in PHONE_INPUT_HASHES:
-            # Wrap directional/confirm input with touch feedback for full UI compatibility
-            self._cmd_queue.put(self.build_root_packet("JD_TouchFeedback_PhoneCommandData", touchOn=1))
-            self._cmd_queue.put(self.build_root_packet("JD_Input_PhoneCommandData", input=PHONE_INPUT_HASHES[act]))
-            self._cmd_queue.put(self.build_root_packet("JD_TouchFeedback_PhoneCommandData", touchOn=0))
+            touch_on = self._available_inputs.get(
+                "TOUCH_ON",
+                self.build_root_packet("JD_TouchFeedback_PhoneCommandData", touchOn=True),
+            )
+            input_cmd = self._available_inputs.get(
+                act,
+                self.build_root_packet("JD_Input_PhoneCommandData", input=PHONE_INPUT_HASHES[act]),
+            )
+            touch_off = self._available_inputs.get(
+                "TOUCH_OFF",
+                self.build_root_packet("JD_TouchFeedback_PhoneCommandData", touchOn=False),
+            )
+            self._cmd_queue.put(touch_on)
+            self._cmd_queue.put(input_cmd)
+            self._cmd_queue.put(touch_off)
         elif act == "BACK":
             self._cmd_queue.put(
                 self.build_root_packet("JD_Custom_PhoneCommandData", identifier="SHORTCUT_BACK")
@@ -623,13 +703,25 @@ class VirtualPhoneController:
     def _worker_loop(self) -> None:
         while not self._stop_event.is_set() and self._enabled:
             self._reconnect_event.clear()
+
+            # Quick UDP discovery check to refresh pairing code / IP if needed
+            disc = self.discover_server(timeout=0.35)
+            if disc is not None:
+                disc_ip, disc_port, disc_code = disc
+                self._pairing_code = disc_code
+                if self.host in ("127.0.0.1", "localhost", ""):
+                    self.port = disc_port
+
             ws = _MinimalWebSocketClient(self.host, self.port, WS_ENDPOINT, WS_SUBPROTOCOL)
             try:
-                self._status_text = f"Conectando a {self.host}:{self.port}..."
-                ws.connect(timeout=2.0)
+                code_suffix = f" [Código: {self._pairing_code}]" if self._pairing_code else ""
+                self._status_text = f"Conectando a {self.host}:{self.port}{code_suffix}..."
+                ws.connect(timeout=2.0, prefer_tls=True)
                 self._connected = True
                 self._handshake_complete = False
-                self._status_text = "Realizando Handshake..."
+                self._player_name = ""
+                proto_tag = "WSS/TLS" if ws.is_tls else "WS"
+                self._status_text = f"Conectado ({proto_tag}) — Aguardando Handshake..."
 
                 # Step 1: Send JD_PhoneDataCmdHandshakeHello
                 hello_pkt = self.build_root_packet(
@@ -641,6 +733,7 @@ class VirtualPhoneController:
                     jmcsToken="",
                 )
                 ws.send_text(hello_pkt)
+                hello_sent_ts = time.perf_counter()
 
                 last_accel_sent_ts = 0.0
                 accel_interval = 1.0 / 60.0  # 60 Hz accelerometer stream
@@ -650,18 +743,29 @@ class VirtualPhoneController:
                     for raw_msg in ws.recv_messages():
                         self._handle_incoming_message(ws, raw_msg)
 
-                    # 2. Flush queued UI / menu commands
+                    now = time.perf_counter()
+
+                    # If the game window is unfocused (AFK/paused main loop), CivetWeb accepts the TLS
+                    # WebSocket upgrade immediately, but JD_SmartphoneManager::Update only processes
+                    # HandshakeHello once the game window regains focus. Keep waiting patiently!
+                    if not self._handshake_complete:
+                        wait_secs = now - hello_sent_ts
+                        if wait_secs >= 1.2:
+                            self._status_text = (
+                                f"Conectado ({proto_tag}{code_suffix}) — Foque na janela do jogo para ativar!"
+                            )
+                        continue
+
+                    # 2. Flush queued UI / menu commands once handshake is complete
                     while not self._cmd_queue.empty():
                         try:
                             cmd_json = self._cmd_queue.get_nowait()
-                            if self._handshake_complete:
-                                ws.send_text(cmd_json)
+                            ws.send_text(cmd_json)
                         except queue.Empty:
                             break
 
                     # 3. Stream accelerometer scoring data at 60 Hz once handshake is complete
-                    now = time.perf_counter()
-                    if self._handshake_complete and (now - last_accel_sent_ts) >= accel_interval:
+                    if (now - last_accel_sent_ts) >= accel_interval:
                         last_accel_sent_ts = now
                         sample = self._compute_current_sample(now)
                         ws.send_text(self.build_scoring_packet([sample]))
@@ -671,15 +775,16 @@ class VirtualPhoneController:
                 self._handshake_complete = False
                 self._last_error = str(exc)
                 if self._enabled and not self._stop_event.is_set():
-                    self._status_text = f"Aguardando jogo em {self.host}:{self.port}..."
+                    code_suffix = f" (Jogo ativo • Código: {self._pairing_code})" if self._pairing_code else ""
+                    self._status_text = f"Verificando jogo em {self.host}:{self.port}{code_suffix}..."
             finally:
                 ws.close()
                 self._connected = False
                 self._handshake_complete = False
 
-            # Wait briefly before retrying connection unless stopped or immediate reconnect requested
+            # Continuous verification every 1.0s when disconnected
             if self._enabled and not self._stop_event.is_set() and not self._reconnect_event.is_set():
-                self._reconnect_event.wait(timeout=2.0)
+                self._reconnect_event.wait(timeout=1.0)
 
         self._status_text = "Desativado"
 
@@ -701,6 +806,11 @@ class VirtualPhoneController:
         self._latest_accel = (0.0, -1.0, 0.0)
         return self._latest_accel
 
+    def _format_connected_status(self) -> str:
+        player_part = f" • Jogador: {self._player_name}" if self._player_name else ""
+        mode_part = "Pontuação Ativa" if self._scoring_enabled else "Conectado ao Jogo"
+        return f"{mode_part}{player_part} (ID: {self._phone_id})"
+
     def _handle_incoming_message(self, ws: _MinimalWebSocketClient, raw_msg: str) -> None:
         try:
             parsed = json.loads(raw_msg)
@@ -719,32 +829,48 @@ class VirtualPhoneController:
             self._phone_id = int(msg.get("phoneID", 0))
             sync_pkt = self.build_root_packet("JD_PhoneDataCmdSync", phoneID=self._phone_id)
             ws.send_text(sync_pkt)
-            self._status_text = f"Sincronizando (ID {self._phone_id})..."
+            self._status_text = f"Sincronizando com o Jogo (ID {self._phone_id})..."
 
         elif cls_name == "JD_PhoneDataCmdSyncStart":
-            # Step 3: Game started sync phase; also acknowledge SyncEnd if needed
+            # Step 3: Game started sync phase
             if "phoneID" in msg:
                 self._phone_id = int(msg.get("phoneID", self._phone_id))
 
         elif cls_name == "JD_PhoneDataCmdSyncEnd":
-            # Step 4: Game finished sync -> Phone replies JD_PhoneDataCmdSyncEnd to enter State 6 (Connected)
+            # Step 4: Game finished sync -> Phone replies JD_PhoneDataCmdSyncEnd to enter Connected state
             if "phoneID" in msg:
                 self._phone_id = int(msg.get("phoneID", self._phone_id))
             sync_end_pkt = self.build_root_packet("JD_PhoneDataCmdSyncEnd", phoneID=self._phone_id)
             ws.send_text(sync_end_pkt)
             self._handshake_complete = True
-            self._status_text = f"Conectado ao Jogo (Phone ID: {self._phone_id})"
+            self._status_text = self._format_connected_status()
+
+        elif cls_name == "JD_ProfilePhoneUiData":
+            name = str(msg.get("name", "")).strip()
+            if name:
+                self._player_name = name
+            if not self._handshake_complete:
+                self._handshake_complete = True
+            self._status_text = self._format_connected_status()
+
+        elif cls_name == "JD_InputCollectionPhoneData":
+            avail = msg.get("availableInput")
+            if isinstance(avail, dict):
+                for k, v in avail.items():
+                    if isinstance(k, str) and isinstance(v, str) and v.strip():
+                        self._available_inputs[k.upper()] = v
+            if not self._handshake_complete:
+                self._handshake_complete = True
+            self._status_text = self._format_connected_status()
 
         elif cls_name in ("JD_EnableScoringPhoneData", "JD_SmartphoneEvent_ScoringActivationChanged"):
             self._scoring_enabled = bool(msg.get("enable", msg.get("enabled", True)))
-            state_lbl = "Pontuação Ativa" if self._scoring_enabled else "Conectado (No Menu)"
-            self._status_text = f"{state_lbl} (ID: {self._phone_id})"
+            self._status_text = self._format_connected_status()
 
-        elif cls_name == "JD_PhoneUiData":
-            # Ensure we mark handshake complete if game sends UI layout directly
+        elif cls_name in ("JD_PhoneUiData", "JD_TriggerTransition_ConsoleCommandData"):
             if not self._handshake_complete:
                 self._handshake_complete = True
-            self._status_text = f"Conectado ao Jogo (Phone ID: {self._phone_id})"
+            self._status_text = self._format_connected_status()
 
 
 # Global singleton instance shared between GUI and TrackingSession

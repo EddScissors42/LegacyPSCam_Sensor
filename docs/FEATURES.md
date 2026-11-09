@@ -223,12 +223,13 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
   - Margem lateral de respiro (gutter de 6px) para garantir que os contornos e sombras dos espaços não fiquem colados na borda da barra de rolagem.
   - Redução da altura mínima da janela para `500px` (`setMinimumSize(920, 500)`), conferindo total responsividade a monitores pequenos ou janelas redimensionadas.
 
-### 20. Aba "Celular Virtual" — Emulador JD Controller via Movimento da Mão (v0.2.9 Alpha)
+### 20. Aba "Celular Virtual" — Emulador JD Controller via Movimento da Mão (v0.2.9–v0.2.10 Alpha)
 - **Problema resolvido:** Certas músicas e builds do Just Dance (como Just Dance 2022 PC Online / Dreyn) não possuem suporte a câmera/Kinect em todas as faixas ou operam exclusivamente via controle de mão / smartphone (protocolo WebSocket `/smartphone`).
 - **Solução Implementada (`sensor/virtual_phone.py` & `ui/gui_qt.py`):**
-  - **Protocolo WebSocket Nativo UbiArt (`v2.phonescoring.jd.ubisoft.com`):**
-    - Cliente WebSocket RFC 6455 puro (zero dependências externas) que se conecta a `ws://127.0.0.1:8080/smartphone` e executa a máquina de estados oficial de 5 etapas (`JD_PhoneDataCmdHandshakeHello` -> `JD_PhoneDataCmdHandshakeContinue` -> `JD_PhoneDataCmdSync` -> `JD_PhoneDataCmdSyncStart` -> `JD_PhoneDataCmdSyncEnd`).
-    - Inclui auto-descoberta UDP na porta `6000`/`7000` (`phonescoring.jd.ubisoft.com`).
+  - **Protocolo WebSocket Nativo UbiArt sobre WSS/TLS e WS (`v2.phonescoring.jd.ubisoft.com`):**
+    - Cliente WebSocket RFC 6455 puro (zero dependências externas) que se conecta via **TLS/SSL (`wss://127.0.0.1:8080/smartphone` com certificado autoassinado do CivetWeb em `jd2022.exe`)** com fallback automático para `ws://`, executando a máquina de estados oficial de 5 etapas (`JD_PhoneDataCmdHandshakeHello` -> `JD_PhoneDataCmdHandshakeContinue` -> `JD_PhoneDataCmdSync` -> `JD_PhoneDataCmdSyncStart` -> `JD_PhoneDataCmdSyncEnd`).
+    - **Verificação Constante e Resiliência a Janela sem Foco (AFK):** Mantém a verificação ativa a cada 1s com auto-descoberta UDP (`6000`/`7000`) e preserva o socket TLS aberto pacientemente mesmo quando a janela do Just Dance está sem foco (loop principal pausado), completando o pareamento no exato instante em que o jogador foca na janela do jogo.
+    - Suporte dinâmico a `JD_ProfilePhoneUiData` (exibindo o nome do perfil do jogador conectado) e `JD_InputCollectionPhoneData` (`availableInput` com booleanos `touchOn: true/false`).
   - **Motor Físico `HandAccelerometer` (Mão 3D -> Acelerômetro 3 Eixos):**
     - Converte a velocidade, aceleração linear ($\Delta \vec{v} / \Delta t$) e inclinação do antebraço (`Elbow -> Wrist -> Hand`) da mão escolhida (Direita ou Esquerda) em vetores de força G (`[ax, ay, az]` limitados a $\pm 8.0\text{G}$) transmitidos a 60 Hz em pacotes `JD_PhoneScoringData`.
   - **Aba "Celular Virtual" no Menu Superior:**
