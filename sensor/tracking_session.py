@@ -11,6 +11,7 @@ from sensor.kinect_shared_memory import KinectBridge
 from sensor.pose_tracker import PoseTracker
 from sensor.tracking_overlay import TrackingOverlay
 from sensor.config_manager import parse_preset
+from sensor.virtual_phone import get_virtual_phone
 
 def set_high_resolution_timer(enable=True):
     """
@@ -108,6 +109,18 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
     # 4. Initialize Overlay
     overlay = TrackingOverlay(show_hud=show_hud)
 
+    # 5. Configure Virtual Phone Controller (if enabled in config or active via GUI)
+    vphone = get_virtual_phone()
+    vphone.configure(
+        host=str(config.get("virtual_phone_host", "127.0.0.1")),
+        port=int(config.get("virtual_phone_port", 8080)),
+        hand=str(config.get("virtual_phone_hand", "right")),
+        sensitivity=float(config.get("virtual_phone_sensitivity", 1.2)),
+        phone_name=str(config.get("virtual_phone_name", "Legacy PSCam Phone")),
+    )
+    if config.get("virtual_phone_enabled", False) and not vphone.enabled:
+        vphone.set_enabled(True)
+
     window_name = "Legacy PSCam Sensor"
     cv2.namedWindow(window_name, cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_EXPANDED)
     cv2.resizeWindow(window_name, min(w, 1280), min(h, 800))
@@ -183,6 +196,9 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
                 bridge.write(kinect_joints, kinect_frame, kinect_mask, tracked=True)
             else:
                 bridge.write_empty()
+
+            # Feed 3D Hand Coordinates to Virtual Phone Controller (Accelerometer emulation)
+            vphone.update_from_joints(kinect_joints, is_tracked)
 
             # Render Player Silhouette Shadow & Contour ("sombrinha")
             if is_tracked and display_mask is not None:

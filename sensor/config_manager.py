@@ -36,7 +36,13 @@ DEFAULT_CONFIG = {
     "face_follow_enabled": True,
     "face_follow_zoom": 1.22,
     "face_follow_smoothing": 0.20,
-    "face_follow_y_bias": 0.06
+    "face_follow_y_bias": 0.06,
+    "virtual_phone_enabled": False,
+    "virtual_phone_host": "127.0.0.1",
+    "virtual_phone_port": 8080,
+    "virtual_phone_hand": "right",
+    "virtual_phone_sensitivity": 1.2,
+    "virtual_phone_name": "Legacy PSCam Phone"
 }
 
 PRESETS_PSCAM = [

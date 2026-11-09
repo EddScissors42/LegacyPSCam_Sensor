@@ -34,6 +34,9 @@ from sensor.pose_tracker import (
 )
 from sensor.camera_manager import CameraManager, FrameBusReader
 from sensor.tracking_overlay import TrackingOverlay
+from sensor.virtual_phone import (
+    VirtualPhoneController, HandAccelerometer, get_virtual_phone, PHONE_INPUT_HASHES
+)
 
 def test_config():
     print("[TEST] ConfigManager...")
@@ -557,13 +560,41 @@ def test_project_structure():
         assert win.font_heading == "National Park", f"Expected National Park heading font, got {win.font_heading}"
         assert win.font_body == "Inter Tight", f"Expected Inter Tight body font, got {win.font_body}"
 
-        # Verification of Experimental tab and controls
+        # Verification of Experimental & Celular Virtual tabs and controls
         assert hasattr(win, "btn_tab_exp"), "Experimental tab button must exist"
         assert hasattr(win, "page_exp"), "Experimental page widget must exist"
+        assert hasattr(win, "btn_tab_vphone"), "Celular Virtual tab button must exist"
+        assert hasattr(win, "page_vphone"), "Celular Virtual page widget must exist"
         assert hasattr(win, "cb_res") and hasattr(win, "cb_fps"), "Split resolution and FPS combos must exist in webcam card"
         assert hasattr(win, "btn_refresh"), "Refresh button in device card must exist"
+        win._switch_tab("vphone")
+        assert win.active_tab == "vphone", "Should switch to Celular Virtual tab"
         win._switch_tab("exp")
         assert win.active_tab == "exp", "Should switch to experimental tab"
+
+        # Verify VirtualPhoneController & HandAccelerometer physics and JSON packets
+        import json
+        ha = HandAccelerometer(hand="right", sensitivity=1.2)
+        j_frame1 = [list(j) for j in NEUTRAL_POSE]
+        j_frame1[9] = (0.25, 0.15, 2.0, 0.95)   # ElbowRight
+        j_frame1[10] = (0.30, 0.25, 1.95, 0.95) # WristRight
+        j_frame1[11] = (0.35, 0.30, 1.90, 0.95) # HandRight
+        acc1 = ha.update(j_frame1, True, now=1.000)
+        assert len(acc1) == 3
+
+        # Fast upward/lateral whip of the right hand over 16ms (60 FPS)
+        j_frame2 = [list(j) for j in j_frame1]
+        j_frame2[10] = (0.55, 0.65, 1.80, 0.95)
+        j_frame2[11] = (0.65, 0.75, 1.75, 0.95)
+        acc2 = ha.update(j_frame2, True, now=1.016)
+        assert abs(acc2[0]) > 0.5 or abs(acc2[1]) > 0.5, f"Expected dynamic G-force spike on fast hand whip, got {acc2}"
+
+        score_pkt = json.loads(VirtualPhoneController.build_scoring_packet([acc2]))
+        assert "root" in score_pkt and score_pkt["root"]["__class"] == "JD_PhoneScoringData"
+        assert len(score_pkt["root"]["accelData"]) == 1
+        assert len(score_pkt["root"]["accelData"][0]) == 3
+        assert PHONE_INPUT_HASHES["VALID"] == 1084313942
+        assert PHONE_INPUT_HASHES["UP"] == 3690595578
 
         # Calibration tab gating when camera is not connected
         if not win.is_camera_accessible():

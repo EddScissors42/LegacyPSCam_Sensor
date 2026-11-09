@@ -27,6 +27,7 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
 | **Interface de Linha de Comando (CLI)**| ✅ Totalmente Implementado | `main.py` | Flags `--start`, `--mode`, `--camera` e `--gui {qt,tkinter}`. |
 | **Rastreamento Multi-Jogador (2P)** | 🟡 Parcialmente Implementado | `pose_tracker.py` | O MediaPipe suporta `num_poses=2`, mas o Lite foca em 1P. |
 | **Auto-Framing / FaceFollow PTZ** | ✅ Totalmente Implementado | `pose_tracker.py` | Auto-framing digital com zoom suave (1.22x) e centralização dinâmica do rosto para a foto/avatar do dançarino no Just Dance. |
+| **Celular Virtual (Emulador JD Controller via Câmera)** | ✅ Totalmente Implementado | `virtual_phone.py` / `ui/gui_qt.py` | Emula um smartphone conectado via WebSocket local (`/smartphone`) e converte o movimento 3D da mão na câmera em dados de acelerômetro 3D (`JD_PhoneScoringData`) e comandos de menu para músicas que só suportam controle de mão. |
 | **Modo Headless (Sem Janela)** | ⏳ Planejado | `tracking_session.py` | Rastrear em background sem gastar GPU com janela gráfica. |
 
 ---
@@ -221,6 +222,19 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
   - Estilização moderna de barra de rolagem (8px de largura, trilha transparente, pill handle arredondado `#CBD5E1` com hover `#94A3B8`).
   - Margem lateral de respiro (gutter de 6px) para garantir que os contornos e sombras dos espaços não fiquem colados na borda da barra de rolagem.
   - Redução da altura mínima da janela para `500px` (`setMinimumSize(920, 500)`), conferindo total responsividade a monitores pequenos ou janelas redimensionadas.
+
+### 20. Aba "Celular Virtual" — Emulador JD Controller via Movimento da Mão (v0.2.9 Alpha)
+- **Problema resolvido:** Certas músicas e builds do Just Dance (como Just Dance 2022 PC Online / Dreyn) não possuem suporte a câmera/Kinect em todas as faixas ou operam exclusivamente via controle de mão / smartphone (protocolo WebSocket `/smartphone`).
+- **Solução Implementada (`sensor/virtual_phone.py` & `ui/gui_qt.py`):**
+  - **Protocolo WebSocket Nativo UbiArt (`v2.phonescoring.jd.ubisoft.com`):**
+    - Cliente WebSocket RFC 6455 puro (zero dependências externas) que se conecta a `ws://127.0.0.1:8080/smartphone` e executa a máquina de estados oficial de 5 etapas (`JD_PhoneDataCmdHandshakeHello` -> `JD_PhoneDataCmdHandshakeContinue` -> `JD_PhoneDataCmdSync` -> `JD_PhoneDataCmdSyncStart` -> `JD_PhoneDataCmdSyncEnd`).
+    - Inclui auto-descoberta UDP na porta `6000`/`7000` (`phonescoring.jd.ubisoft.com`).
+  - **Motor Físico `HandAccelerometer` (Mão 3D -> Acelerômetro 3 Eixos):**
+    - Converte a velocidade, aceleração linear ($\Delta \vec{v} / \Delta t$) e inclinação do antebraço (`Elbow -> Wrist -> Hand`) da mão escolhida (Direita ou Esquerda) em vetores de força G (`[ax, ay, az]` limitados a $\pm 8.0\text{G}$) transmitidos a 60 Hz em pacotes `JD_PhoneScoringData`.
+  - **Aba "Celular Virtual" no Menu Superior:**
+    - Chave geral **ON / OFF**, indicador de status em tempo real e leitura ao vivo do acelerômetro 3D (`X / Y / Z` em G).
+    - Configuração de IP/Porta, botão de reconexão, auto-descoberta UDP, seleção de mão (Direita/Esquerda) e slider de sensibilidade (`0.40x` a `2.50x`).
+    - Controles direcionais de menu (`CIMA`, `BAIXO`, `ESQUERDA`, `DIREITA`, `CONFIRMAR (OK)` com hashes `StringID` oficiais da engine UbiArt) e atalhos rápidos (`VOLTAR`, `INICIAR MÚSICA`, `PAUSAR` e `Testar Pulso (Shake)`).
 
 ---
 

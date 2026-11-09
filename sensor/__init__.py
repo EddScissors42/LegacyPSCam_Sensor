@@ -28,6 +28,7 @@ from .kinect_shared_memory import (
 from .tracking_session import run_tracking_session
 from .tracking_overlay import TrackingOverlay
 from .config_manager import ConfigManager, parse_preset, PRESETS_PSCAM, PRESETS_WEBCAM
+from .virtual_phone import VirtualPhoneController, HandAccelerometer, get_virtual_phone
 
 __all__ = [
     "CameraManager",
@@ -62,5 +63,8 @@ __all__ = [
     "ConfigManager",
     "parse_preset",
     "PRESETS_PSCAM",
-    "PRESETS_WEBCAM"
+    "PRESETS_WEBCAM",
+    "VirtualPhoneController",
+    "HandAccelerometer",
+    "get_virtual_phone",
 ]
