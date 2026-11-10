@@ -15,7 +15,7 @@ else:
 ICONS_DIR = ASSETS_DIR / "icons"
 FONTS_DIR = ASSETS_DIR / "fonts"
 
-ICON_APP_ICO_PATH = ICONS_DIR / "app_icon.ico"
+ICON_APP_ICO_PATH = ICONS_DIR / "app_icon.ico" if (ICONS_DIR / "app_icon.ico").exists() else None
 ICON_PSCAMERA_PATH = ICONS_DIR / "IconePSCAMERA.png"
 ICON_SETTINGS_PATH = ICONS_DIR / "settings.svg"
 ICON_SLIDERS_PATH = ICONS_DIR / "sliders.svg"

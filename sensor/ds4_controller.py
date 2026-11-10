@@ -94,6 +94,16 @@ def _init_win32_apis():
     hid.HidD_FreePreparsedData.restype = wintypes.BOOL
     hid.HidD_FreePreparsedData.argtypes = [ctypes.c_void_p]
 
+    hid.HidD_SetOutputReport.restype = wintypes.BOOL
+    hid.HidD_SetOutputReport.argtypes = [
+        wintypes.HANDLE,
+        ctypes.c_void_p,
+        wintypes.ULONG,
+    ]
+
+    kernel32.CancelIoEx.restype = wintypes.BOOL
+    kernel32.CancelIoEx.argtypes = [wintypes.HANDLE, ctypes.c_void_p]
+
     setupapi.SetupDiGetClassDevsW.restype = wintypes.HANDLE
     setupapi.SetupDiGetClassDevsW.argtypes = [
         ctypes.c_void_p,
@@ -179,8 +189,8 @@ def find_ds4_devices() -> List[str]:
             ):
                 path = detail.DevicePath
                 path_lower = path.lower()
-                # Check for Sony VID and DS4 PIDs
-                if "054c" in path_lower and ("09cc" in path_lower or "05c4" in path_lower):
+                # Check for Sony VID (0x054C) and DS4 PIDs (0x05C4, 0x09CC, 0x0BA0)
+                if "054c" in path_lower and any(pid in path_lower for pid in ("09cc", "05c4", "0ba0")):
                     ds4_paths.append(path)
     finally:
         _setupapi.SetupDiDestroyDeviceInfoList(hdev)
@@ -191,6 +201,7 @@ def find_ds4_devices() -> List[str]:
 @dataclass
 class DS4State:
     connected: bool = False
+    is_usb: bool = False
     battery_pct: int = 0
     is_charging: bool = False
     accel_g: Tuple[float, float, float] = (0.0, 1.0, 0.0)
@@ -202,9 +213,10 @@ class DS4State:
 
 class DS4Controller:
     """
-    Manages low-level Bluetooth HID communication with a Sony DualShock 4 controller.
-    Runs a dedicated background thread to read Report 0x11, unpack motion sensors,
-    and dispatch button events and G-force samples to the Just Dance Virtual Phone bridge.
+    Manages low-level Bluetooth and USB HID communication with a Sony DualShock 4 controller.
+    Runs a dedicated background thread to read Report 0x01 (USB/BT) or Report 0x11 (BT Extended),
+    unpacks motion sensors, and dispatches button events and G-force samples to the Just Dance
+    Virtual Phone bridge.
     """
 
     DPAD_MAP = {
@@ -227,6 +239,7 @@ class DS4Controller:
         self._lock = threading.Lock()
         self._input_len: int = 64
         self._output_len: int = 32
+        self.is_usb: bool = False
 
         # Configurable attributes
         self.hand: str = "right"
@@ -253,8 +266,8 @@ class DS4Controller:
 
     def connect(self, device_path: Optional[str] = None) -> bool:
         """
-        Connects to the DualShock 4 controller, performs the 0x11 handshake,
-        and starts high-frequency HID polling.
+        Connects to the DualShock 4 controller (via USB or Bluetooth),
+        performs handshake, and starts high-frequency HID polling.
         """
         with self._lock:
             if self.is_connected:
@@ -263,42 +276,90 @@ class DS4Controller:
             paths = [device_path] if device_path else find_ds4_devices()
             if not paths:
                 self.state.connected = False
+                self.state.is_usb = False
+                self.is_usb = False
                 return False
 
-            target_path = paths[0]
-            handle = _kernel32.CreateFileW(
-                target_path,
-                GENERIC_READ | GENERIC_WRITE,
-                FILE_SHARE_READ | FILE_SHARE_WRITE,
-                None,
-                OPEN_EXISTING,
-                0,
-                None,
-            )
+            chosen_handle = None
+            chosen_path = None
+            in_len = 64
+            out_len = 32
 
-            if handle == -1 or handle == wintypes.HANDLE(-1).value:
+            for cand_path in paths:
+                # Attempt Read/Write access first
+                h = _kernel32.CreateFileW(
+                    cand_path,
+                    GENERIC_READ | GENERIC_WRITE,
+                    FILE_SHARE_READ | FILE_SHARE_WRITE,
+                    None,
+                    OPEN_EXISTING,
+                    0,
+                    None,
+                )
+                # Fallback to Read-only if access denied (common for certain Windows USB collections)
+                if h == -1 or h == wintypes.HANDLE(-1).value:
+                    h = _kernel32.CreateFileW(
+                        cand_path,
+                        GENERIC_READ,
+                        FILE_SHARE_READ | FILE_SHARE_WRITE,
+                        None,
+                        OPEN_EXISTING,
+                        0,
+                        None,
+                    )
+
+                if h == -1 or h == wintypes.HANDLE(-1).value:
+                    continue
+
+                # Query report lengths via HID capabilities to ensure this is the Gamepad/Motion interface
+                cand_in = 64
+                cand_out = 32
+                valid_interface = False
+                try:
+                    prep = ctypes.c_void_p()
+                    if _hid.HidD_GetPreparsedData(h, ctypes.byref(prep)):
+                        caps = HIDP_CAPS()
+                        if _hid.HidP_GetCaps(prep, ctypes.byref(caps)):
+                            cand_in = int(caps.InputReportByteLength)
+                            cand_out = int(caps.OutputReportByteLength)
+                            # DS4 standard reports are >= 64 bytes (sub-interfaces are 2-16 bytes)
+                            if cand_in >= 64:
+                                valid_interface = True
+                        _hid.HidD_FreePreparsedData(prep)
+                except Exception:
+                    pass
+
+                if valid_interface:
+                    chosen_handle = h
+                    chosen_path = cand_path
+                    in_len = cand_in
+                    out_len = cand_out
+                    break
+                else:
+                    _kernel32.CloseHandle(h)
+
+            if chosen_handle is None:
                 self.state.connected = False
+                self.state.is_usb = False
+                self.is_usb = False
                 return False
 
-            self._handle = handle
-            self._device_path = target_path
+            self._handle = chosen_handle
+            self._device_path = chosen_path
+            self._input_len = in_len
+            self._output_len = out_len
             self._stop_event.clear()
 
-            # Query report lengths via HID capabilities
-            self._input_len = 64
-            self._output_len = 32
-            try:
-                prep = ctypes.c_void_p()
-                if _hid.HidD_GetPreparsedData(handle, ctypes.byref(prep)):
-                    caps = HIDP_CAPS()
-                    if _hid.HidP_GetCaps(prep, ctypes.byref(caps)):
-                        self._input_len = int(caps.InputReportByteLength)
-                        self._output_len = int(caps.OutputReportByteLength)
-                    _hid.HidD_FreePreparsedData(prep)
-            except Exception:
-                pass
+            # Detect USB vs Bluetooth connection
+            path_lower = chosen_path.lower()
+            self.is_usb = (
+                "bth" not in path_lower
+                and "bluetooth" not in path_lower
+                and "00001124" not in path_lower
+            )
+            self.state.is_usb = self.is_usb
 
-            # Perform Extended Report handshake + Welcome rumble buzz
+            # Perform handshake + welcome rumble buzz
             self._send_output_report(
                 r=self.led_r,
                 g=self.led_g,
@@ -308,9 +369,10 @@ class DS4Controller:
             )
 
             # Start worker thread
+            thread_name = "DS4-USB-Reader" if self.is_usb else "DS4-Bluetooth-Reader"
             self._thread = threading.Thread(
                 target=self._worker_loop,
-                name="DS4-Bluetooth-Reader",
+                name=thread_name,
                 daemon=True,
             )
             self._thread.start()
@@ -342,13 +404,20 @@ class DS4Controller:
                 except Exception:
                     pass
                 try:
+                    # Cancel any pending synchronous ReadFile calls
+                    _kernel32.CancelIoEx(self._handle, None)
+                except Exception:
+                    pass
+                try:
                     _kernel32.CloseHandle(self._handle)
                 except Exception:
                     pass
                 self._handle = None
 
             self.state.connected = False
+            self.state.is_usb = False
             self.state.sample_rate_hz = 0.0
+            self.is_usb = False
 
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=0.6)
@@ -396,12 +465,16 @@ class DS4Controller:
         rumble_small: int = 0,
         rumble_large: int = 0,
     ) -> bool:
-        """Constructs and writes Bluetooth Output Report (32-byte report 0x05 or 78-byte report 0x11)."""
+        """Constructs and sends Output Report (Report 0x05 for USB/BT or Report 0x11 for BT Extended)."""
         if not self._handle:
             return False
 
-        if self._output_len == 32:
-            # 32-byte Output Report 0x05 (Standard Windows Bluetooth DS4 driver)
+        # DS4 over USB exclusively uses 32-byte Output Report 0x05.
+        # Bluetooth DS4 uses either 32-byte Report 0x05 or 78-byte Report 0x11.
+        use_report_05 = self.is_usb or (self._output_len == 32)
+
+        if use_report_05:
+            # 32-byte Output Report 0x05 (Standard USB and Windows Bluetooth DS4 driver)
             out_rep = bytearray(32)
             out_rep[0] = 0x05
             out_rep[1] = 0x07  # Enable rumble motors and RGB lightbar
@@ -413,7 +486,13 @@ class DS4Controller:
 
             c_buf = (ctypes.c_ubyte * 32)(*out_rep)
             written = wintypes.DWORD()
-            res = _kernel32.WriteFile(self._handle, ctypes.byref(c_buf), 32, ctypes.byref(written), None)
+            res = _kernel32.WriteFile(
+                self._handle, ctypes.byref(c_buf), 32, ctypes.byref(written), None
+            )
+            # Crucial for USB on Windows: USB DS4 has no interrupt OUT endpoint,
+            # so WriteFile fails and HidD_SetOutputReport is required.
+            if not res or written.value == 0:
+                res = _hid.HidD_SetOutputReport(self._handle, ctypes.byref(c_buf), 32)
             return bool(res)
         else:
             # 78-byte Extended Output Report 0x11 with IEEE 802.3 CRC-32
@@ -433,7 +512,11 @@ class DS4Controller:
 
             c_buf = (ctypes.c_ubyte * 78)(*out_rep)
             written = wintypes.DWORD()
-            res = _kernel32.WriteFile(self._handle, ctypes.byref(c_buf), 78, ctypes.byref(written), None)
+            res = _kernel32.WriteFile(
+                self._handle, ctypes.byref(c_buf), 78, ctypes.byref(written), None
+            )
+            if not res or written.value == 0:
+                res = _hid.HidD_SetOutputReport(self._handle, ctypes.byref(c_buf), 78)
             return bool(res)
 
     def _worker_loop(self) -> None:
@@ -449,12 +532,13 @@ class DS4Controller:
         samples_time_start = time.perf_counter()
 
         self.state.connected = True
+        self.state.is_usb = self.is_usb
 
         while not self._stop_event.is_set():
             res = _kernel32.ReadFile(
                 self._handle, ctypes.byref(buf), buf_len, ctypes.byref(bytes_read), None
             )
-            if not res:
+            if not res or bytes_read.value == 0:
                 # Device disconnected or error
                 break
 
@@ -588,6 +672,7 @@ class DS4Controller:
                 self._send_output_report(self.led_r, self.led_g, self.led_b)
 
         self.state.connected = False
+        self.state.is_usb = False
         self.state.sample_rate_hz = 0.0
 
     def _handle_button_press(self, btn: str, vphone) -> None:

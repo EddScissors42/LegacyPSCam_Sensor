@@ -631,6 +631,12 @@ def test_project_structure():
         win.close()
         app.processEvents()
 
+    from sensor.ds4_controller import get_ds4_controller, DS4Controller, DS4State, find_ds4_devices
+    ds4 = get_ds4_controller()
+    assert hasattr(ds4, "is_usb")
+    assert hasattr(ds4.state, "is_usb")
+    assert isinstance(find_ds4_devices(), list)
+
     import assets
     assert hasattr(assets, "ASSETS_DIR")
     assert hasattr(assets, "ICONS_DIR")
