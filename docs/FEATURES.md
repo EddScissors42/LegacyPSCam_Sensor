@@ -28,7 +28,7 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
 | **Rastreamento Multi-Jogador (2P)** | 🟡 Parcialmente Implementado | `pose_tracker.py` | O MediaPipe suporta `num_poses=2`, mas o Lite foca em 1P. |
 | **Auto-Framing / FaceFollow PTZ** | ✅ Totalmente Implementado | `pose_tracker.py` | Auto-framing digital com zoom suave (1.22x) e centralização dinâmica do rosto para a foto/avatar do dançarino no Just Dance. |
 | **Celular Virtual (Emulador JD Controller via Câmera)** | ✅ Totalmente Implementado | `virtual_phone.py` / `ui/gui_qt.py` | Emula um smartphone conectado via WebSocket local (`/smartphone`) e converte o movimento 3D da mão na câmera em dados de acelerômetro 3D (`JD_PhoneScoringData`) e comandos de menu para músicas que só suportam controle de mão. |
-| **DualShock 4 [EXPERIMENTAL]** | 🟡 Interface Pronta (Aguardando Driver Técnico) | `ui/gui_qt.py` / `ui/icons.py` | Modo de entrada dedicado na barra lateral (subtítulo '⚠️ EXPERIMENTAL', 100% Bluetooth) com aba exclusiva 'Controller Settings', ícones vetoriais/raster refinados e aviso de segurança em inglês. |
+| **DualShock 4 [EXPERIMENTAL]** | ✅ Totalmente Implementado | `sensor/ds4_controller.py` / `ui/gui_qt.py` | Driver nativo Bluetooth HID (500+ Hz) com handshake 0x11, leitura do acelerômetro 3D, feedback de botões, rumble háptico, telemetria em tempo real e ponte para o Just Dance via Virtual Phone. |
 | **Modo Headless (Sem Janela)** | ⏳ Planejado | `tracking_session.py` | Rastrear em background sem gastar GPU com janela gráfica. |
 
 ---
@@ -250,14 +250,30 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
     - Atualização do cabeçalho da sidebar para `"ooomaga :O"` e dica de DLL clarificada para `"Copy Kinect10.dll to the game folder (only for Legacy Offline PC)"`.
     - Tipografia de alto contraste com cores escuras explícitas (`#0F172A`) para "TRACKED HAND" e "SENSITIVITY", eliminando problemas de texto branco/invisível em temas escuros do Windows e seguindo rigorosamente o padrão visual da aba de Calibração.
 
-### 21. Modo DualShock 4 [EXPERIMENTAL] — Interface e Controller Settings (v0.2.18 Alpha)
-- **Objetivo:** Adicionar suporte visual e estrutural para usar o controle DualShock 4 como controle de mão sem fio (utilizando o sensor Sixaxis / IMU de 6 eixos de hardware via Bluetooth).
-- **Interface Implementada (`ui/gui_qt.py`, `ui/icons.py` & `assets/`):**
-  - **Novo Card de Navegação na Barra Lateral:** Título `DualShock 4` com subtítulo `⚠️ EXPERIMENTAL` abaixo da Standard Webcam em `CAPTURE DEVICE`, carregando o ícone supersampled de `assets/dualshock4.jpg` redimensionado e com margens elegantes.
-  - **Exclusividade Bluetooth (Zero Referências a USB):** Foco 100% sem fio via Bluetooth do Windows, eliminando menções a conexões cabeadas nas instruções operacionais e caixas de diálogo.
-  - **Aba Exclusiva "Controller Settings":** Ao selecionar o DualShock 4, as abas de câmera (`Video Settings`, `Calibration`, `Experimental`) são ocultadas e substituídas exclusivamente pela aba `Controller Settings` com o ícone vetorial `assets/controller.svg`.
-  - **Banner de Alerta de Segurança e Lunatismo (English Only):** Callout estilizado com o aviso formal em inglês (`CAUTION: Playing with a DualShock 4 is for lunatics!...`) instruindo a segurar o controle firmemente e destacando a natureza experimental da funcionalidade.
-  - **Layout de Configurações do Controle:** Bloco estilizado com seleção de mão ativa (`Right Hand` / `Left Hand`), seletor de ganho de hardware e instruções operacionais, preparado para a etapa de integração técnica.
+### 21. Modo DualShock 4 [EXPERIMENTAL] — Driver Bluetooth HID & Motion Scoring (v0.3.0 Alpha)
+- **Objetivo:** Permitir o uso direto do controle DualShock 4 como controle de mão sem fio para dançar no Just Dance PC, aproveitando o sensor IMU Sixaxis interno (acelerômetro de 3 eixos e giroscópio de 3 eixos).
+- **Implementação Técnica do Driver (`sensor/ds4_controller.py`):**
+  - **Zero Dependências Externas (Native Win32):** Implementado 100% com `ctypes` utilizando as bibliotecas padrão do Windows (`setupapi.dll`, `hid.dll` e `kernel32.dll`), sem exigir pacotes externos adicionais.
+  - **Enumeração Automática de Interfaces HID Bluetooth:** Busca pelas interfaces registradas sob a GUID de dispositivo HID (`{4d1e55b2-f16f-11cf-88cb-001111000030}`) filtrando por Sony Interactive Entertainment (`VID 0x054C`) e modelos DS4 v1/v2 (`PID 0x05C4` e `PID 0x09CC`).
+  - **Handshake de Ativação do Relatório Estendido 0x11:**
+    - Por padrão, o Windows Bluetooth inicia o controle no modo simplificado PC (Relatório `0x01`), que transmite apenas analógicos e botões e omite o sensor IMU.
+    - O driver envia um **Output Report `0x11`** de 78 bytes com checksum **CRC-32 (IEEE 802.3)** inicializado com a semente específica de Bluetooth Output `0xA2`, ativando o streaming completo de alta frequência dos sensores.
+    - Configura a barra de luz (Lightbar) para o tom icônico **PlayStation Blue** (`RGB: 0, 67, 156`).
+  - **Taxa de Amostragem Ultrarrápida (~500 a 600 Hz):** Leitura assíncrona contínua via thread dedicada com baixa sobrecarga de CPU, capturando mais de 500 amostras por segundo.
+  - **Escala Física e Orientação:**
+    - Escala bruta de hardware de 8192 LSB por 1.0G traduzida em forças G reais.
+    - Mapeamento coordenado para o protocolo de pontuação do Just Dance (eixos lateral X, vertical Y e longitudinal Z).
+  - **Mapeamento de Botões Físicos para Navegação no Jogo:**
+    - `✕ (Cross)`: Envia comando `VALID` (Confirmar / Enter).
+    - `○ (Circle)`: Envia comando `BACK` (Voltar / Esc).
+    - `△ (Triangle)`: Envia `FTUE_FINISH` (Pular tutoriais / Finish).
+    - `D-Pad (Cima / Baixo / Esquerda / Direita)`: Navegação fluida no menu.
+    - `Options`: Pausa e despausa a partida (`PAUSE`).
+  - **Feedback Háptico (Vibração / Rumble):**
+    - Suporte a pulsos de vibração de alta e baixa frequência nos motores esquerdo e direito, com confirmação háptica ao conectar e ao pressionar botões de confirmação.
+  - **Telemetria de Bateria:** Leitura em tempo real do nível de carga (0% a 100%) e status de carregamento a partir do byte 32 do relatório.
+  - **Sessão de Dança Visual (`run_ds4_tracking_session`):**
+    - Janela gráfica estilizada com indicadores em barras das forças G em 3 eixos, magnitude total, botões ativos que se iluminam ao serem pressionados, atalhos de teclado e integração direta com a memória compartilhada e o servidor WebSocket local do Just Dance.
 
 ---
 

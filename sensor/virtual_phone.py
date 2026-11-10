@@ -713,6 +713,30 @@ class VirtualPhoneController:
 
         return accel
 
+    def update_from_hardware_accel(self, ax: float, ay: float, az: float) -> Tuple[float, float, float]:
+        """
+        Updates the 3D accelerometer readings directly from a physical hardware IMU
+        (e.g. Sony DualShock 4 connected via Bluetooth).
+        """
+        now = time.perf_counter()
+        accel = (float(ax), float(ay), float(az))
+        self._latest_accel = accel
+        self._last_joint_update_ts = now
+
+        # Write to CSV log if active
+        if self._logging_enabled and self._log_file is not None:
+            with self._log_lock:
+                if self._log_file is not None:
+                    try:
+                        ts_ms = int(now * 1000)
+                        self._log_file.write(
+                            f"{ts_ms},{ax:.4f},{ay:.4f},{az:.4f},0.000,1.00,0.000,0.000,0.000,1\n"
+                        )
+                    except OSError:
+                        pass
+
+        return accel
+
     def trigger_test_shake(self, duration_sec: float = 1.2) -> None:
         """Simulates a rhythmic dance hand shake for testing scoring without camera tracking."""
         self._shake_until_ts = time.perf_counter() + max(0.2, float(duration_sec))

@@ -36,6 +36,9 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
     stop_event: optional threading.Event to signal loop termination.
     """
     mode = config.get("camera_mode", "pscam")
+    if mode == "ds4":
+        return run_ds4_tracking_session(config, on_close_callback=on_close_callback, stop_event=stop_event)
+
     cam_idx = config.get("camera_index", 0)
     if cam_idx < 0:
         cams = CameraManager.enumerate_cameras()
@@ -259,6 +262,283 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
         tracker.close()
         cv2.destroyAllWindows()
         print("[INFO] Tracking session ended.")
+        if on_close_callback:
+            on_close_callback()
+
+    return True
+
+
+def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
+    """
+    Dedicated motion tracking loop for the Sony DualShock 4 controller over Bluetooth.
+    Streams 3D physical accelerometer samples directly into Just Dance via Virtual Phone,
+    provides visual feedback and handles button shortcuts.
+    """
+    import numpy as np
+    from sensor.ds4_controller import get_ds4_controller
+    from sensor.virtual_phone import get_virtual_phone
+
+    ds4 = get_ds4_controller()
+    if not ds4.is_connected:
+        if not ds4.connect():
+            print("[ERROR] Failed to connect to DualShock 4 via Bluetooth.")
+            if on_close_callback:
+                on_close_callback()
+            return False
+
+    hand = str(config.get("ds4_hand", "right")).lower()
+    sens = float(config.get("ds4_sensitivity", 1.0))
+    ds4.hand = hand
+    ds4.sensitivity = sens
+
+    vphone = get_virtual_phone()
+    vphone.configure(
+        host=str(config.get("virtual_phone_host", "127.0.0.1")),
+        port=int(config.get("virtual_phone_port", 8080)),
+        hand=hand,
+        sensitivity=sens,
+        phone_name=str(config.get("virtual_phone_name", "Legacy PSCam DS4")),
+    )
+    if not vphone.enabled:
+        vphone.set_enabled(True)
+
+    set_high_resolution_timer(True)
+    bridge = KinectBridge()
+
+    # Optional webcam grabber for silhouette if camera is present
+    cam = None
+    try:
+        cams = CameraManager.enumerate_cameras()
+        webcams = [c for c in cams if not c.is_pscam]
+        if webcams:
+            cam = cv2.VideoCapture(webcams[0].index, cv2.CAP_DSHOW)
+            cam.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            cam.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            cam.set(cv2.CAP_PROP_FPS, 30)
+    except Exception:
+        cam = None
+
+    window_name = "Legacy PSCam Sensor — DualShock 4"
+    cv2.namedWindow(window_name, cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_EXPANDED)
+    cv2.resizeWindow(window_name, 720, 480)
+
+    print(f"\n==========================================")
+    print(f"  STARTING DUALSHOCK 4 TRACKING SESSION")
+    print(f"  Hand: {hand.upper()} | Sensitivity: {sens:.2f}x")
+    print(f"  HID Polling: {ds4.state.sample_rate_hz:.0f} Hz | Battery: {ds4.state.battery_pct}%")
+    print(f"==========================================\n")
+
+    # Dark background canvas for rendering
+    canvas_w, canvas_h = 640, 480
+    dark_bg = np.zeros((canvas_h, canvas_w, 3), dtype=np.uint8)
+    for y in range(canvas_h):
+        r_val = int(12 + (y / canvas_h) * 10)
+        g_val = int(18 + (y / canvas_h) * 12)
+        b_val = int(28 + (y / canvas_h) * 20)
+        dark_bg[y, :] = (b_val, g_val, r_val)
+
+    try:
+        while True:
+            if stop_event is not None and stop_event.is_set():
+                break
+
+            st = ds4.state
+            ax, ay, az = st.accel_g
+            tot_g = math.sqrt(ax * ax + ay * ay + az * az)
+
+            # Grab camera frame if available, else copy gradient canvas
+            if cam is not None and cam.isOpened():
+                ret_cam, cam_frame = cam.read()
+                if ret_cam and cam_frame is not None:
+                    cam_frame = cv2.flip(cam_frame, 1)
+                    if cam_frame.shape[1] != canvas_w or cam_frame.shape[0] != canvas_h:
+                        cam_frame = cv2.resize(cam_frame, (canvas_w, canvas_h))
+                    frame = cv2.addWeighted(cam_frame, 0.40, dark_bg, 0.60, 0)
+                else:
+                    frame = dark_bg.copy()
+            else:
+                frame = dark_bg.copy()
+
+            # Render DualShock 4 HUD Header (PlayStation Blue banner)
+            cv2.rectangle(frame, (0, 0), (canvas_w, 54), (156, 67, 0), -1)
+            cv2.putText(
+                frame,
+                "DUALSHOCK 4 MOTION SENSOR (BLUETOOTH)",
+                (18, 34),
+                cv2.FONT_HERSHEY_DUPLEX,
+                0.64,
+                (255, 255, 255),
+                1,
+                cv2.LINE_AA,
+            )
+
+            # Connection & Battery badge
+            batt_str = f"BATTERY: {st.battery_pct}%" + (" [CHARGING]" if st.is_charging else "")
+            cv2.putText(
+                frame,
+                batt_str,
+                (canvas_w - 210, 34),
+                cv2.FONT_HERSHEY_DUPLEX,
+                0.44,
+                (200, 240, 255),
+                1,
+                cv2.LINE_AA,
+            )
+
+            # Game connection status
+            v_status = vphone.status_text
+            cv2.putText(
+                frame,
+                f"Just Dance PC: {v_status}",
+                (20, 85),
+                cv2.FONT_HERSHEY_DUPLEX,
+                0.50,
+                (0, 230, 255) if vphone.connected else (180, 180, 180),
+                1,
+                cv2.LINE_AA,
+            )
+
+            # Hand & Sensitivity info
+            cv2.putText(
+                frame,
+                f"Active Hand: {hand.upper()} | Sens: {sens:.2f}x | HID: {st.sample_rate_hz:.0f} Hz",
+                (20, 115),
+                cv2.FONT_HERSHEY_DUPLEX,
+                0.48,
+                (255, 255, 255),
+                1,
+                cv2.LINE_AA,
+            )
+
+            # 3D G-Force Gauge Bars (X, Y, Z)
+            gauge_y_start = 160
+            bar_w_max = 180
+            axes_data = [
+                ("ACCEL X (Lateral)", ax, (0, 215, 255)),    # Gold/Yellow
+                ("ACCEL Y (Vertical)", ay, (255, 128, 0)),   # Cyan
+                ("ACCEL Z (Forward)", az, (100, 255, 100)),  # Neon Green
+            ]
+
+            for idx, (label, val, bar_col) in enumerate(axes_data):
+                y_pos = gauge_y_start + idx * 45
+                cv2.putText(
+                    frame,
+                    f"{label}: {val:+.2f} G",
+                    (20, y_pos + 12),
+                    cv2.FONT_HERSHEY_DUPLEX,
+                    0.46,
+                    (220, 220, 220),
+                    1,
+                    cv2.LINE_AA,
+                )
+                # Background track
+                bx = 260
+                cv2.rectangle(frame, (bx - bar_w_max, y_pos), (bx + bar_w_max, y_pos + 14), (45, 45, 45), -1)
+                cv2.line(frame, (bx, y_pos - 2), (bx, y_pos + 16), (150, 150, 150), 1)
+
+                # Filled bar clamped to [-4G, +4G]
+                bar_len = int(max(-bar_w_max, min(bar_w_max, (val / 4.0) * bar_w_max)))
+                if bar_len > 0:
+                    cv2.rectangle(frame, (bx, y_pos), (bx + bar_len, y_pos + 14), bar_col, -1)
+                elif bar_len < 0:
+                    cv2.rectangle(frame, (bx + bar_len, y_pos), (bx, y_pos + 14), bar_col, -1)
+
+            # Total G Magnitude
+            cv2.putText(
+                frame,
+                f"TOTAL G-FORCE: {tot_g:.2f} G",
+                (20, 310),
+                cv2.FONT_HERSHEY_DUPLEX,
+                0.60,
+                (0, 255, 200) if tot_g >= 2.5 else (200, 200, 200),
+                1,
+                cv2.LINE_AA,
+            )
+
+            # Interactive Button Indicators
+            btn_y = 365
+            btns = st.buttons
+            cv2.putText(
+                frame,
+                "PHYSICAL BUTTONS:",
+                (20, btn_y),
+                cv2.FONT_HERSHEY_DUPLEX,
+                0.46,
+                (160, 160, 160),
+                1,
+                cv2.LINE_AA,
+            )
+
+            btn_badges = [
+                ("✕ VALID", btns.get("cross", False), (0, 230, 100)),
+                ("○ BACK", btns.get("circle", False), (60, 60, 240)),
+                ("△ FTUE", btns.get("triangle", False), (0, 180, 255)),
+                ("□", btns.get("square", False), (200, 100, 255)),
+                ("OPTIONS", btns.get("options", False), (240, 240, 60)),
+            ]
+
+            badge_x = 180
+            for label, is_act, col in btn_badges:
+                txt_w = len(label) * 9 + 16
+                b_bg = col if is_act else (50, 50, 50)
+                b_txt_col = (0, 0, 0) if is_act else (180, 180, 180)
+                cv2.rectangle(frame, (badge_x, btn_y - 15), (badge_x + txt_w, btn_y + 8), b_bg, -1)
+                cv2.rectangle(frame, (badge_x, btn_y - 15), (badge_x + txt_w, btn_y + 8), (100, 100, 100), 1)
+                cv2.putText(
+                    frame,
+                    label,
+                    (badge_x + 8, btn_y),
+                    cv2.FONT_HERSHEY_DUPLEX,
+                    0.42,
+                    b_txt_col,
+                    1,
+                    cv2.LINE_AA,
+                )
+                badge_x += txt_w + 10
+
+            # Footer navigation hints
+            cv2.rectangle(frame, (0, canvas_h - 38), (canvas_w, canvas_h), (20, 20, 20), -1)
+            cv2.putText(
+                frame,
+                "[✕ / Enter / Space] Confirm   •   [○ / Esc] Back   •   [R] Test Rumble   •   [Q] Exit",
+                (20, canvas_h - 14),
+                cv2.FONT_HERSHEY_DUPLEX,
+                0.40,
+                (140, 140, 140),
+                1,
+                cv2.LINE_AA,
+            )
+
+            # Update shared memory for Just Dance (mutes Kinect pose channel so player 1 phone is exclusive)
+            bridge.pose.write_empty()
+            bridge.pose_v2.write_empty()
+            bridge.image.write_image_and_mask(frame, np.zeros((240, 320), dtype=np.uint8), tracked=True)
+
+            cv2.imshow(window_name, frame)
+
+            key = cv2.waitKey(16) & 0xFF
+            if key in (27, ord('q'), ord('Q')):
+                print("[INFO] Exit requested by user.")
+                break
+            elif key in (ord('r'), ord('R')):
+                ds4.trigger_rumble(small=160, large=100, duration_sec=0.25)
+            elif key in (13, 32):  # Enter or Space
+                vphone.send_input("VALID")
+                ds4.trigger_rumble(small=120, large=0, duration_sec=0.08)
+
+            if cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1:
+                break
+
+    except Exception as e:
+        print(f"[ERROR] Exception in DualShock 4 tracking loop: {e}")
+    finally:
+        set_high_resolution_timer(False)
+        bridge.write_empty()
+        bridge.close()
+        if cam is not None:
+            cam.release()
+        cv2.destroyAllWindows()
+        print("[INFO] DualShock 4 tracking session ended.")
         if on_close_callback:
             on_close_callback()
 

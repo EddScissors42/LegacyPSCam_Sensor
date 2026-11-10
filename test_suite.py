@@ -524,6 +524,9 @@ def test_project_structure():
     assert hasattr(sensor, "CameraManager")
     assert hasattr(sensor, "KinectBridge")
     assert hasattr(sensor, "run_tracking_session")
+    assert hasattr(sensor, "DS4Controller")
+    assert hasattr(sensor, "find_ds4_devices")
+    assert hasattr(sensor, "get_ds4_controller")
 
     import ui
     assert hasattr(ui, "LegacySensorGUI")
@@ -593,6 +596,26 @@ def test_project_structure():
         assert len(score_pkt["root"]["accelData"][0]) == 3
         assert PHONE_INPUT_HASHES["VALID"] == 1084313942
         assert PHONE_INPUT_HASHES["UP"] == 3690595578
+
+        # Verify VirtualPhoneController.update_from_hardware_accel
+        vp = get_virtual_phone()
+        hw_accel = vp.update_from_hardware_accel(0.05, 1.02, 0.22)
+        assert hw_accel == (0.05, 1.02, 0.22)
+        assert vp.latest_accel == (0.05, 1.02, 0.22)
+
+        # Verify DualShock 4 UI controls and tab switching
+        assert hasattr(win, "card_ds4"), "DualShock 4 sidebar card must exist"
+        assert hasattr(win, "btn_tab_controller"), "Controller Settings tab button must exist"
+        assert hasattr(win, "page_ds4"), "DualShock 4 page widget must exist"
+        assert hasattr(win, "btn_ds4_rumble"), "Test rumble button must exist in DS4 view"
+        assert hasattr(win, "btn_ds4_reconnect"), "Reconnect button must exist in DS4 view"
+
+        win._set_mode("ds4")
+        assert win.active_tab == "controller", "Should switch to controller settings tab on ds4 mode"
+        assert not win.btn_tab_controller.isHidden(), "Controller settings tab must be visible in ds4 mode"
+        assert win.btn_tab_video.isHidden(), "Video settings tab must be hidden in ds4 mode"
+        win._set_mode("webcam")
+        win._switch_tab("exp")
 
         # Calibration tab gating when camera is not connected
         if not win.is_camera_accessible():

@@ -18,6 +18,7 @@ LegacySensor_Lite/
 │   ├── camera_manager.py       # Descoberta, negociação DirectShow/MSMF e captura assíncrona
 │   ├── pose_tracker.py         # Motor MediaPipe Pose, Hand Anchor, Calibrador, EMA e Máscara
 │   ├── virtual_phone.py        # Cliente WebSocket UbiArt (/smartphone) e Acelerômetro 3D da Mão
+│   ├── ds4_controller.py       # Driver Bluetooth HID nativo DualShock 4 (500+ Hz, IMU, botões e vibração)
 │   ├── kinect_shared_memory.py # Driver IPC com KinectBridge (JDP1 344B + JMI1/2 1.3MB + JXC1 28B)
 │   ├── tracking_session.py     # Orquestrador do loop de rastreamento e eventos de teclado
 │   ├── tracking_overlay.py     # Renderização visual do esqueleto, silhueta sombreada e HUD

@@ -1,5 +1,5 @@
 {
-    "camera_mode": "ds4",
+    "camera_mode": "webcam",
     "camera_index": 0,
     "pscam_preset": "1280x800 @ 60 FPS",
     "webcam_preset": "640x480 @ 60 FPS",

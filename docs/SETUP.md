@@ -102,6 +102,22 @@ Por padrão, o executável do driver PSCam4Win (`PSCam4WinTray.exe`) possui uma 
 
 ---
 
+## 5. Pareamento e Uso do DualShock 4 (Modo Controle Bluetooth)
+
+Para utilizar o controle DualShock 4 como controle de mão (rastreando os movimentos pelo acelerômetro físico interno):
+
+1. **Colocar o DualShock 4 em Modo de Pareamento:**
+   - Com o controle desligado, mantenha pressionados os botões **Share** e **PS** simultaneamente por 3 a 5 segundos até que a barra de luz comece a piscar rapidamente em branco.
+2. **Conectar no Windows:**
+   - Acesse **Configurações do Windows > Bluetooth e Dispositivos > Adicionar Dispositivo > Bluetooth**.
+   - Selecione **Wireless Controller**. O Windows concluirá o pareamento e registrará o dispositivo HID Bluetooth.
+3. **No Legacy PSCam Sensor:**
+   - Na barra lateral em `CAPTURE DEVICE`, clique em **DualShock 4**.
+   - Na aba **Controller Settings**, você verá o status em tempo real (`Status: Connected • 500 Hz • Battery: X%`), a leitura contínua do acelerômetro 3D e poderá testar a vibração clicando em **Test Rumble Vibration**.
+   - Clique em **START CONTROLLER (DS4)** para iniciar a sessão de dança!
+
+---
+
 ## 6. Como Jogar no Just Dance PC
 
 1. Com o rastreador ativo (janela com esqueleto e contadores de FPS visível), abra o **Just Dance PC**.

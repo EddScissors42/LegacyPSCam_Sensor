@@ -68,6 +68,7 @@ from sensor.config_manager import ConfigManager, parse_preset, PRESETS_PSCAM, PR
 from sensor.camera_manager import CameraManager
 from sensor.kinect_shared_memory import KinectBridge
 from sensor.virtual_phone import get_virtual_phone
+from sensor.ds4_controller import get_ds4_controller, find_ds4_devices
 from sensor import tracking_session
 
 
@@ -1890,9 +1891,78 @@ class LegacySensorQtGUI(QMainWindow):
         sens_box.addWidget(lbl_sens)
         sens_box.addWidget(self.cb_ds4_sens)
 
+        current_hand = self.cfg.get("ds4_hand", "right").lower()
+        self.cb_ds4_hand.setCurrentIndex(0 if current_hand == "right" else 1)
+        self.cb_ds4_hand.currentIndexChanged.connect(self._on_ds4_hand_changed)
+
+        current_sens = float(self.cfg.get("ds4_sensitivity", 1.0))
+        if abs(current_sens - 1.25) < 0.05:
+            self.cb_ds4_sens.setCurrentIndex(1)
+        elif abs(current_sens - 0.85) < 0.05:
+            self.cb_ds4_sens.setCurrentIndex(2)
+        else:
+            self.cb_ds4_sens.setCurrentIndex(0)
+        self.cb_ds4_sens.currentIndexChanged.connect(self._on_ds4_sens_changed)
+
         settings_row.addLayout(hand_box, stretch=0)
         settings_row.addLayout(sens_box, stretch=1)
         ds4_info_layout.addLayout(settings_row)
+
+        # Real-time Telemetry Readout
+        self.lbl_ds4_accel = QLabel("3D Accelerometer: Searching for controller...", ds4_info_frame)
+        self.lbl_ds4_accel.setStyleSheet(
+            f"font-family: '{self.font_body}'; font-size: 11px; font-weight: 600; color: {PALETTE['text_main']}; background: transparent; border: none;"
+        )
+        ds4_info_layout.addWidget(self.lbl_ds4_accel)
+
+        # Quick Action Buttons: Test Rumble & Reconnect
+        actions_row = QHBoxLayout()
+        actions_row.setSpacing(10)
+
+        self.btn_ds4_rumble = QPushButton("⚡ Test Rumble Vibration", ds4_info_frame)
+        self.btn_ds4_rumble.setStyleSheet(f"""
+            QPushButton {{
+                background-color: #FFFFFF;
+                color: {PALETTE["ps_blue"]};
+                font-family: '{self.font_heading}', sans-serif;
+                font-size: 11px;
+                font-weight: bold;
+                border: 1px solid {PALETTE["tab_gray_border"]};
+                border-radius: 6px;
+                padding: 6px 14px;
+            }}
+            QPushButton:hover {{
+                border-color: {PALETTE["ps_blue"]};
+                background-color: #F8FAFC;
+            }}
+        """)
+        self.btn_ds4_rumble.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_ds4_rumble.clicked.connect(self._test_ds4_rumble)
+
+        self.btn_ds4_reconnect = QPushButton("🔄 Reconnect Controller", ds4_info_frame)
+        self.btn_ds4_reconnect.setStyleSheet(f"""
+            QPushButton {{
+                background-color: #FFFFFF;
+                color: #0F172A;
+                font-family: '{self.font_heading}', sans-serif;
+                font-size: 11px;
+                font-weight: bold;
+                border: 1px solid {PALETTE["tab_gray_border"]};
+                border-radius: 6px;
+                padding: 6px 14px;
+            }}
+            QPushButton:hover {{
+                border-color: {PALETTE["ps_blue"]};
+                background-color: #F8FAFC;
+            }}
+        """)
+        self.btn_ds4_reconnect.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_ds4_reconnect.clicked.connect(self._reconnect_ds4)
+
+        actions_row.addWidget(self.btn_ds4_rumble)
+        actions_row.addWidget(self.btn_ds4_reconnect)
+        actions_row.addStretch()
+        ds4_info_layout.addLayout(actions_row)
 
         # Instruction details
         lbl_instructions = QLabel(
@@ -2064,6 +2134,7 @@ class LegacySensorQtGUI(QMainWindow):
             self._switch_tab("controller")
             if hasattr(self, "btn_start"):
                 self.btn_start.setText("START CONTROLLER (DS4)")
+            threading.Thread(target=lambda: get_ds4_controller().connect(), daemon=True).start()
         else:
             if hasattr(self, "btn_tab_controller"):
                 self.btn_tab_controller.setVisible(False)
@@ -2559,6 +2630,85 @@ class LegacySensorQtGUI(QMainWindow):
             self.lbl_vphone_accel.setText(
                 f"3D Accelerometer: X: {ax:+.2f}G | Y: {ay:+.2f}G | Z: {az:+.2f}G ({spd:.1f} m/s)"
             )
+        self._update_ds4_ui_readout()
+
+    def _update_ds4_ui_readout(self):
+        if not hasattr(self, "lbl_ds4_status") or not hasattr(self, "lbl_ds4_accel"):
+            return
+        ds4 = get_ds4_controller()
+        if ds4.is_connected:
+            st = ds4.state
+            charging_str = " ⚡ [Charging]" if st.is_charging else ""
+            self.lbl_ds4_status.setText(
+                f"Status: Connected (Bluetooth HID • {st.sample_rate_hz:.0f} Hz • Battery: {st.battery_pct}%{charging_str})"
+            )
+            self.lbl_ds4_status.setStyleSheet(
+                f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['ps_blue']}; background: transparent; border: none;"
+            )
+            ax, ay, az = st.accel_g
+            tot = math.sqrt(ax * ax + ay * ay + az * az)
+            act_btns = [b.upper() for b, pressed in st.buttons.items() if pressed]
+            btn_str = f"  |  Buttons: {', '.join(act_btns)}" if act_btns else ""
+            self.lbl_ds4_accel.setText(
+                f"3D Accelerometer: X: {ax:+.2f}G  |  Y: {ay:+.2f}G  |  Z: {az:+.2f}G  |  |G|: {tot:.2f}G{btn_str}"
+            )
+            self.lbl_ds4_accel.setStyleSheet(
+                f"font-family: '{self.font_body}'; font-size: 11px; font-weight: 600; color: {PALETTE['text_main']}; background: transparent; border: none;"
+            )
+        else:
+            paths = find_ds4_devices()
+            if paths:
+                self.lbl_ds4_status.setText("Status: DualShock 4 Paired (Press Reconnect or PS Button)")
+                self.lbl_ds4_status.setStyleSheet(
+                    f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['status_warn']}; background: transparent; border: none;"
+                )
+            else:
+                self.lbl_ds4_status.setText("Status: Controller Disconnected (Pair via Windows Bluetooth Settings)")
+                self.lbl_ds4_status.setStyleSheet(
+                    f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['text_muted']}; background: transparent; border: none;"
+                )
+            self.lbl_ds4_accel.setText("3D Accelerometer: Disconnected")
+            self.lbl_ds4_accel.setStyleSheet(
+                f"font-family: '{self.font_body}'; font-size: 11px; font-weight: 500; color: {PALETTE['text_muted']}; background: transparent; border: none;"
+            )
+
+    def _test_ds4_rumble(self):
+        ds4 = get_ds4_controller()
+        if not ds4.is_connected:
+            ds4.connect()
+        if ds4.is_connected:
+            ds4.trigger_rumble(small=180, large=120, duration_sec=0.35)
+        else:
+            QMessageBox.information(
+                self,
+                "DualShock 4",
+                "DualShock 4 is not connected. Please pair it via Windows Bluetooth settings."
+            )
+
+    def _reconnect_ds4(self):
+        ds4 = get_ds4_controller()
+        if ds4.is_connected:
+            ds4.disconnect()
+            time.sleep(0.1)
+        ok = ds4.connect()
+        if ok:
+            ds4.trigger_rumble(small=140, large=80, duration_sec=0.15)
+        self._update_ds4_ui_readout()
+
+    def _on_ds4_hand_changed(self, idx: int):
+        hand = "right" if idx == 0 else "left"
+        self.cfg["ds4_hand"] = hand
+        ds4 = get_ds4_controller()
+        ds4.hand = hand
+        self._save_settings()
+
+    def _on_ds4_sens_changed(self, idx: int):
+        sens_map = {0: 1.0, 1: 1.25, 2: 0.85}
+        sens = sens_map.get(idx, 1.0)
+        self.cfg["ds4_sensitivity"] = sens
+        ds4 = get_ds4_controller()
+        ds4.sensitivity = sens
+        self._save_settings()
 
     def _select_calib_preset(self, preset_id: str):
         if preset_id not in CALIB_PRESETS:
@@ -2651,13 +2801,35 @@ class LegacySensorQtGUI(QMainWindow):
         mode = self.cfg.get("camera_mode", "pscam")
 
         if mode == "ds4":
-            QMessageBox.information(
-                self,
-                "DualShock 4 [EXPERIMENTAL]",
-                "DualShock 4 UI setup complete!\n\n"
-                "The interface layout and navigation card are configured.\n"
-                "Technical Bluetooth HID polling and motion scoring mapping will be connected in the next phase."
-            )
+            ds4 = get_ds4_controller()
+            if not ds4.is_connected:
+                if not ds4.connect():
+                    QMessageBox.warning(
+                        self,
+                        "DualShock 4 Not Detected",
+                        "DualShock 4 controller was not detected on this computer!\n\n"
+                        "• Ensure the DualShock 4 is paired wirelessly via Windows Bluetooth settings.\n"
+                        "• Press the PS Button on the controller to wake it up."
+                    )
+                    return
+
+            self._save_settings()
+            self.is_tracking_active = True
+            self.btn_start.setText("TRACKING IN PROGRESS...")
+            self.btn_start.setEnabled(False)
+            self.showMinimized()
+
+            def tracking_worker():
+                success = False
+                err_msg = ""
+                try:
+                    success = tracking_session.run_tracking_session(self.cfg)
+                except Exception as e:
+                    err_msg = str(e)
+                finally:
+                    self.tracking_finished_signal.emit(success, err_msg)
+
+            threading.Thread(target=tracking_worker, daemon=True).start()
             return
 
         if mode == "pscam":

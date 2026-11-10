@@ -286,3 +286,28 @@ O pacote `ui` expõe uma interface unificada baseada em **PySide6 (Qt 6)**:
 - `ui.LegacySensorQtGUI`: Janela principal baseada em PySide6 / Qt 6, com `SlidingStackedWidget`, curvas de animação cúbicas, detecção de hotplug por sinais Qt e balão contextual de estado de hardware.
 - `ui.LegacySensorGUI`: Alias padrão para `LegacySensorQtGUI`.
 - `ui.HAS_QT -> bool`: Booleano que indica se o PySide6 está instalado e operacional.
+
+---
+
+## 8. Driver Bluetooth HID do DualShock 4 (`sensor.ds4_controller`)
+
+Módulo nativo Windows HID (zero dependências) para leitura de alta taxa (500+ Hz) do controle DualShock 4 via Bluetooth.
+
+### Funções e Classes Principais
+- `find_ds4_devices() -> List[str]`: Enumera as interfaces HID PnP do Windows sob a GUID `{4d1e55b2-f16f-11cf-88cb-001111000030}` filtrando por VID `0x054C` e PID `0x05C4` / `0x09CC`.
+- `get_ds4_controller() -> DS4Controller`: Retorna a instância singleton do controlador.
+- `DS4Controller.connect(device_path=None) -> bool`: Abre o handle Win32, realiza o handshake do Relatório Estendido 0x11, aciona vibração háptica de boas-vindas e inicia a thread de amostragem.
+- `DS4Controller.disconnect() -> None`: Desativa a barra de luz e fecha o handle Win32.
+- `DS4Controller.trigger_rumble(small, large, duration_sec) -> None`: Dispara um pulso háptico assíncrono.
+- `DS4Controller.set_lightbar(r, g, b) -> None`: Altera a cor RGB da barra de luz LED.
+- `DS4State`: Dataclass contendo `connected`, `battery_pct`, `is_charging`, `accel_g (ax, ay, az)`, `gyro (gx, gy, gz)`, `buttons` e `sample_rate_hz`.
+
+### Estrutura do Pacote Bluetooth Output Report 0x11 (78 Bytes)
+- **Byte 0:** `0x11` (Report ID)
+- **Byte 1:** `0xC0` (Streaming & flags)
+- **Byte 3:** `0x07` (Habilita motores de rumble e LED lightbar)
+- **Byte 6:** Motor pequeno de alta frequência (0..255)
+- **Byte 7:** Motor grande de baixa frequência (0..255)
+- **Bytes 8–10:** RGB da barra de luz LED
+- **Bytes 74–77:** Checksum CRC-32 (IEEE 802.3) little-endian calculado sobre `bytes([0xA2]) + out_rep[0:74]`.
+
