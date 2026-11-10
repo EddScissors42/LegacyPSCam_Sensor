@@ -761,7 +761,7 @@ class LegacySensorQtGUI(QMainWindow):
         )
         sidebar_layout.addWidget(lbl_brand)
 
-        lbl_edition = QLabel("ooomaga :O", self.sidebar_frame)
+        lbl_edition = QLabel("for Legacy PC and JD2022 Dreyn", self.sidebar_frame)
         lbl_edition.setStyleSheet(
             f"font-family: '{self.font_body}'; font-size: 11px; font-weight: bold; color: {PALETTE['text_muted']}; background: transparent;"
         )
@@ -786,7 +786,7 @@ class LegacySensorQtGUI(QMainWindow):
         # 1.3 Card PS Camera (with supersampled icon)
         self.card_pscam = DeviceNavCard(
             "PlayStation®Camera",
-            "the most hated one",
+            "USB Adapter",
             self.font_heading,
             self.font_body,
             self.sidebar_frame
@@ -812,7 +812,7 @@ class LegacySensorQtGUI(QMainWindow):
         # 1.5 Card DualShock 4 (with supersampled icon)
         self.card_ds4 = DeviceNavCard(
             "DualShock 4",
-            "⚠️ EXPERIMENTAL",
+            "USB or Bluetooth",
             self.font_heading,
             self.font_body,
             self.sidebar_frame

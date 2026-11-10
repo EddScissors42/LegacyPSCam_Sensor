@@ -290,9 +290,12 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
 - **Aviso Informativo no Modo DualShock 4:** Incluído no balão de aviso: *"Esse modo de controle automaticamente usa o metodo experiemental Celular virtual, problemas podem acontecer."*
 - **Bloqueio de Acesso à Aba Experimental em Câmeras Desconectadas:** Quando uma webcam ou a PlayStation Camera estiver desconectada ou inacessível, a aba Experimental fica inativa e esmaecida (com cursor proibido), prevenindo configurações inconsistentes sem sensor de vídeo presente.
 - **Ativação Inteligente com Auto-Conexão:** Ao acionar "Skip Finish", o sistema automaticamente assegura que o cliente WebSocket UbiArt esteja habilitado (`set_enabled(True)`), atualiza a interface e dispara a sequência de bypass `PHONE_FTUE_FINISH` por 4 segundos contínuos para garantir a transição de telas no jogo.
+
+### 23. Compatibilidade Total USB/Bluetooth e Release Oficial (v0.4.0 Alpha)
 - **Compatibilidade DualShock 4 via USB e Bluetooth:** O driver HID Win32 em `sensor/ds4_controller.py` suporta conexão tanto sem fio (Bluetooth HID Reports 0x11/0x05) quanto com fio via cabo USB (Report 0x01 a 250 Hz com envio de relatórios de saída via `HidD_SetOutputReport` para contornar a ausência de endpoint interrupt OUT no Windows).
 - **Auto-Conexão e Separação de Status USB / Bluetooth:** A interface agora detecta imediatamente se o DualShock 4 foi conectado via cabo USB ou emparelhado via Bluetooth, exibindo `Status: Connected on USB` ou `Status: Connected via Bluetooth` com taxa de amostragem em tempo real e bateria. O painel de configurações (mão rastreada, sensibilidade, teste de vibração e atalhos) aparece automaticamente assim que o controle é conectado na USB, sem necessidade de iniciar o tracking previamente.
-- **Compilação de Release Automatizada sem Ícone Customizado:** Empacotamento PyInstaller autônomo com executável padrão do Windows (`icon=None`), runtime hook para isolamento do MediaPipe e pipeline de CI/CD via GitHub Actions.
+- **Janela de Rastreamento DS4 com Texto "Switch Coach":** No HUD inferior da janela OpenCV do modo DualShock 4, a legenda de controle para os botões L1/R1 foi padronizada para `[L1/R1] Switch Coach`.
+- **Compilação de Release Standalone sem Ícone Customizado:** Empacotamento PyInstaller autônomo com executável padrão do Windows (`icon=None`), runtime hook para isolamento do MediaPipe e pipeline de CI/CD via GitHub Actions.
 
 ---
 

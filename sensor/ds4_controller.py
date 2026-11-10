@@ -679,8 +679,8 @@ class DS4Controller:
     def _handle_button_press(self, btn: str, vphone) -> None:
         """
         Handles physical button presses on the DualShock 4:
-          - L1: Previous Coach / NPC (cycle backward)
-          - R1: Next Coach / NPC (cycle forward)
+          - L1: Previous Coach (cycle backward)
+          - R1: Next Coach (cycle forward)
           - Cross (✕): Enter / Confirm (VALID)
         Other buttons remain unmapped to avoid accidental pauses/missclicks during dance.
         """
