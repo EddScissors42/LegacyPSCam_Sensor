@@ -452,47 +452,28 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
                 cv2.LINE_AA,
             )
 
-            # Interactive Button Indicators (visual test only)
-            btn_y = 368
-            btns = st.buttons
+            # Coach selection & controls guidance
+            coach_text = f"COACH: {vphone.current_coach_id + 1} / {vphone.total_coaches}"
             cv2.putText(
                 frame,
-                "BUTTONS TEST:",
-                (20, btn_y),
+                coach_text,
+                (20, 365),
                 cv2.FONT_HERSHEY_DUPLEX,
-                0.44,
-                (160, 160, 160),
+                0.52,
+                (0, 230, 255),
                 1,
                 cv2.LINE_AA,
             )
-
-            btn_badges = [
-                ("✕", btns.get("cross", False), (0, 230, 100)),
-                ("○", btns.get("circle", False), (60, 60, 240)),
-                ("△", btns.get("triangle", False), (0, 180, 255)),
-                ("□", btns.get("square", False), (200, 100, 255)),
-                ("OPTIONS", btns.get("options", False), (240, 240, 60)),
-                ("SHARE", btns.get("share", False), (200, 200, 200)),
-            ]
-
-            badge_x = 160
-            for label, is_act, col in btn_badges:
-                txt_w = len(label) * 11 + 16
-                b_bg = col if is_act else (50, 50, 50)
-                b_txt_col = (0, 0, 0) if is_act else (180, 180, 180)
-                cv2.rectangle(frame, (badge_x, btn_y - 15), (badge_x + txt_w, btn_y + 8), b_bg, -1)
-                cv2.rectangle(frame, (badge_x, btn_y - 15), (badge_x + txt_w, btn_y + 8), (100, 100, 100), 1)
-                cv2.putText(
-                    frame,
-                    label,
-                    (badge_x + 8, btn_y),
-                    cv2.FONT_HERSHEY_DUPLEX,
-                    0.42,
-                    b_txt_col,
-                    1,
-                    cv2.LINE_AA,
-                )
-                badge_x += txt_w + 8
+            cv2.putText(
+                frame,
+                "[L1] Prev Coach   •   [R1] Next Coach   •   [X / Enter] Confirm",
+                (175, 365),
+                cv2.FONT_HERSHEY_DUPLEX,
+                0.42,
+                (220, 220, 220),
+                1,
+                cv2.LINE_AA,
+            )
 
             # Reconnection visual feedback
             now_ts = time.time()
@@ -500,7 +481,7 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
                 cv2.putText(
                     frame,
                     "Reconnecting DualShock 4...",
-                    (canvas_w - 260, btn_y),
+                    (canvas_w - 240, 365),
                     cv2.FONT_HERSHEY_DUPLEX,
                     0.44,
                     (0, 255, 255),
@@ -512,11 +493,11 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
             cv2.rectangle(frame, (0, canvas_h - 40), (canvas_w, canvas_h), (20, 20, 20), -1)
             cv2.putText(
                 frame,
-                "[Q] - Quit Tracking        [R] - Reconnect Controller",
-                (30, canvas_h - 15),
+                "[Q] Quit   •   [R] Reconnect DS4   •   [L1/R1] Change NPC   •   [X/Enter] Confirm",
+                (20, canvas_h - 15),
                 cv2.FONT_HERSHEY_DUPLEX,
-                0.46,
-                (255, 255, 255),
+                0.42,
+                (200, 200, 200),
                 1,
                 cv2.LINE_AA,
             )
@@ -543,6 +524,15 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
                     print("[INFO] DualShock 4 reconnected successfully!")
                 else:
                     print("[WARN] Failed to reconnect DualShock 4.")
+            elif key in (13, 32):  # Enter or Space
+                vphone.send_input("VALID")
+                ds4.trigger_rumble(small=160, large=80, duration_sec=0.10)
+            elif key in (ord('['), ord('a'), ord('A')):
+                vphone.change_coach(-1)
+                ds4.trigger_rumble(small=120, large=0, duration_sec=0.08)
+            elif key in (ord(']'), ord('d'), ord('D')):
+                vphone.change_coach(+1)
+                ds4.trigger_rumble(small=120, large=0, duration_sec=0.08)
 
             if cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1:
                 break

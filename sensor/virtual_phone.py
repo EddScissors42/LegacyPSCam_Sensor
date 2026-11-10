@@ -531,6 +531,10 @@ class VirtualPhoneController:
         self._status_text: str = "Disabled"
         self._last_error: str = ""
 
+        # Coach selection state (for songs with multiple coaches/NPCs)
+        self.current_coach_id: int = 0
+        self.total_coaches: int = 4
+
         # Dynamic command overrides supplied by JD_InputCollectionPhoneData
         self._available_inputs: Dict[str, str] = {}
 
@@ -760,6 +764,21 @@ class VirtualPhoneController:
         formatted = [[round(float(x), 4), round(float(y), 4), round(float(z), 4)] for x, y, z in accel_samples]
         return cls.build_root_packet("JD_PhoneScoringData", accelData=formatted)
 
+    def change_coach(self, delta: int = 1) -> int:
+        """
+        Cycles the selected coach/NPC index in the Just Dance lobby.
+        Sends JD_ChangeCoach_PhoneCommandData to the game.
+        """
+        with self._lock:
+            max_c = max(1, self.total_coaches)
+            self.current_coach_id = (self.current_coach_id + delta) % max_c
+            coach_id = self.current_coach_id
+
+        cmd = self.build_root_packet("JD_ChangeCoach_PhoneCommandData", coachId=coach_id)
+        self._cmd_queue.put(cmd)
+        print(f"[VPHONE] Switched Coach to: {coach_id + 1} / {self.total_coaches}")
+        return coach_id
+
     # ------------------------------------------------------------------
     # Menu & Action Commands
     # ------------------------------------------------------------------
@@ -776,21 +795,19 @@ class VirtualPhoneController:
         """
         act = action.upper().strip()
         if act in PHONE_INPUT_HASHES:
-            touch_on = self._available_inputs.get(
-                "TOUCH_ON",
-                self.build_root_packet("JD_TouchFeedback_PhoneCommandData", touchOn=True),
-            )
+            # Only send TOUCH_ON / TOUCH_OFF if explicitly supplied in availableInput (v2/JD2022)
+            # Avoids 1002 CLOSE_PROTOCOL_ERROR on JD2017/2018 Legacy (v1) which lacks touch feedback class
+            if "TOUCH_ON" in self._available_inputs:
+                self._cmd_queue.put(self._available_inputs["TOUCH_ON"])
+
             input_cmd = self._available_inputs.get(
                 act,
                 self.build_root_packet("JD_Input_PhoneCommandData", input=PHONE_INPUT_HASHES[act]),
             )
-            touch_off = self._available_inputs.get(
-                "TOUCH_OFF",
-                self.build_root_packet("JD_TouchFeedback_PhoneCommandData", touchOn=False),
-            )
-            self._cmd_queue.put(touch_on)
             self._cmd_queue.put(input_cmd)
-            self._cmd_queue.put(touch_off)
+
+            if "TOUCH_OFF" in self._available_inputs:
+                self._cmd_queue.put(self._available_inputs["TOUCH_OFF"])
         elif act == "BACK":
             self._cmd_queue.put(
                 self.build_root_packet("JD_Custom_PhoneCommandData", identifier="SHORTCUT_BACK")
@@ -812,6 +829,8 @@ class VirtualPhoneController:
         elif act.startswith("COACH_"):
             try:
                 coach_id = int(act.split("_", 1)[1])
+                with self._lock:
+                    self.current_coach_id = coach_id
                 self._cmd_queue.put(self.build_root_packet("JD_ChangeCoach_PhoneCommandData", coachId=coach_id))
             except ValueError:
                 pass
@@ -1050,6 +1069,25 @@ class VirtualPhoneController:
         elif cls_name in ("JD_PhoneUiData", "JD_PhoneUiSetupData", "JD_PhoneUiShortcutData", "JD_TriggerTransition_ConsoleCommandData"):
             if not self._handshake_complete:
                 self._handshake_complete = True
+
+            # Extract song coaches/NPCs from lobbySetup if present
+            lobby = None
+            if "setupData" in msg and isinstance(msg["setupData"], dict):
+                lobby = msg["setupData"].get("lobbySetup")
+            elif "lobbySetup" in msg and isinstance(msg["lobbySetup"], dict):
+                lobby = msg["lobbySetup"]
+
+            if isinstance(lobby, dict) and "coaches" in lobby:
+                coaches_list = lobby.get("coaches", [])
+                if isinstance(coaches_list, list) and coaches_list:
+                    with self._lock:
+                        self.total_coaches = max(1, len(coaches_list))
+                        for idx, c in enumerate(coaches_list):
+                            if isinstance(c, dict) and c.get("selectedOnEnter"):
+                                self.current_coach_id = idx
+                                break
+                    print(f"[VPHONE] Detected {self.total_coaches} coaches in song lobby (Active: {self.current_coach_id + 1}).")
+
             if "JD_PhoneUiFTUE" in raw_msg or "PHONE_FTUE_FINISH" in raw_msg:
                 self._ftue_until_ts = time.perf_counter() + 4.0
                 ws.send_text(

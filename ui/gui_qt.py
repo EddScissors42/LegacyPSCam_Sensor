@@ -2658,7 +2658,7 @@ class LegacySensorQtGUI(QMainWindow):
         else:
             paths = find_ds4_devices()
             if paths:
-                self.lbl_ds4_status.setText("Status: DualShock 4 Paired (Press Reconnect or PS Button)")
+                self.lbl_ds4_status.setText("Status: DualShock 4 Paired (Press Reconnect)")
                 self.lbl_ds4_status.setStyleSheet(
                     f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['status_warn']}; background: transparent; border: none;"
                 )

@@ -586,31 +586,33 @@ class DS4Controller:
             if now - last_out_refresh > 4.0:
                 last_out_refresh = now
                 self._send_output_report(self.led_r, self.led_g, self.led_b)
-            self.state.buttons = curr_buttons
-            self.state.battery_pct = batt_level
-            self.state.is_charging = is_charging
-            self.state.last_update_ts = now
-
-            if self.on_state_update is not None:
-                self.on_state_update(self.state)
-
-            # Periodic heartbeat (every 4s) to ensure Bluetooth connection remains extended
-            if now - last_out_refresh > 4.0:
-                last_out_refresh = now
-                self._send_output_report(self.led_r, self.led_g, self.led_b)
 
         self.state.connected = False
         self.state.sample_rate_hz = 0.0
 
     def _handle_button_press(self, btn: str, vphone) -> None:
         """
-        Physical button command dispatching is intentionally disabled to prevent
-        accidental presses/missclicks when holding or gripping the controller firmly
-        during fast dance moves. Only the internal 6-axis motion sensor is used for scoring.
+        Handles physical button presses on the DualShock 4:
+          - L1: Previous Coach / NPC (cycle backward)
+          - R1: Next Coach / NPC (cycle forward)
+          - Cross (✕): Enter / Confirm (VALID)
+        Other buttons remain unmapped to avoid accidental pauses/missclicks during dance.
         """
         if self.on_button_press is not None:
             self.on_button_press(btn)
-        # All vphone.send_input calls removed to prevent missclicks during dance.
+
+        if not vphone or not vphone.enabled:
+            return
+
+        if btn == "l1":
+            vphone.change_coach(-1)
+            self.trigger_rumble(small=120, large=0, duration_sec=0.08)
+        elif btn == "r1":
+            vphone.change_coach(+1)
+            self.trigger_rumble(small=120, large=0, duration_sec=0.08)
+        elif btn == "cross":
+            vphone.send_input("VALID")
+            self.trigger_rumble(small=160, large=80, duration_sec=0.10)
 
 
 _global_ds4_controller: Optional[DS4Controller] = None

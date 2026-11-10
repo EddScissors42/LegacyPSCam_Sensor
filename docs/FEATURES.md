@@ -278,7 +278,9 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
   - **Telemetria de Bateria:** Leitura em tempo real do nível de carga (0% a 100%) e status de carregamento a partir dos relatórios HID.
   - **Janela de Telemetria e Dança (`run_ds4_tracking_session`):**
     - Janela gráfica estilizada com indicadores em barras das forças G em 3 eixos (`ACCEL X`, `ACCEL Y`, `ACCEL Z`), magnitude total de aceleração (`TOTAL G-FORCE`), percentual e status de carregamento da bateria, taxa de atualização HID em Hz e status de conexão com o Just Dance PC.
-    - **Teclas de Atalho Dedicadas:**
+    - **Teclas e Controles de Navegação:**
+      - `[L1] / [R1]` no DualShock 4 (ou `[` / `]` e `A` / `D` no teclado): Alterna ciclicamente o Coach / NPC selecionado na sala de dança (`JD_ChangeCoach_PhoneCommandData`), com pulso de vibração tátil de confirmação no controle.
+      - `[✕]` (Botão X) no DualShock 4 (ou `Enter` / `Space` no teclado): Confirma seleções e inicia a dança (`VALID` / `START_GAME`), com pulso de vibração tátil duplo.
       - `[Q]`: Encerra o rastreamento e fecha a janela de telemetria de forma limpa.
       - `[R]`: Reconecta imediatamente o controle DualShock 4 via Bluetooth com confirmação de vibração tátil.
 
