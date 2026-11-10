@@ -358,6 +358,7 @@ class DS4Controller:
                 and "00001124" not in path_lower
             )
             self.state.is_usb = self.is_usb
+            self.state.connected = True
 
             # Perform handshake + welcome rumble buzz
             self._send_output_report(

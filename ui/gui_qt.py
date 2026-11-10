@@ -424,6 +424,7 @@ class LegacySensorQtGUI(QMainWindow):
         self.current_calib_preset = self.cfg.get("tracking_preset", "balanced")
         self.is_adv_calib_open = False
         self._is_closing = False
+        self._is_connecting_ds4 = False
         self.calib_cards = {}
 
         # Initialize Virtual Phone Controller from config
@@ -1835,7 +1836,7 @@ class LegacySensorQtGUI(QMainWindow):
         self.lbl_ds4_conn_title.setStyleSheet(
             f"font-family: '{self.font_heading}'; font-size: 14px; font-weight: bold; color: {PALETTE['text_main']}; background: transparent; border: none;"
         )
-        self.lbl_ds4_conn_info = QLabel("No Wireless Controller detected via Bluetooth HID", self.ds4_status_card)
+        self.lbl_ds4_conn_info = QLabel("No Wireless Controller detected via Bluetooth HID or USB Port", self.ds4_status_card)
         self.lbl_ds4_conn_info.setStyleSheet(
             f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
         )
@@ -2025,7 +2026,6 @@ class LegacySensorQtGUI(QMainWindow):
         # Instruction details
         lbl_instructions = QLabel(
             "• Hold the DualShock 4 in your active dancing hand with the light bar pointing forward.\n"
-            "• Pair wirelessly via Windows Bluetooth settings.\n"
             "• When started, the controller's internal 6-axis IMU will stream physical 3D G-force data directly to Just Dance via the Virtual Phone scoring bridge.",
             self.ds4_info_frame
         )
@@ -2735,8 +2735,9 @@ class LegacySensorQtGUI(QMainWindow):
                 self.ds4_info_frame.setVisible(True)
             st = ds4.state
             charging_str = " ⚡ [Charging]" if st.is_charging else ""
+            conn_type = "Connected on USB" if ds4.is_usb else "Connected via Bluetooth"
             self.lbl_ds4_status.setText(
-                f"Status: Connected (Bluetooth HID • {st.sample_rate_hz:.0f} Hz • Battery: {st.battery_pct}%{charging_str})"
+                f"Status: {conn_type} ({st.sample_rate_hz:.0f} Hz • Battery: {st.battery_pct}%{charging_str})"
             )
             self.lbl_ds4_status.setStyleSheet(
                 f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['ps_blue']}; background: transparent; border: none;"
@@ -2758,16 +2759,33 @@ class LegacySensorQtGUI(QMainWindow):
                 self.ds4_info_frame.setVisible(False)
             paths = find_ds4_devices()
             if paths:
+                is_usb_path = any("bth" not in p.lower() and "bluetooth" not in p.lower() and "00001124" not in p.lower() for p in paths)
+                detected_str = "on USB" if is_usb_path else "via Bluetooth"
+                if hasattr(self, "lbl_ds4_conn_title"):
+                    self.lbl_ds4_conn_title.setText(f"DualShock® 4 detected {detected_str}")
                 if hasattr(self, "lbl_ds4_conn_info"):
-                    self.lbl_ds4_conn_info.setText("DualShock® 4 paired via Bluetooth. Turn controller on (PS button).")
-                self.lbl_ds4_status.setText("Status: DualShock 4 Paired (Turn Controller On)")
+                    self.lbl_ds4_conn_info.setText(f"Connecting to controller {detected_str}...")
+                self.lbl_ds4_status.setText(f"Status: DualShock 4 detected {detected_str} (Connecting...)")
                 self.lbl_ds4_status.setStyleSheet(
                     f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['status_warn']}; background: transparent; border: none;"
                 )
+                if not getattr(self, "_is_connecting_ds4", False) and not getattr(self, "is_tracking_active", False):
+                    self._is_connecting_ds4 = True
+                    def _auto_connect_ds4():
+                        try:
+                            ds4.connect()
+                        except Exception:
+                            pass
+                        finally:
+                            self._is_connecting_ds4 = False
+                            QtCore.QMetaObject.invokeMethod(self, "_finish_ds4_reconnect", Qt.ConnectionType.QueuedConnection)
+                    threading.Thread(target=_auto_connect_ds4, daemon=True).start()
             else:
+                if hasattr(self, "lbl_ds4_conn_title"):
+                    self.lbl_ds4_conn_title.setText("DualShock® 4 not connected")
                 if hasattr(self, "lbl_ds4_conn_info"):
-                    self.lbl_ds4_conn_info.setText("No Wireless Controller detected. Pair in Windows Bluetooth Settings.")
-                self.lbl_ds4_status.setText("Status: Controller Disconnected (Pair via Windows Bluetooth Settings)")
+                    self.lbl_ds4_conn_info.setText("Connect via USB cable or pair via Windows Bluetooth Settings.")
+                self.lbl_ds4_status.setText("Status: Controller Disconnected (Connect via USB cable or pair via Bluetooth.)")
                 self.lbl_ds4_status.setStyleSheet(
                     f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['text_muted']}; background: transparent; border: none;"
                 )
@@ -2786,12 +2804,12 @@ class LegacySensorQtGUI(QMainWindow):
             QMessageBox.information(
                 self,
                 "DualShock 4",
-                "DualShock 4 is not connected. Please pair it via Windows Bluetooth settings."
+                "DualShock 4 is not connected. Please connect it via USB or pair via Windows Bluetooth settings."
             )
 
     def _reconnect_ds4(self):
         if hasattr(self, "lbl_ds4_conn_info"):
-            self.lbl_ds4_conn_info.setText("Searching for DualShock® 4 via Bluetooth HID...")
+            self.lbl_ds4_conn_info.setText("Connecting to DualShock® 4 (USB / Bluetooth HID)...")
         def worker():
             ds4 = get_ds4_controller()
             if ds4.is_connected:
@@ -2921,8 +2939,8 @@ class LegacySensorQtGUI(QMainWindow):
                         self,
                         "DualShock 4 Not Detected",
                         "DualShock 4 controller was not detected on this computer!\n\n"
-                        "• Ensure the DualShock 4 is paired wirelessly via Windows Bluetooth settings.\n"
-                        "• Press the PS Button on the controller to wake it up."
+                        "• Connect the DualShock 4 via USB cable, or\n"
+                        "• Ensure the DualShock 4 is paired wirelessly via Windows Bluetooth settings."
                     )
                     return
 
