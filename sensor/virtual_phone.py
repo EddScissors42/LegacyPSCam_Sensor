@@ -25,7 +25,8 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 
 # UbiArt Smartphone Scoring WebSocket constants
-WS_SUBPROTOCOL = "v2.phonescoring.jd.ubisoft.com"
+# Supports both v1 (Just Dance 2017 / 2018 Legacy / Dreyn) and v2 (Just Dance 2020-2022)
+WS_SUBPROTOCOL = "v1.phonescoring.jd.ubisoft.com, v2.phonescoring.jd.ubisoft.com"
 WS_ENDPOINT = "/smartphone"
 UDP_DISCOVERY_PORT_TX = 6000
 UDP_DISCOVERY_PORT_RX = 7000
@@ -524,6 +525,7 @@ class VirtualPhoneController:
         self._handshake_complete = False
         self._scoring_enabled = True
         self._phone_id: int = 0
+        self._player_id: int = 0
         self._player_name: str = ""
         self._pairing_code: str = ""
         self._status_text: str = "Disabled"
@@ -883,7 +885,7 @@ class VirtualPhoneController:
             try:
                 code_suffix = f" [Code: {self._pairing_code}]" if self._pairing_code else ""
                 self._status_text = f"Connecting to {self.host}:{self.port}{code_suffix}..."
-                ws.connect(timeout=2.0, prefer_tls=True)
+                ws.connect(timeout=2.0, prefer_tls=False)
                 self._connected = True
                 self._handshake_complete = False
                 self._player_name = ""
@@ -982,7 +984,7 @@ class VirtualPhoneController:
         return self._latest_accel
 
     def _format_connected_status(self) -> str:
-        player_slot = f"Player {self._phone_id + 1}"
+        player_slot = f"Player {self._player_id + 1}"
         player_part = f" • {self._player_name} ({player_slot})" if self._player_name else f" • {player_slot}"
         mode_part = "Scoring Active" if self._scoring_enabled else "Connected to Game"
         return f"{mode_part}{player_part}"
@@ -1025,6 +1027,8 @@ class VirtualPhoneController:
             name = str(msg.get("name", "")).strip()
             if name:
                 self._player_name = name
+            if "playerId" in msg:
+                self._player_id = int(msg.get("playerId", 0))
             if not self._handshake_complete:
                 self._handshake_complete = True
             self._status_text = self._format_connected_status()
