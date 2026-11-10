@@ -284,13 +284,12 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
       - `[Q]`: Encerra o rastreamento e fecha a janela de telemetria de forma limpa.
       - `[R]`: Reconecta imediatamente o controle DualShock 4 via Bluetooth com confirmação de vibração tátil.
 
-### 22. Atalho Rápido "Skip Finish" na UI Principal & Polimento Geral (v0.3.1 Alpha)
-- **Objetivo:** Facilitar a navegação rápida durante a inicialização do Just Dance 2022 (ou Dreyn Mod), permitindo pular a tela de tutorial de smartphone ("Finish") diretamente da tela principal do aplicativo com um único clique, sem precisar alternar para a aba Experimental.
-- **Implementação na Interface Principal (`ui/gui_qt.py`):**
-  - **Botão "Skip Finish" na Barra de Ação:** Adicionado botão secundário estilizado em azul pastel PlayStation (`btn_secondary`) ao lado do botão principal "START TRACKING" no rodapé da janela.
-  - **Dica de Contexto Explicativa (Tooltip/Boxtip):** Exibe a dica `"for Just Dance 2022 phone tutorial"` ao passar o cursor sobre o botão (tanto na tela principal quanto na aba Experimental).
-  - **Ativação Inteligente com Auto-Conexão:** Caso o Dançarino clique em "Skip Finish" antes de ter ativado manualmente o Celular Virtual na aba Experimental, o sistema automaticamente inicializa o cliente WebSocket UbiArt (`set_enabled(True)`), atualiza a interface e dispara a sequência de bypass `PHONE_FTUE_FINISH` por 4 segundos contínuos, garantindo a transição imediata para o menu do jogo.
-  - **Restauração de Rótulo Pós-Tracking:** Ao encerrar uma sessão de dança no modo DualShock 4, o botão restaura perfeitamente o texto `"START CONTROLLER (DS4)"`, preservando a consistência de estado.
+### 22. Polimento de UI, DualShock 4 Desconectado & Atalho "Skip Finish" (v0.3.1 Alpha)
+- **Atalho "Skip Finish" ao lado de Test Rumble e Reconnect:** Posicionado na aba do DualShock 4 junto aos botões rápidos de ação com a dica/tooltip `"for Just Dance 2022 phone tutorial"`, permitindo avançar instantaneamente pelo tutorial de smartphone do Just Dance 2022.
+- **Balão de Desconexão do DualShock 4:** Quando nenhum controle DS4 estiver conectado via Bluetooth, a interface exibe um balão de status vermelho com ícone de erro e botão *"Search for DualShock® 4"*, ocultando os controles avançados e mantendo o aviso experimental no topo.
+- **Aviso Informativo no Modo DualShock 4:** Incluído no balão de aviso: *"Esse modo de controle automaticamente usa o metodo experiemental Celular virtual, problemas podem acontecer."*
+- **Bloqueio de Acesso à Aba Experimental em Câmeras Desconectadas:** Quando uma webcam ou a PlayStation Camera estiver desconectada ou inacessível, a aba Experimental fica inativa e esmaecida (com cursor proibido), prevenindo configurações inconsistentes sem sensor de vídeo presente.
+- **Ativação Inteligente com Auto-Conexão:** Ao acionar "Skip Finish", o sistema automaticamente assegura que o cliente WebSocket UbiArt esteja habilitado (`set_enabled(True)`), atualiza a interface e dispara a sequência de bypass `PHONE_FTUE_FINISH` por 4 segundos contínuos para garantir a transição de telas no jogo.
 
 ---
 

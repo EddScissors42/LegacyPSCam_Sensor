@@ -13,6 +13,7 @@ Features:
 import os
 import sys
 import time
+import math
 import threading
 from pathlib import Path
 
@@ -926,27 +927,13 @@ class LegacySensorQtGUI(QMainWindow):
         self._build_exp_view()
         self._build_ds4_view()
 
-        # 2.3 Bottom Action Area (PlayStation Blue CTA & Secondary Action)
-        bottom_action_layout = QHBoxLayout()
-        bottom_action_layout.setSpacing(10)
-
+        # 2.3 Bottom Action Area (PlayStation Blue CTA & Footer)
         self.btn_start = QPushButton("START TRACKING", self.content_widget)
         self.btn_start.setProperty("class", "btn_cta")
         self.btn_start.setFixedHeight(48)
         self.btn_start.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_start.clicked.connect(self._start_tracking)
-        bottom_action_layout.addWidget(self.btn_start, stretch=1)
-
-        self.btn_main_skip_finish = QPushButton("Skip Finish", self.content_widget)
-        self.btn_main_skip_finish.setProperty("class", "btn_secondary")
-        self.btn_main_skip_finish.setFixedHeight(48)
-        self.btn_main_skip_finish.setFixedWidth(130)
-        self.btn_main_skip_finish.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_main_skip_finish.setToolTip("for Just Dance 2022 phone tutorial")
-        self.btn_main_skip_finish.clicked.connect(self._on_skip_finish_clicked)
-        bottom_action_layout.addWidget(self.btn_main_skip_finish)
-
-        content_layout.addLayout(bottom_action_layout)
+        content_layout.addWidget(self.btn_start)
 
         footer_layout = QHBoxLayout()
         footer_layout.setContentsMargins(0, 2, 0, 0)
@@ -1813,7 +1800,8 @@ class LegacySensorQtGUI(QMainWindow):
         lbl_warn_text = QLabel(
             "CAUTION: Playing with a DualShock 4 is for lunatics! Only do this if you want to do "
             "wild experiments, and do not forget to hold the controller so f*ing firmly! "
-            "This feature is ultra-experimental and may not be supported in future versions. (maybe...)",
+            "This feature is ultra-experimental and may not be supported in future versions. (maybe...)\n\n"
+            "Esse modo de controle automaticamente usa o metodo experiemental Celular virtual, problemas podem acontecer.",
             warn_box
         )
         lbl_warn_text.setWordWrap(True)
@@ -1823,20 +1811,61 @@ class LegacySensorQtGUI(QMainWindow):
         warn_layout.addWidget(lbl_warn_text, stretch=1)
         ds4_layout.addWidget(warn_box)
 
-        # Controller Details & Settings Frame
-        ds4_info_frame = QFrame(ds4_card)
-        ds4_info_frame.setStyleSheet(f"""
+        # Disconnected Balloon (Shown when DualShock 4 is not connected)
+        self.ds4_disconnected_box = QWidget(ds4_card)
+        ds4_disc_layout = QVBoxLayout(self.ds4_disconnected_box)
+        ds4_disc_layout.setContentsMargins(0, 0, 0, 0)
+        ds4_disc_layout.setSpacing(10)
+
+        self.ds4_status_card = QFrame(self.ds4_disconnected_box)
+        self.ds4_status_card.setProperty("class", "status_balloon")
+        card_layout = QHBoxLayout(self.ds4_status_card)
+        card_layout.setContentsMargins(16, 14, 16, 14)
+        card_layout.setSpacing(14)
+
+        self.lbl_ds4_icon = QLabel(self.ds4_status_card)
+        self.lbl_ds4_icon.setPixmap(self.pix_status_err)
+        self.lbl_ds4_icon.setFixedSize(38, 38)
+        self.lbl_ds4_icon.setStyleSheet("background: transparent; border: none;")
+        card_layout.addWidget(self.lbl_ds4_icon)
+
+        text_col = QVBoxLayout()
+        text_col.setSpacing(2)
+        self.lbl_ds4_conn_title = QLabel("DualShock® 4 not connected", self.ds4_status_card)
+        self.lbl_ds4_conn_title.setStyleSheet(
+            f"font-family: '{self.font_heading}'; font-size: 14px; font-weight: bold; color: {PALETTE['text_main']}; background: transparent; border: none;"
+        )
+        self.lbl_ds4_conn_info = QLabel("No Wireless Controller detected via Bluetooth HID", self.ds4_status_card)
+        self.lbl_ds4_conn_info.setStyleSheet(
+            f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
+        )
+        text_col.addWidget(self.lbl_ds4_conn_title)
+        text_col.addWidget(self.lbl_ds4_conn_info)
+        card_layout.addLayout(text_col, stretch=1)
+        ds4_disc_layout.addWidget(self.ds4_status_card)
+
+        self.btn_search_ds4 = QPushButton("Search for DualShock® 4", self.ds4_disconnected_box)
+        self.btn_search_ds4.setProperty("class", "btn_balloon_action")
+        self.btn_search_ds4.setFixedHeight(42)
+        self.btn_search_ds4.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_search_ds4.clicked.connect(self._reconnect_ds4)
+        ds4_disc_layout.addWidget(self.btn_search_ds4)
+        ds4_layout.addWidget(self.ds4_disconnected_box)
+
+        # Controller Details & Settings Frame (Shown when DualShock 4 is connected)
+        self.ds4_info_frame = QFrame(ds4_card)
+        self.ds4_info_frame.setStyleSheet(f"""
             QFrame {{
                 background-color: {PALETTE["bg_card"]};
                 border: 1px solid {PALETTE["border_subtle"]};
                 border-radius: 8px;
             }}
         """)
-        ds4_info_layout = QVBoxLayout(ds4_info_frame)
+        ds4_info_layout = QVBoxLayout(self.ds4_info_frame)
         ds4_info_layout.setContentsMargins(16, 14, 16, 14)
         ds4_info_layout.setSpacing(12)
 
-        self.lbl_ds4_status = QLabel("Status: Controller Ready for Setup (Awaiting Technical Driver Integration)", ds4_info_frame)
+        self.lbl_ds4_status = QLabel("Status: Controller Ready for Setup (Awaiting Technical Driver Integration)", self.ds4_info_frame)
         self.lbl_ds4_status.setStyleSheet(
             f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['ps_blue']}; background: transparent; border: none;"
         )
@@ -1849,11 +1878,11 @@ class LegacySensorQtGUI(QMainWindow):
         # Hand selection block
         hand_box = QVBoxLayout()
         hand_box.setSpacing(4)
-        lbl_hand = QLabel("TRACKED HAND (HOLDING CONTROLLER)", ds4_info_frame)
+        lbl_hand = QLabel("TRACKED HAND (HOLDING CONTROLLER)", self.ds4_info_frame)
         lbl_hand.setStyleSheet(
             f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: #0F172A; background: transparent; border: none;"
         )
-        self.cb_ds4_hand = QComboBox(ds4_info_frame)
+        self.cb_ds4_hand = QComboBox(self.ds4_info_frame)
         self.cb_ds4_hand.addItem("Right Hand (Standard)")
         self.cb_ds4_hand.addItem("Left Hand")
         self.cb_ds4_hand.setStyleSheet(f"""
@@ -1878,11 +1907,11 @@ class LegacySensorQtGUI(QMainWindow):
         # Sensitivity block
         sens_box = QVBoxLayout()
         sens_box.setSpacing(4)
-        lbl_sens = QLabel("HARDWARE ACCELEROMETER GAIN", ds4_info_frame)
+        lbl_sens = QLabel("HARDWARE ACCELEROMETER GAIN", self.ds4_info_frame)
         lbl_sens.setStyleSheet(
             f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: #0F172A; background: transparent; border: none;"
         )
-        self.cb_ds4_sens = QComboBox(ds4_info_frame)
+        self.cb_ds4_sens = QComboBox(self.ds4_info_frame)
         self.cb_ds4_sens.addItem("1.00x (Standard Hardware Scale)")
         self.cb_ds4_sens.addItem("1.25x (High Energy / Fast Dances)")
         self.cb_ds4_sens.addItem("0.85x (Smooth / Gentle Gestures)")
@@ -1923,17 +1952,17 @@ class LegacySensorQtGUI(QMainWindow):
         ds4_info_layout.addLayout(settings_row)
 
         # Real-time Telemetry Readout
-        self.lbl_ds4_accel = QLabel("3D Accelerometer: Searching for controller...", ds4_info_frame)
+        self.lbl_ds4_accel = QLabel("3D Accelerometer: Searching for controller...", self.ds4_info_frame)
         self.lbl_ds4_accel.setStyleSheet(
             f"font-family: '{self.font_body}'; font-size: 11px; font-weight: 600; color: {PALETTE['text_main']}; background: transparent; border: none;"
         )
         ds4_info_layout.addWidget(self.lbl_ds4_accel)
 
-        # Quick Action Buttons: Test Rumble & Reconnect
+        # Quick Action Buttons: Test Rumble, Reconnect & Skip Finish
         actions_row = QHBoxLayout()
         actions_row.setSpacing(10)
 
-        self.btn_ds4_rumble = QPushButton("Test Rumble Vibration", ds4_info_frame)
+        self.btn_ds4_rumble = QPushButton("Test Rumble Vibration", self.ds4_info_frame)
         self.btn_ds4_rumble.setStyleSheet(f"""
             QPushButton {{
                 background-color: #FFFFFF;
@@ -1953,7 +1982,7 @@ class LegacySensorQtGUI(QMainWindow):
         self.btn_ds4_rumble.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_ds4_rumble.clicked.connect(self._test_ds4_rumble)
 
-        self.btn_ds4_reconnect = QPushButton("Reconnect Controller", ds4_info_frame)
+        self.btn_ds4_reconnect = QPushButton("Reconnect Controller", self.ds4_info_frame)
         self.btn_ds4_reconnect.setStyleSheet(f"""
             QPushButton {{
                 background-color: #FFFFFF;
@@ -1973,8 +2002,30 @@ class LegacySensorQtGUI(QMainWindow):
         self.btn_ds4_reconnect.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_ds4_reconnect.clicked.connect(self._reconnect_ds4)
 
+        self.btn_ds4_skip_finish = QPushButton("Skip Finish", self.ds4_info_frame)
+        self.btn_ds4_skip_finish.setStyleSheet(f"""
+            QPushButton {{
+                background-color: #FFFFFF;
+                color: #0F172A;
+                font-family: '{self.font_heading}', sans-serif;
+                font-size: 11px;
+                font-weight: bold;
+                border: 1px solid {PALETTE["tab_gray_border"]};
+                border-radius: 6px;
+                padding: 6px 14px;
+            }}
+            QPushButton:hover {{
+                border-color: {PALETTE["ps_blue"]};
+                background-color: #F8FAFC;
+            }}
+        """)
+        self.btn_ds4_skip_finish.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_ds4_skip_finish.setToolTip("for Just Dance 2022 phone tutorial")
+        self.btn_ds4_skip_finish.clicked.connect(self._on_skip_finish_clicked)
+
         actions_row.addWidget(self.btn_ds4_rumble)
         actions_row.addWidget(self.btn_ds4_reconnect)
+        actions_row.addWidget(self.btn_ds4_skip_finish)
         actions_row.addStretch()
         ds4_info_layout.addLayout(actions_row)
 
@@ -1983,7 +2034,7 @@ class LegacySensorQtGUI(QMainWindow):
             "• Hold the DualShock 4 in your active dancing hand with the light bar pointing forward.\n"
             "• Pair wirelessly via Windows Bluetooth settings.\n"
             "• When started, the controller's internal 6-axis IMU will stream physical 3D G-force data directly to Just Dance via the Virtual Phone scoring bridge.",
-            ds4_info_frame
+            self.ds4_info_frame
         )
         lbl_instructions.setWordWrap(True)
         lbl_instructions.setStyleSheet(
@@ -1991,7 +2042,11 @@ class LegacySensorQtGUI(QMainWindow):
         )
         ds4_info_layout.addWidget(lbl_instructions)
 
-        ds4_layout.addWidget(ds4_info_frame)
+        ds4_layout.addWidget(self.ds4_info_frame)
+
+        # Initial visibility: disconnected balloon shown, details hidden until connected
+        self.ds4_disconnected_box.setVisible(True)
+        self.ds4_info_frame.setVisible(False)
         layout.addWidget(ds4_card)
         layout.addStretch()
 
@@ -2029,19 +2084,28 @@ class LegacySensorQtGUI(QMainWindow):
         """
 
     def _update_tab_availability(self):
-        """Disables and grays out the Calibration tab when the camera is not connected/accessible."""
+        """Disables and grays out the Calibration and Experimental tabs when the camera is not connected/accessible."""
         accessible = self.is_camera_accessible()
         if not accessible:
             self.btn_tab_calib.setEnabled(False)
             self.btn_tab_calib.setCursor(Qt.CursorShape.ForbiddenCursor)
-            if self.active_tab == "calib":
+            if hasattr(self, "btn_tab_exp"):
+                self.btn_tab_exp.setEnabled(False)
+                self.btn_tab_exp.setCursor(Qt.CursorShape.ForbiddenCursor)
+            if self.active_tab in ("calib", "exp"):
                 self._switch_tab("video")
             else:
                 self.btn_tab_calib.setStyleSheet(self._disabled_tab_css())
                 self.btn_tab_calib.setIcon(QIcon(self.pix_slid_disabled))
+                if hasattr(self, "btn_tab_exp"):
+                    self.btn_tab_exp.setStyleSheet(self._disabled_tab_css())
+                    self.btn_tab_exp.setIcon(QIcon(self.pix_lab_inact))
         else:
             self.btn_tab_calib.setEnabled(True)
             self.btn_tab_calib.setCursor(Qt.CursorShape.PointingHandCursor)
+            if hasattr(self, "btn_tab_exp"):
+                self.btn_tab_exp.setEnabled(True)
+                self.btn_tab_exp.setCursor(Qt.CursorShape.PointingHandCursor)
             self._apply_tab_styles(self.active_tab)
 
     def _apply_tab_styles(self, tab_id: str):
@@ -2097,14 +2161,22 @@ class LegacySensorQtGUI(QMainWindow):
                 self.btn_tab_calib.setStyleSheet(inact_css)
                 self.btn_tab_calib.setIcon(QIcon(self.pix_slid_inact))
 
-        # Experimental Tab
+        # Experimental Tab (Access-Gated for camera modes)
         if hasattr(self, "btn_tab_exp"):
-            if tab_id == "exp":
-                self.btn_tab_exp.setStyleSheet(act_css)
-                self.btn_tab_exp.setIcon(QIcon(self.pix_lab_act))
-            else:
-                self.btn_tab_exp.setStyleSheet(inact_css)
+            if not accessible:
+                self.btn_tab_exp.setEnabled(False)
+                self.btn_tab_exp.setCursor(Qt.CursorShape.ForbiddenCursor)
+                self.btn_tab_exp.setStyleSheet(self._disabled_tab_css())
                 self.btn_tab_exp.setIcon(QIcon(self.pix_lab_inact))
+            else:
+                self.btn_tab_exp.setEnabled(True)
+                self.btn_tab_exp.setCursor(Qt.CursorShape.PointingHandCursor)
+                if tab_id == "exp":
+                    self.btn_tab_exp.setStyleSheet(act_css)
+                    self.btn_tab_exp.setIcon(QIcon(self.pix_lab_act))
+                else:
+                    self.btn_tab_exp.setStyleSheet(inact_css)
+                    self.btn_tab_exp.setIcon(QIcon(self.pix_lab_inact))
 
         # Controller Settings Tab (DualShock 4 Mode)
         if hasattr(self, "btn_tab_controller"):
@@ -2116,7 +2188,7 @@ class LegacySensorQtGUI(QMainWindow):
                 self.btn_tab_controller.setIcon(QIcon(self.pix_ctrl_inact))
 
     def _switch_tab(self, tab_id: str):
-        if tab_id == "calib" and not self.is_camera_accessible():
+        if tab_id in ("calib", "exp") and not self.is_camera_accessible():
             return
         if self.active_tab == tab_id:
             return
@@ -2148,7 +2220,11 @@ class LegacySensorQtGUI(QMainWindow):
             self._switch_tab("controller")
             if hasattr(self, "btn_start"):
                 self.btn_start.setText("START CONTROLLER (DS4)")
-            threading.Thread(target=lambda: get_ds4_controller().connect(), daemon=True).start()
+            self._update_ds4_ui_readout()
+            threading.Thread(
+                target=lambda: (get_ds4_controller().connect(), QtCore.QMetaObject.invokeMethod(self, "_finish_ds4_reconnect", Qt.ConnectionType.QueuedConnection)),
+                daemon=True
+            ).start()
         else:
             if hasattr(self, "btn_tab_controller"):
                 self.btn_tab_controller.setVisible(False)
@@ -2660,6 +2736,10 @@ class LegacySensorQtGUI(QMainWindow):
             return
         ds4 = get_ds4_controller()
         if ds4.is_connected:
+            if hasattr(self, "ds4_disconnected_box"):
+                self.ds4_disconnected_box.setVisible(False)
+            if hasattr(self, "ds4_info_frame"):
+                self.ds4_info_frame.setVisible(True)
             st = ds4.state
             charging_str = " ⚡ [Charging]" if st.is_charging else ""
             self.lbl_ds4_status.setText(
@@ -2679,13 +2759,21 @@ class LegacySensorQtGUI(QMainWindow):
                 f"font-family: '{self.font_body}'; font-size: 11px; font-weight: 600; color: {PALETTE['text_main']}; background: transparent; border: none;"
             )
         else:
+            if hasattr(self, "ds4_disconnected_box"):
+                self.ds4_disconnected_box.setVisible(True)
+            if hasattr(self, "ds4_info_frame"):
+                self.ds4_info_frame.setVisible(False)
             paths = find_ds4_devices()
             if paths:
+                if hasattr(self, "lbl_ds4_conn_info"):
+                    self.lbl_ds4_conn_info.setText("DualShock® 4 paired via Bluetooth. Click Search to connect.")
                 self.lbl_ds4_status.setText("Status: DualShock 4 Paired (Press Reconnect)")
                 self.lbl_ds4_status.setStyleSheet(
                     f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['status_warn']}; background: transparent; border: none;"
                 )
             else:
+                if hasattr(self, "lbl_ds4_conn_info"):
+                    self.lbl_ds4_conn_info.setText("No Wireless Controller detected. Pair in Windows Bluetooth Settings.")
                 self.lbl_ds4_status.setText("Status: Controller Disconnected (Pair via Windows Bluetooth Settings)")
                 self.lbl_ds4_status.setStyleSheet(
                     f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['text_muted']}; background: transparent; border: none;"
@@ -2709,13 +2797,25 @@ class LegacySensorQtGUI(QMainWindow):
             )
 
     def _reconnect_ds4(self):
-        ds4 = get_ds4_controller()
-        if ds4.is_connected:
-            ds4.disconnect()
-            time.sleep(0.1)
-        ok = ds4.connect()
-        if ok:
-            ds4.trigger_rumble(small=140, large=80, duration_sec=0.15)
+        if hasattr(self, "btn_search_ds4"):
+            self.btn_search_ds4.setEnabled(False)
+        if hasattr(self, "lbl_ds4_conn_info"):
+            self.lbl_ds4_conn_info.setText("Searching for DualShock® 4 via Bluetooth HID...")
+        def worker():
+            ds4 = get_ds4_controller()
+            if ds4.is_connected:
+                ds4.disconnect()
+                time.sleep(0.1)
+            ok = ds4.connect()
+            if ok:
+                ds4.trigger_rumble(small=140, large=80, duration_sec=0.15)
+            QtCore.QMetaObject.invokeMethod(self, "_finish_ds4_reconnect", Qt.ConnectionType.QueuedConnection)
+        threading.Thread(target=worker, daemon=True).start()
+
+    @Slot()
+    def _finish_ds4_reconnect(self):
+        if hasattr(self, "btn_search_ds4"):
+            self.btn_search_ds4.setEnabled(True)
         self._update_ds4_ui_readout()
 
     def _on_ds4_hand_changed(self, idx: int):

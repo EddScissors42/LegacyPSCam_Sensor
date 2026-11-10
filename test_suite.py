@@ -570,8 +570,11 @@ def test_project_structure():
         assert hasattr(win, "btn_vphone_ftue"), "Skip Finish button must exist in Celular Virtual block"
         assert hasattr(win, "cb_res") and hasattr(win, "cb_fps"), "Split resolution and FPS combos must exist in webcam card"
         assert hasattr(win, "btn_refresh"), "Refresh button in device card must exist"
-        win._switch_tab("exp")
-        assert win.active_tab == "exp", "Should switch to experimental tab"
+        if win.is_camera_accessible():
+            win._switch_tab("exp")
+            assert win.active_tab == "exp", "Should switch to experimental tab"
+        else:
+            assert not win.btn_tab_exp.isEnabled(), "Experimental tab must be disabled when camera is not accessible"
 
         # Verify VirtualPhoneController & HandAccelerometer physics and JSON packets
         import json
@@ -615,13 +618,15 @@ def test_project_structure():
         assert not win.btn_tab_controller.isHidden(), "Controller settings tab must be visible in ds4 mode"
         assert win.btn_tab_video.isHidden(), "Video settings tab must be hidden in ds4 mode"
         win._set_mode("webcam")
-        win._switch_tab("exp")
 
-        # Calibration tab gating when camera is not connected
+        # Calibration & Experimental tab gating when camera is not connected
         if not win.is_camera_accessible():
             assert not win.btn_tab_calib.isEnabled(), "Calibration tab must be disabled when camera is not accessible"
+            assert not win.btn_tab_exp.isEnabled(), "Experimental tab must be disabled when camera is not accessible"
             win._switch_tab("calib")
-            assert win.active_tab == "exp", "Switching to calib must be prevented when camera is not accessible"
+            assert win.active_tab == "video", "Switching to calib must be prevented when camera is not accessible"
+            win._switch_tab("exp")
+            assert win.active_tab == "video", "Switching to exp must be prevented when camera is not accessible"
         win._switch_tab("video")
         win.close()
         app.processEvents()
