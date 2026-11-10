@@ -78,7 +78,8 @@ jobs:
         with:
           files: ${{ env.ZIP_NAME }}
           name: Legacy PSCam Sensor ${{ env.APP_VER }} (Alpha)
-          generate_release_notes: true
+          body: ""
+          generate_release_notes: false
           draft: false
           prerelease: true
         env:

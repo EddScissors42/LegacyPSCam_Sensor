@@ -6,7 +6,11 @@ Loads custom user SVG icons for 'settings' (Video Settings) and 'sliders' (Calib
 """
 import math
 from pathlib import Path
-from PIL import Image, ImageDraw, ImageTk
+from PIL import Image, ImageDraw
+try:
+    from PIL import ImageTk
+except ImportError:
+    ImageTk = None
 
 
 def make_pill_image(w: int, h: int, fill, outline=None, radius: int = 12):
