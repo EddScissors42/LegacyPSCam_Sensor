@@ -263,17 +263,17 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
   - **Escala Física e Orientação:**
     - Escala bruta de hardware de 8192 LSB por 1.0G traduzida em forças G reais.
     - Mapeamento coordenado para o protocolo de pontuação do Just Dance (eixos lateral X, vertical Y e longitudinal Z).
-  - **Mapeamento de Botões Físicos para Navegação no Jogo:**
-    - `✕ (Cross)`: Envia comando `VALID` (Confirmar / Enter).
-    - `○ (Circle)`: Envia comando `BACK` (Voltar / Esc).
-    - `△ (Triangle)`: Envia `FTUE_FINISH` (Pular tutoriais / Finish).
-    - `D-Pad (Cima / Baixo / Esquerda / Direita)`: Navegação fluida no menu.
-    - `Options`: Pausa e despausa a partida (`PAUSE`).
+  - **Isolamento de Botões Anti-Missclick (Uso Exclusivo do Sensor):**
+    - Para evitar que o dançarino pause ou saia da música acidentalmente ao segurar o controle com firmeza ou trocar de pegada durante passos rápidos, o envio de comandos de jogo através dos botões físicos foi desativado. Apenas o sensor inercial (acelerômetro 3D) alimenta a pontuação da dança.
+  - **Identidade Visual e Assets Atualizados:**
+    - O ícone do DualShock 4 na barra lateral agora utiliza `officialdualshock.png` com renderização supersampled e fundo transparente.
+    - O ícone da Standard Webcam foi substituído pelo vetor vetorial nítido `webcam.svg`.
+    - Pasta `assets/` reorganizada categoricamente em `assets/icons/` e `assets/fonts/`.
   - **Feedback Háptico (Vibração / Rumble):**
-    - Suporte a pulsos de vibração de alta e baixa frequência nos motores esquerdo e direito, com confirmação háptica ao conectar e ao pressionar botões de confirmação.
+    - Suporte a pulsos de vibração de alta e baixa frequência nos motores esquerdo e direito, com confirmação háptica ao conectar e teste interativo na interface.
   - **Telemetria de Bateria:** Leitura em tempo real do nível de carga (0% a 100%) e status de carregamento a partir do byte 32 do relatório.
   - **Sessão de Dança Visual (`run_ds4_tracking_session`):**
-    - Janela gráfica estilizada com indicadores em barras das forças G em 3 eixos, magnitude total, botões ativos que se iluminam ao serem pressionados, atalhos de teclado e integração direta com a memória compartilhada e o servidor WebSocket local do Just Dance.
+    - Janela gráfica estilizada com indicadores em barras das forças G em 3 eixos, magnitude total, atalhos de teclado e integração direta com a memória compartilhada e o servidor WebSocket local do Just Dance.
 
 ---
 

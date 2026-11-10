@@ -635,6 +635,8 @@ def test_project_structure():
     assert assets.ICON_MODE_BALANCED_PATH.exists()
     assert assets.ICON_MODE_COMPETITIVE_PATH.exists()
     assert assets.ICON_MODE_STABLE_PATH.exists()
+    assert assets.ICON_WEBCAM_PATH.exists()
+    assert assets.ICON_DUALSHOCK4_PATH.exists()
     assert assets.MODEL_POSE_PATH.exists(), "Canonical pose model path must exist via assets.MODEL_POSE_PATH"
 
     print("  -> Modular Project Structure PASSED")

@@ -67,21 +67,29 @@ def load_pscam_file_icon(png_path: Path, target_box=(38, 26), color=(255, 255, 2
         return None
 
 
-def load_ds4_file_icon(jpg_path: Path, target_box=(38, 26), color=(255, 255, 255), scale: int = 4):
+def load_ds4_file_icon(img_path: Path, target_box=(38, 26), color=(255, 255, 255), scale: int = 4):
     """
-    Loads user-provided dualshock4.jpg, inverts the white background into transparent alpha,
+    Loads officialdualshock.png (or dualshock4.jpg), isolates graphic to transparent alpha,
     recolors the controller graphic to target color, and scales it into target_box * scale.
     """
-    if not jpg_path or not Path(jpg_path).exists():
+    if not img_path or not Path(img_path).exists():
         return None
     try:
         import numpy as np
-        im = Image.open(jpg_path).convert("L")
+        im = Image.open(img_path).convert("RGBA")
         arr = np.array(im)
-        inv = 255 - arr
-        alpha = np.clip((inv.astype(float) - 15) / (180 - 15) * 255, 0, 255).astype(np.uint8)
+        corner_lum = 0.299 * arr[0, 0, 0] + 0.587 * arr[0, 0, 1] + 0.114 * arr[0, 0, 2]
+        if corner_lum < 100:
+            # Dark background (officialdualshock.png)
+            lum = 0.299 * arr[:, :, 0] + 0.587 * arr[:, :, 1] + 0.114 * arr[:, :, 2]
+            alpha = np.clip((lum - 15) / (180 - 15) * 255, 0, 255).astype(np.uint8)
+        else:
+            # Light background (dualshock4.jpg)
+            gray = np.array(im.convert("L"))
+            inv = 255 - gray
+            alpha = np.clip((inv.astype(float) - 15) / (180 - 15) * 255, 0, 255).astype(np.uint8)
 
-        out_arr = np.zeros((arr.shape[0], arr.shape[1], 4), dtype=np.uint8)
+        out_arr = np.zeros_like(arr)
         out_arr[:, :, 0] = color[0]
         out_arr[:, :, 1] = color[1]
         out_arr[:, :, 2] = color[2]
@@ -103,26 +111,29 @@ def load_ds4_file_icon(jpg_path: Path, target_box=(38, 26), color=(255, 255, 255
         canvas.paste(resized, ((bw - new_w) // 2, (bh - new_h) // 2))
         return canvas
     except Exception as e:
-        print(f"[WARN] Failed to process dualshock4.jpg: {e}")
+        print(f"[WARN] Failed to process {img_path}: {e}")
         return None
 
 
 def generate_ds4_icons_pil(target_box=(38, 26), scale: int = 4):
     """
     Renders supersampled PIL.Image RGBA icons for the DualShock 4 sidebar navigation card.
+    Loads officialdualshock.png with vector/jpg fallback.
     Returns (pil_ds4_act, pil_ds4_inact) rendered at target_box * scale.
     """
     base_dir = Path(__file__).resolve().parent
-    jpg_candidates = [
-        base_dir.parent / "assets" / "dualshock4.jpg",
+    candidates = [
+        base_dir.parent / "assets" / "icons" / "officialdualshock.png",
+        base_dir.parent / "assets" / "officialdualshock.png",
+        base_dir / "assets" / "icons" / "officialdualshock.png",
+        base_dir / "assets" / "officialdualshock.png",
         base_dir.parent / "assets" / "icons" / "dualshock4.jpg",
-        base_dir / "assets" / "dualshock4.jpg",
-        base_dir / "assets" / "icons" / "dualshock4.jpg",
+        base_dir.parent / "assets" / "dualshock4.jpg",
     ]
-    jpg_path = next((p for p in jpg_candidates if p.exists()), None)
+    img_path = next((p for p in candidates if p.exists()), None)
 
-    ds4_act = load_ds4_file_icon(jpg_path, target_box=target_box, color=(255, 255, 255), scale=scale)
-    ds4_inact = load_ds4_file_icon(jpg_path, target_box=target_box, color=(0, 67, 156), scale=scale)
+    ds4_act = load_ds4_file_icon(img_path, target_box=target_box, color=(255, 255, 255), scale=scale)
+    ds4_inact = load_ds4_file_icon(img_path, target_box=target_box, color=(0, 67, 156), scale=scale)
 
     if ds4_act is None or ds4_inact is None:
         w, h = target_box[0] * scale, target_box[1] * scale
@@ -234,42 +245,54 @@ def generate_icons_pil(target_box=(38, 26), scale: int = 4):
                             radius=int(2 * scale), fill=(0, 67, 156, 255))
         ps_file_inact = img_ps_inact if scale > 1 else img_ps_inact.resize(target_box, Image.Resampling.LANCZOS)
 
-    # 2. Webcam Icon (Properly padded with zero clipping at the top or bottom)
-    cr = int(7 * scale)
-    ccx = w // 2
-    ccy = int(h * 0.38)
-    stem_top = ccy + cr - int(1 * scale)
-    stem_bottom = int(h * 0.80)
+    # 2. Webcam Icon from webcam.svg (with vector fallback)
+    webcam_svg_candidates = [
+        base_dir.parent / "assets" / "icons" / "webcam.svg",
+        base_dir.parent / "assets" / "webcam.svg",
+        base_dir / "assets" / "icons" / "webcam.svg",
+        base_dir / "assets" / "webcam.svg",
+    ]
+    webcam_svg_path = next((p for p in webcam_svg_candidates if p.exists()), None)
 
-    # 2.1 Active Webcam Icon (White on PlayStation Blue)
-    img_web_act = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img_web_act)
-    d.ellipse([ccx - cr, ccy - cr, ccx + cr, ccy + cr], fill=(255, 255, 255, 255))
-    d.ellipse([ccx - int(5 * scale), ccy - int(5 * scale), ccx + int(5 * scale), ccy + int(5 * scale)],
-              fill=(221, 240, 247, 255))
-    d.ellipse([ccx - int(3 * scale), ccy - int(3 * scale), ccx + int(3 * scale), ccy + int(3 * scale)],
-              fill=(0, 67, 156, 255))
-    d.ellipse([ccx - int(2 * scale), ccy - int(2 * scale), ccx - int(0.5 * scale), ccy - int(0.5 * scale)],
-              fill=(255, 255, 255, 255))
-    d.rectangle([int(w * 0.45), stem_top, int(w * 0.55), stem_bottom], fill=(255, 255, 255, 255))
-    d.rounded_rectangle([int(w * 0.24), stem_bottom, int(w * 0.76), int(h * 0.92)],
-                        radius=int(2 * scale), fill=(255, 255, 255, 255))
-    web_act_pil = img_web_act if scale > 1 else img_web_act.resize(target_box, Image.Resampling.LANCZOS)
+    web_act_pil = render_svg_icon_pil(webcam_svg_path, size=target_box, color_hex="#FFFFFF", scale=scale) if webcam_svg_path else None
+    web_inact_pil = render_svg_icon_pil(webcam_svg_path, size=target_box, color_hex="#00439C", scale=scale) if webcam_svg_path else None
 
-    # 2.2 Inactive Webcam Icon (PlayStation Blue on light background)
-    img_web_inact = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img_web_inact)
-    d.ellipse([ccx - cr, ccy - cr, ccx + cr, ccy + cr], fill=(0, 67, 156, 255))
-    d.ellipse([ccx - int(5 * scale), ccy - int(5 * scale), ccx + int(5 * scale), ccy + int(5 * scale)],
-              fill=(221, 240, 247, 255))
-    d.ellipse([ccx - int(3 * scale), ccy - int(3 * scale), ccx + int(3 * scale), ccy + int(3 * scale)],
-              fill=(0, 67, 156, 255))
-    d.ellipse([ccx - int(2 * scale), ccy - int(2 * scale), ccx - int(0.5 * scale), ccy - int(0.5 * scale)],
-              fill=(255, 255, 255, 255))
-    d.rectangle([int(w * 0.45), stem_top, int(w * 0.55), stem_bottom], fill=(0, 67, 156, 255))
-    d.rounded_rectangle([int(w * 0.24), stem_bottom, int(w * 0.76), int(h * 0.92)],
-                        radius=int(2 * scale), fill=(0, 67, 156, 255))
-    web_inact_pil = img_web_inact if scale > 1 else img_web_inact.resize(target_box, Image.Resampling.LANCZOS)
+    if web_act_pil is None or web_inact_pil is None:
+        cr = int(7 * scale)
+        ccx = w // 2
+        ccy = int(h * 0.38)
+        stem_top = ccy + cr - int(1 * scale)
+        stem_bottom = int(h * 0.80)
+
+        # 2.1 Active Webcam Icon (White on PlayStation Blue)
+        img_web_act = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        d = ImageDraw.Draw(img_web_act)
+        d.ellipse([ccx - cr, ccy - cr, ccx + cr, ccy + cr], fill=(255, 255, 255, 255))
+        d.ellipse([ccx - int(5 * scale), ccy - int(5 * scale), ccx + int(5 * scale), ccy + int(5 * scale)],
+                  fill=(221, 240, 247, 255))
+        d.ellipse([ccx - int(3 * scale), ccy - int(3 * scale), ccx + int(3 * scale), ccy + int(3 * scale)],
+                  fill=(0, 67, 156, 255))
+        d.ellipse([ccx - int(2 * scale), ccy - int(2 * scale), ccx - int(0.5 * scale), ccy - int(0.5 * scale)],
+                  fill=(255, 255, 255, 255))
+        d.rectangle([int(w * 0.45), stem_top, int(w * 0.55), stem_bottom], fill=(255, 255, 255, 255))
+        d.rounded_rectangle([int(w * 0.24), stem_bottom, int(w * 0.76), int(h * 0.92)],
+                            radius=int(2 * scale), fill=(255, 255, 255, 255))
+        web_act_pil = img_web_act if scale > 1 else img_web_act.resize(target_box, Image.Resampling.LANCZOS)
+
+        # 2.2 Inactive Webcam Icon (PlayStation Blue on light background)
+        img_web_inact = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        d = ImageDraw.Draw(img_web_inact)
+        d.ellipse([ccx - cr, ccy - cr, ccx + cr, ccy + cr], fill=(0, 67, 156, 255))
+        d.ellipse([ccx - int(5 * scale), ccy - int(5 * scale), ccx + int(5 * scale), ccy + int(5 * scale)],
+                  fill=(221, 240, 247, 255))
+        d.ellipse([ccx - int(3 * scale), ccy - int(3 * scale), ccx + int(3 * scale), ccy + int(3 * scale)],
+                  fill=(0, 67, 156, 255))
+        d.ellipse([ccx - int(2 * scale), ccy - int(2 * scale), ccx - int(0.5 * scale), ccy - int(0.5 * scale)],
+                  fill=(255, 255, 255, 255))
+        d.rectangle([int(w * 0.45), stem_top, int(w * 0.55), stem_bottom], fill=(0, 67, 156, 255))
+        d.rounded_rectangle([int(w * 0.24), stem_bottom, int(w * 0.76), int(h * 0.92)],
+                            radius=int(2 * scale), fill=(0, 67, 156, 255))
+        web_inact_pil = img_web_inact if scale > 1 else img_web_inact.resize(target_box, Image.Resampling.LANCZOS)
 
     return ps_file_act, ps_file_inact, web_act_pil, web_inact_pil
 

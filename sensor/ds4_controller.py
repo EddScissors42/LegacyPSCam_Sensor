@@ -514,33 +514,14 @@ class DS4Controller:
         self.state.sample_rate_hz = 0.0
 
     def _handle_button_press(self, btn: str, vphone) -> None:
-        """Maps physical button presses to Just Dance phone actions."""
+        """
+        Physical button command dispatching is intentionally disabled to prevent
+        accidental presses/missclicks when holding or gripping the controller firmly
+        during fast dance moves. Only the internal 6-axis motion sensor is used for scoring.
+        """
         if self.on_button_press is not None:
             self.on_button_press(btn)
-
-        if not vphone.enabled:
-            return
-
-        if btn == "cross":
-            vphone.send_input("VALID")
-            self.trigger_rumble(small=120, large=0, duration_sec=0.08)
-        elif btn == "circle":
-            vphone.send_input("BACK")
-            self.trigger_rumble(small=80, large=0, duration_sec=0.08)
-        elif btn == "triangle":
-            vphone.send_input("FTUE_FINISH")
-            self.trigger_rumble(small=100, large=60, duration_sec=0.10)
-        elif btn == "options":
-            vphone.send_input("PAUSE")
-            self.trigger_rumble(small=140, large=100, duration_sec=0.12)
-        elif btn == "dpad_up":
-            vphone.send_input("UP")
-        elif btn == "dpad_down":
-            vphone.send_input("DOWN")
-        elif btn == "dpad_left":
-            vphone.send_input("LEFT")
-        elif btn == "dpad_right":
-            vphone.send_input("RIGHT")
+        # All vphone.send_input calls removed to prevent missclicks during dance.
 
 
 _global_ds4_controller: Optional[DS4Controller] = None
