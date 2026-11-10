@@ -806,10 +806,10 @@ class LegacySensorQtGUI(QMainWindow):
         sidebar_layout.addWidget(self.card_webcam)
         sidebar_layout.addSpacing(8)
 
-        # 1.5 Card DualShock 4 [EXPERIMENTAL] (with supersampled icon)
+        # 1.5 Card DualShock 4 (with supersampled icon)
         self.card_ds4 = DeviceNavCard(
-            "DualShock 4 [EXPERIMENTAL]",
-            "Wireless or USB Controller",
+            "DualShock 4",
+            "⚠️ EXPERIMENTAL",
             self.font_heading,
             self.font_body,
             self.sidebar_frame
@@ -1796,9 +1796,6 @@ class LegacySensorQtGUI(QMainWindow):
         warn_layout.addWidget(lbl_warn_icon, alignment=Qt.AlignmentFlag.AlignTop)
 
         lbl_warn_text = QLabel(
-            "CUIDADO: Jogar com DualShock 4 é coisa de lunático, faça isso somente se você quiser "
-            "testar loucuras e não se esqueça de segurar firme o controle. "
-            "Esse recurso é ultra experimental e pode não ser suportado em novas versões.\n\n"
             "CAUTION: Playing with a DualShock 4 is for lunatics! Only do this if you want to test "
             "wild experiments, and do not forget to hold the controller firmly! "
             "This feature is ultra-experimental and may not be supported in future versions.",
@@ -1900,7 +1897,7 @@ class LegacySensorQtGUI(QMainWindow):
         # Instruction details
         lbl_instructions = QLabel(
             "• Hold the DualShock 4 in your active dancing hand with the light bar pointing forward.\n"
-            "• Connect via USB cable or pair wirelessly via Windows Bluetooth settings.\n"
+            "• Pair wirelessly via Windows Bluetooth settings.\n"
             "• When started, the controller's internal 6-axis IMU will stream physical 3D G-force data directly to Just Dance via the Virtual Phone scoring bridge.",
             ds4_info_frame
         )
@@ -2659,7 +2656,7 @@ class LegacySensorQtGUI(QMainWindow):
                 "DualShock 4 [EXPERIMENTAL]",
                 "DualShock 4 UI setup complete!\n\n"
                 "The interface layout and navigation card are configured.\n"
-                "Technical Bluetooth/USB HID polling and motion scoring mapping will be connected in the next phase."
+                "Technical Bluetooth HID polling and motion scoring mapping will be connected in the next phase."
             )
             return
 

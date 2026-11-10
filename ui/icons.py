@@ -94,7 +94,7 @@ def load_ds4_file_icon(jpg_path: Path, target_box=(38, 26), color=(255, 255, 255
         cropped = colored_im.crop(bbox)
 
         bw, bh = target_box[0] * scale, target_box[1] * scale
-        fit_scale = min(bw / cropped.width, bh / cropped.height)
+        fit_scale = min(bw / cropped.width, bh / cropped.height) * 0.78
         new_w = max(1, int(cropped.width * fit_scale))
         new_h = max(1, int(cropped.height * fit_scale))
         resized = cropped.resize((new_w, new_h), Image.Resampling.LANCZOS)
@@ -131,14 +131,14 @@ def generate_ds4_icons_pil(target_box=(38, 26), scale: int = 4):
             img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
             d = ImageDraw.Draw(img)
             # Controller body pill
-            d.rounded_rectangle([int(w * 0.12), int(h * 0.20), int(w * 0.88), int(h * 0.75)],
-                                radius=int(6 * scale), fill=col)
+            d.rounded_rectangle([int(w * 0.16), int(h * 0.24), int(w * 0.84), int(h * 0.72)],
+                                radius=int(5 * scale), fill=col)
             # Left grip
-            d.rounded_rectangle([int(w * 0.12), int(h * 0.40), int(w * 0.35), int(h * 0.92)],
-                                radius=int(4 * scale), fill=col)
+            d.rounded_rectangle([int(w * 0.16), int(h * 0.42), int(w * 0.36), int(h * 0.88)],
+                                radius=int(3 * scale), fill=col)
             # Right grip
-            d.rounded_rectangle([int(w * 0.65), int(h * 0.40), int(w * 0.88), int(h * 0.92)],
-                                radius=int(4 * scale), fill=col)
+            d.rounded_rectangle([int(w * 0.64), int(h * 0.42), int(w * 0.84), int(h * 0.88)],
+                                radius=int(3 * scale), fill=col)
             return img
 
         if ds4_act is None:
