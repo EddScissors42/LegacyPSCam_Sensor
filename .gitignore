@@ -35,3 +35,8 @@ dump_*.py
 test_*.py
 !test_suite.py
 *.bak
+
+# AI agent configurations
+.agents/
+agents/
+AGENTS.md
