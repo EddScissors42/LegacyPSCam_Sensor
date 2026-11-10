@@ -25,8 +25,11 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 
 # UbiArt Smartphone Scoring WebSocket constants
-# Supports both v1 (Just Dance 2017 / 2018 Legacy / Dreyn) and v2 (Just Dance 2020-2022)
-WS_SUBPROTOCOL = "v1.phonescoring.jd.ubisoft.com, v2.phonescoring.jd.ubisoft.com"
+# Protocol v2: Just Dance 2020-2022 (CivetWeb with built-in TLS, requires exact subprotocol match)
+# Protocol v1: Just Dance 2017 / 2018 Legacy / Dreyn (plain TCP WebSocket)
+WS_SUBPROTOCOL_V2 = "v2.phonescoring.jd.ubisoft.com"
+WS_SUBPROTOCOL_V1 = "v1.phonescoring.jd.ubisoft.com"
+WS_SUBPROTOCOL = WS_SUBPROTOCOL_V2
 WS_ENDPOINT = "/smartphone"
 UDP_DISCOVERY_PORT_TX = 6000
 UDP_DISCOVERY_PORT_RX = 7000
@@ -528,6 +531,7 @@ class VirtualPhoneController:
         self._player_id: int = 0
         self._player_name: str = ""
         self._pairing_code: str = ""
+        self._detected_protocol: str = ""
         self._status_text: str = "Disabled"
         self._last_error: str = ""
 
@@ -771,6 +775,9 @@ class VirtualPhoneController:
         """
         with self._lock:
             max_c = max(1, self.total_coaches)
+            if max_c <= 1:
+                print(f"[VPHONE] Solo song (1 coach) — coach change skipped.")
+                return 0
             self.current_coach_id = (self.current_coach_id + delta) % max_c
             coach_id = self.current_coach_id
 
@@ -794,7 +801,21 @@ class VirtualPhoneController:
           - "FTUE_FINISH" (PHONE_FTUE_FINISH)
         """
         act = action.upper().strip()
-        if act in PHONE_INPUT_HASHES:
+        if act == "VALID":
+            if "VALID" in self._available_inputs:
+                if "TOUCH_ON" in self._available_inputs:
+                    self._cmd_queue.put(self._available_inputs["TOUCH_ON"])
+                self._cmd_queue.put(self._available_inputs["VALID"])
+                if "TOUCH_OFF" in self._available_inputs:
+                    self._cmd_queue.put(self._available_inputs["TOUCH_OFF"])
+            elif self._detected_protocol == WS_SUBPROTOCOL_V1:
+                # Just Dance 2017/2018 Legacy lobby confirmation is JD_StartGame_PhoneCommandData
+                self._cmd_queue.put(self.build_root_packet("JD_StartGame_PhoneCommandData"))
+            else:
+                self._cmd_queue.put(
+                    self.build_root_packet("JD_Input_PhoneCommandData", input=PHONE_INPUT_HASHES["VALID"])
+                )
+        elif act in PHONE_INPUT_HASHES:
             # Only send TOUCH_ON / TOUCH_OFF if explicitly supplied in availableInput (v2/JD2022)
             # Avoids 1002 CLOSE_PROTOCOL_ERROR on JD2017/2018 Legacy (v1) which lacks touch feedback class
             if "TOUCH_ON" in self._available_inputs:
@@ -839,11 +860,11 @@ class VirtualPhoneController:
     # UDP Auto-Discovery (Port 6000 -> 7000)
     # ------------------------------------------------------------------
     @staticmethod
-    def discover_server(timeout: float = 1.2) -> Optional[Tuple[str, int, str]]:
+    def discover_server_info(timeout: float = 1.2) -> Optional[Dict[str, Any]]:
         """
         Broadcasts "phonescoring.jd.ubisoft.com" on UDP port 6000 and listens on UDP 7000
         (or ephemeral port) for the game's discovery reply.
-        Returns (ip, ws_port, pairing_code) if found, or None.
+        Returns a dict containing ip, port, pairing_code, and protocol, or None.
         """
         rx_sock: Optional[socket.socket] = None
         tx_sock: Optional[socket.socket] = None
@@ -860,17 +881,26 @@ class VirtualPhoneController:
             tx_sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
             tx_sock.settimeout(timeout)
 
-            for target_ip in ("127.0.0.1", "255.255.255.255"):
-                try:
-                    tx_sock.sendto(UDP_DISCOVERY_MAGIC, (target_ip, UDP_DISCOVERY_PORT_TX))
-                except OSError:
-                    pass
-
-            data, addr = rx_sock.recvfrom(2048)
+            # Check localhost first (low latency, avoids adapter/VPN IP conflicts)
+            tx_sock.sendto(UDP_DISCOVERY_MAGIC, ("127.0.0.1", UDP_DISCOVERY_PORT_TX))
+            try:
+                rx_sock.settimeout(0.06)
+                data, addr = rx_sock.recvfrom(2048)
+            except (socket.timeout, OSError):
+                # Fallback to local subnet broadcast
+                rx_sock.settimeout(timeout)
+                tx_sock.sendto(UDP_DISCOVERY_MAGIC, ("255.255.255.255", UDP_DISCOVERY_PORT_TX))
+                data, addr = rx_sock.recvfrom(2048)
             info = json.loads(data.decode("utf-8", errors="replace"))
             pairing_code = str(info.get("pairingCode", ""))
             ws_port = int(info.get("port", 8080))
-            return (addr[0], ws_port, pairing_code)
+            proto = str(info.get("protocol", "")).strip()
+            return {
+                "ip": addr[0],
+                "port": ws_port,
+                "pairing_code": pairing_code,
+                "protocol": proto,
+            }
         except Exception:
             return None
         finally:
@@ -885,31 +915,92 @@ class VirtualPhoneController:
                 except OSError:
                     pass
 
+    @classmethod
+    def discover_server(cls, timeout: float = 1.2) -> Optional[Tuple[str, int, str]]:
+        """
+        Broadcasts "phonescoring.jd.ubisoft.com" on UDP port 6000 and listens on UDP 7000
+        (or ephemeral port) for the game's discovery reply.
+        Returns (ip, ws_port, pairing_code) if found, or None.
+        Maintains backward compatibility with UI and external callers.
+        """
+        info = cls.discover_server_info(timeout=timeout)
+        if info is None:
+            return None
+        return (info["ip"], info["port"], info["pairing_code"])
+
     # ------------------------------------------------------------------
     # Background WebSocket Worker & Handshake State Machine
     # ------------------------------------------------------------------
     def _worker_loop(self) -> None:
+        last_failed_protocol: str = ""
         while not self._stop_event.is_set() and self._enabled:
             self._reconnect_event.clear()
 
-            # Quick UDP discovery check to refresh pairing code / IP if needed
-            disc = self.discover_server(timeout=0.35)
+            # Quick UDP discovery check to refresh pairing code / IP / protocol
+            disc = self.discover_server_info(timeout=0.35)
             if disc is not None:
-                disc_ip, disc_port, disc_code = disc
-                self._pairing_code = disc_code
+                self._pairing_code = disc.get("pairing_code", "")
+                disc_proto = disc.get("protocol", "")
+                if disc_proto:
+                    self._detected_protocol = disc_proto
                 if self.host in ("127.0.0.1", "localhost", ""):
-                    self.port = disc_port
+                    self.port = disc.get("port", self.port)
 
-            ws = _MinimalWebSocketClient(self.host, self.port, WS_ENDPOINT, WS_SUBPROTOCOL)
+            # Determine candidates:
+            # - Just Dance 2020-2022 uses v2 with TLS (WSS) and exact subprotocol v2.phonescoring.jd.ubisoft.com
+            # - Just Dance 2017-2018 Legacy uses v1 with plain TCP (WS) and subprotocol v1.phonescoring.jd.ubisoft.com
+            if self._detected_protocol == WS_SUBPROTOCOL_V1:
+                candidate_configs = [
+                    (WS_SUBPROTOCOL_V1, False),
+                    (WS_SUBPROTOCOL_V2, True),
+                ]
+            elif self._detected_protocol == WS_SUBPROTOCOL_V2:
+                candidate_configs = [
+                    (WS_SUBPROTOCOL_V2, True),
+                    (WS_SUBPROTOCOL_V1, False),
+                ]
+            else:
+                # If last attempt failed on v2, alternate to v1 first, and vice-versa
+                if last_failed_protocol == WS_SUBPROTOCOL_V2:
+                    candidate_configs = [
+                        (WS_SUBPROTOCOL_V1, False),
+                        (WS_SUBPROTOCOL_V2, True),
+                    ]
+                else:
+                    candidate_configs = [
+                        (WS_SUBPROTOCOL_V2, True),
+                        (WS_SUBPROTOCOL_V1, False),
+                    ]
+
+            ws: Optional[_MinimalWebSocketClient] = None
+            active_subproto = ""
+            for subproto, prefer_tls in candidate_configs:
+                candidate_ws = _MinimalWebSocketClient(self.host, self.port, WS_ENDPOINT, subproto)
+                try:
+                    candidate_ws.connect(timeout=1.5, prefer_tls=prefer_tls)
+                    ws = candidate_ws
+                    active_subproto = subproto
+                    break
+                except Exception:
+                    candidate_ws.close()
+                    continue
+
+            if ws is None or not ws.connected:
+                self._connected = False
+                self._handshake_complete = False
+                code_suffix = f" (Game active • Code: {self._pairing_code})" if self._pairing_code else ""
+                self._status_text = f"Checking game on {self.host}:{self.port}{code_suffix}..."
+                if self._enabled and not self._stop_event.is_set() and not self._reconnect_event.is_set():
+                    self._reconnect_event.wait(timeout=1.0)
+                continue
+
             try:
-                code_suffix = f" [Code: {self._pairing_code}]" if self._pairing_code else ""
-                self._status_text = f"Connecting to {self.host}:{self.port}{code_suffix}..."
-                ws.connect(timeout=2.0, prefer_tls=False)
                 self._connected = True
                 self._handshake_complete = False
                 self._player_name = ""
                 proto_tag = "WSS/TLS" if ws.is_tls else "WS"
-                self._status_text = f"Connected ({proto_tag}) — Awaiting Handshake..."
+                code_tag = f" • Code: {self._pairing_code}" if self._pairing_code else ""
+                self._status_text = f"Connected ({proto_tag}{code_tag}) — Awaiting Handshake..."
 
                 # Step 1: Send JD_PhoneDataCmdHandshakeHello
                 hello_pkt = self.build_root_packet(
@@ -931,6 +1022,9 @@ class VirtualPhoneController:
                     # 1. Process incoming messages from Just Dance
                     for raw_msg in ws.recv_messages():
                         self._handle_incoming_message(ws, raw_msg)
+                        if self._handshake_complete:
+                            self._detected_protocol = active_subproto
+                            last_failed_protocol = ""
 
                     now = time.perf_counter()
 
@@ -941,7 +1035,7 @@ class VirtualPhoneController:
                         wait_secs = now - hello_sent_ts
                         if wait_secs >= 1.2:
                             self._status_text = (
-                                f"Connected ({proto_tag}{code_suffix}) — Focus game window to activate!"
+                                f"Connected ({proto_tag}{code_tag}) — Focus game window to activate!"
                             )
                         continue
 
@@ -966,10 +1060,14 @@ class VirtualPhoneController:
                         sample = self._compute_current_sample(now)
                         ws.send_text(self.build_scoring_packet([sample]))
 
+                    # Yield CPU briefly (1.5ms) for responsive non-blocking loop
+                    time.sleep(0.0015)
+
             except Exception as exc:
                 self._connected = False
                 self._handshake_complete = False
                 self._last_error = str(exc)
+                last_failed_protocol = active_subproto
                 if self._enabled and not self._stop_event.is_set():
                     code_suffix = f" (Game active • Code: {self._pairing_code})" if self._pairing_code else ""
                     self._status_text = f"Checking game on {self.host}:{self.port}{code_suffix}..."
@@ -1066,27 +1164,38 @@ class VirtualPhoneController:
             self._scoring_enabled = bool(msg.get("enable", msg.get("enabled", True)))
             self._status_text = self._format_connected_status()
 
-        elif cls_name in ("JD_PhoneUiData", "JD_PhoneUiSetupData", "JD_PhoneUiShortcutData", "JD_TriggerTransition_ConsoleCommandData"):
+        elif cls_name in (
+            "JD_PhoneUiData",
+            "JD_PhoneUiSetupData",
+            "JD_PhoneUiShortcutData",
+            "JD_TriggerTransition_ConsoleCommandData",
+            "JD_PhoneUiLobby",
+        ):
             if not self._handshake_complete:
                 self._handshake_complete = True
 
-            # Extract song coaches/NPCs from lobbySetup if present
-            lobby = None
-            if "setupData" in msg and isinstance(msg["setupData"], dict):
+            # Extract song coaches/NPCs across all Just Dance versions:
+            # - Just Dance 2017/2018 Legacy: sends JD_PhoneUiLobby with "coaches" directly
+            # - Just Dance 2020-2022: sends JD_PhoneUiSetupData with "setupData": {"lobbySetup": {"coaches": [...]}}
+            coaches_list = None
+            if "coaches" in msg and isinstance(msg["coaches"], list):
+                coaches_list = msg["coaches"]
+            elif "setupData" in msg and isinstance(msg["setupData"], dict):
                 lobby = msg["setupData"].get("lobbySetup")
+                if isinstance(lobby, dict) and "coaches" in lobby:
+                    coaches_list = lobby.get("coaches")
             elif "lobbySetup" in msg and isinstance(msg["lobbySetup"], dict):
-                lobby = msg["lobbySetup"]
+                coaches_list = msg["lobbySetup"].get("coaches")
 
-            if isinstance(lobby, dict) and "coaches" in lobby:
-                coaches_list = lobby.get("coaches", [])
-                if isinstance(coaches_list, list) and coaches_list:
-                    with self._lock:
-                        self.total_coaches = max(1, len(coaches_list))
-                        for idx, c in enumerate(coaches_list):
-                            if isinstance(c, dict) and c.get("selectedOnEnter"):
-                                self.current_coach_id = idx
-                                break
-                    print(f"[VPHONE] Detected {self.total_coaches} coaches in song lobby (Active: {self.current_coach_id + 1}).")
+            if isinstance(coaches_list, list) and coaches_list:
+                with self._lock:
+                    self.total_coaches = max(1, len(coaches_list))
+                    for idx, c in enumerate(coaches_list):
+                        if isinstance(c, dict) and c.get("selectedOnEnter"):
+                            self.current_coach_id = idx
+                            break
+                    self.current_coach_id = max(0, min(self.total_coaches - 1, self.current_coach_id))
+                print(f"[VPHONE] Detected {self.total_coaches} coaches in song lobby (Active: {self.current_coach_id + 1}).")
 
             if "JD_PhoneUiFTUE" in raw_msg or "PHONE_FTUE_FINISH" in raw_msg:
                 self._ftue_until_ts = time.perf_counter() + 4.0

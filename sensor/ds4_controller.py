@@ -681,8 +681,9 @@ class DS4Controller:
         Handles physical button presses on the DualShock 4:
           - L1: Previous Coach (cycle backward)
           - R1: Next Coach (cycle forward)
-          - Cross (✕): Enter / Confirm (VALID)
-        Other buttons remain unmapped to avoid accidental pauses/missclicks during dance.
+        Face buttons (Cross/X, Circle, Triangle, Square) remain intentionally unmapped
+        to prevent accidental inputs/missclicks when holding or gripping the controller
+        firmly during dance moves.
         """
         if self.on_button_press is not None:
             self.on_button_press(btn)
@@ -696,9 +697,6 @@ class DS4Controller:
         elif btn == "r1":
             vphone.change_coach(+1)
             self.trigger_rumble(small=120, large=0, duration_sec=0.08)
-        elif btn == "cross":
-            vphone.send_input("VALID")
-            self.trigger_rumble(small=160, large=80, duration_sec=0.10)
 
 
 _global_ds4_controller: Optional[DS4Controller] = None

@@ -231,9 +231,11 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
   - **Desconexão Limpa RFC 6455 (Close Frame `0x88`):** O cliente WebSocket agora envia um frame de fechamento com código 1000 ao desconectar ou reiniciar, liberando imediatamente o slot no servidor CivetWeb do Just Dance para evitar que o jogo retenha o slot antigo e empurre novas conexões para o Jogador 2.
   - **Identificação Explícita do Slot na UI (`Player 1` / `Player 2`):** O status do Celular Virtual na interface agora indica explicitamente o slot de dançarino atribuído pelo jogo (ex: `Scoring Active • Player 1`), permitindo conferência imediata.
   - **Atalho de Validação (`Enter` / `Espaço`):** Pressionar Enter ou Barra de Espaço na janela de pré-visualização do sensor despacha o comando `VALID` através do celular virtual para confirmar seleções no menu sem precisar recorrer ao teclado como dispositivo de entrada adicional.
-  - **Protocolo WebSocket Nativo UbiArt Multi-Geração (`v1` e `v2`):**
-    - Cliente WebSocket RFC 6455 puro (zero dependências externas) com negociação híbrida de subprotocolos (`v1.phonescoring.jd.ubisoft.com, v2.phonescoring.jd.ubisoft.com`), garantindo compatibilidade instantânea tanto com o **Just Dance 2017 / 2018 (Legacy Offline)** quanto com versões modernas (**Just Dance 2020–2022 / Dreyn Mod**).
-    - Conexão adaptativa com prioridade para TCP plano (`ws://127.0.0.1:8080/smartphone`) e fallback para TLS/SSL (`wss://`), eliminando erros de protocolo (`1002 CLOSE_PROTOCOL_ERROR`) e atrasos de handshake.
+  - **Protocolo WebSocket Nativo UbiArt Multi-Geração (`v1` e `v2` com Auto-Detecção Estrita):**
+    - Cliente WebSocket RFC 6455 puro (zero dependências externas) com auto-detecção de versão via pacote UDP de descoberta e negociação estrita de subprotocolo único:
+      - **Just Dance 2020–2022 / Dreyn Mod:** Utiliza subprotocolo estrito `v2.phonescoring.jd.ubisoft.com` sobre canal seguro TLS/SSL (`wss://`). O servidor embutido CivetWeb requer correspondência textual exata do cabeçalho `Sec-WebSocket-Protocol`, evitando o erro `1002 CLOSE_PROTOCOL_ERROR`.
+      - **Just Dance 2017 / 2018 (Legacy Offline):** Utiliza subprotocolo `v1.phonescoring.jd.ubisoft.com` sobre TCP plano (`ws://`).
+    - **Prioridade para Localhost em Descoberta UDP:** O módulo de descoberta verifica primeiro `127.0.0.1` antes de fazer broadcast na sub-rede, eliminando conflitos de rotas com adaptadores de VPN (como Radmin) e conectando em menos de 2 ms no mesmo PC.
     - Executa a máquina de estados oficial de 5 etapas (`JD_PhoneDataCmdHandshakeHello` -> `JD_PhoneDataCmdHandshakeContinue` -> `JD_PhoneDataCmdSync` -> `JD_PhoneDataCmdSyncStart` -> `JD_PhoneDataCmdSyncEnd`), sincronizando o perfil do dançarino (`JD_ProfilePhoneUiData`) e identificando o dançarino como Jogador 1.
     - **Verificação Constante e Resiliência a Janela sem Foco (AFK):** Mantém a verificação ativa a cada 1s com auto-descoberta UDP (`6000`/`7000`) e preserva o socket aberto pacientemente mesmo quando a janela do Just Dance está sem foco (loop principal pausado), completando o pareamento no exato instante em que o jogador foca na janela do jogo.
     - Suporte dinâmico a `JD_ProfilePhoneUiData` (exibindo o nome do perfil do jogador conectado) e `JD_InputCollectionPhoneData` (`availableInput` com booleanos `touchOn: true/false`).
@@ -279,10 +281,10 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
   - **Janela de Telemetria e Dança (`run_ds4_tracking_session`):**
     - Janela gráfica estilizada com indicadores em barras das forças G em 3 eixos (`ACCEL X`, `ACCEL Y`, `ACCEL Z`), magnitude total de aceleração (`TOTAL G-FORCE`), percentual e status de carregamento da bateria, taxa de atualização HID em Hz e status de conexão com o Just Dance PC.
     - **Teclas e Controles de Navegação:**
-      - `[L1] / [R1]` no DualShock 4 (ou `[` / `]` e `A` / `D` no teclado): Alterna ciclicamente o Coach / NPC selecionado na sala de dança (`JD_ChangeCoach_PhoneCommandData`), com pulso de vibração tátil de confirmação no controle.
-      - `[✕]` (Botão X) no DualShock 4 (ou `Enter` / `Space` no teclado): Confirma seleções e inicia a dança (`VALID` / `START_GAME`), com pulso de vibração tátil duplo.
+      - `[L1] / [R1]` no DualShock 4 (ou `[` / `]` e `A` / `D` no teclado): Alterna ciclicamente o Coach / NPC selecionado na sala de dança (`JD_ChangeCoach_PhoneCommandData`), com pulso de vibração tátil de confirmação no controle. Compatível tanto com Just Dance 2020–2022 quanto Just Dance 2017/2018 Legacy (detecção de `JD_PhoneUiLobby` e proteção automática para faixas Solo com 1 coach).
+      - **Botões Frontais (✕, ○, △, □) Desmapeados por Segurança:** Para prevenir toques acidentais e missclicks ao segurar firme o controle durante passos velozes de dança, o botão X não dispara comandos no controle. Confirmações de menu podem ser feitas pelo teclado (`Enter` / `Space`).
       - `[Q]`: Encerra o rastreamento e fecha a janela de telemetria de forma limpa.
-      - `[R]`: Reconecta imediatamente o controle DualShock 4 via Bluetooth com confirmação de vibração tátil.
+      - `[R]`: Reconecta imediatamente o controle DualShock 4 via Bluetooth ou USB com confirmação de vibração tátil.
 
 ### 22. Polimento de UI, DualShock 4 Desconectado & Atalho "Skip Finish" (v0.3.1 Alpha)
 - **Atalho "Skip Finish" ao lado de Test Rumble e Reconnect:** Posicionado na aba do DualShock 4 junto aos botões rápidos de ação com a dica/tooltip `"for Just Dance 2022 phone tutorial"`, permitindo avançar instantaneamente pelo tutorial de smartphone do Just Dance 2022.
@@ -296,6 +298,17 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
 - **Auto-Conexão e Separação de Status USB / Bluetooth:** A interface agora detecta imediatamente se o DualShock 4 foi conectado via cabo USB ou emparelhado via Bluetooth, exibindo `Status: Connected on USB` ou `Status: Connected via Bluetooth` com taxa de amostragem em tempo real e bateria. O painel de configurações (mão rastreada, sensibilidade, teste de vibração e atalhos) aparece automaticamente assim que o controle é conectado na USB, sem necessidade de iniciar o tracking previamente.
 - **Janela de Rastreamento DS4 com Texto "Switch Coach":** No HUD inferior da janela OpenCV do modo DualShock 4, a legenda de controle para os botões L1/R1 foi padronizada para `[L1/R1] Switch Coach`.
 - **Compilação de Release Standalone sem Ícone Customizado:** Empacotamento PyInstaller autônomo com executável padrão do Windows (`icon=None`), runtime hook para isolamento do MediaPipe e pipeline de CI/CD via GitHub Actions.
+
+### 24. Correção Multi-Geração do Celular Virtual & Mapeamento Seguro de Botões (v0.4.9 Alpha)
+- **Auto-Detecção Estrita de Subprotocolo UbiArt:** Descoberta UDP (`phonescoring.jd.ubisoft.com`) com detecção dinâmica do protocolo retornado pelo jogo:
+  - `v2.phonescoring.jd.ubisoft.com` com WSS/TLS exclusivo para Just Dance 2020–2022 (evita erro de `1002 CLOSE_PROTOCOL_ERROR` gerado pelo parser do CivetWeb).
+  - `v1.phonescoring.jd.ubisoft.com` com WS plain TCP para Just Dance 2017/2018 Legacy Offline.
+  - Prioridade para conexão direta em `127.0.0.1` antes de broadcast na sub-rede, eliminando interferências com adaptadores de VPN (como Radmin).
+- **Seleção de Coach / NPC Confiável no Just Dance 2018:**
+  - Extração de coaches diretamente da classe `JD_PhoneUiLobby` do Just Dance 2018.
+  - Proteção automática para músicas solo (1 coach) evitando envio de índices inválidos.
+- **Proteção Anti-Missclick no DualShock 4:**
+  - Botões frontais (Cross/X, Circle, Triangle, Square) desmapeados no controle físico para impedir que a pegada firme durante passos rápidos de dança envie comandos indevidos e derrube a conexão. Confirmações de menu permanecem no teclado (`Enter` / `Space`).
 
 ---
 

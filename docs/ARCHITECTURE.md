@@ -172,6 +172,9 @@ flowchart TD
 
 ### 10. `virtual_phone.py` — Emulador de Celular UbiArt Just Dance Controller
 - **Responsabilidade:** Emula um smartphone conectado via WebSocket local (`/smartphone`), permitindo dançar músicas que exigem controle de mão tanto por visão computacional da mão quanto via hardware físico (DualShock 4).
+- **Auto-Detecção Multi-Versão:** Descoberta via UDP 6000/7000 com prioridade localhost (127.0.0.1) e negociação de subprotocolo estrito:
+  - `v2.phonescoring.jd.ubisoft.com` com WSS/TLS para Just Dance 2020–2022.
+  - `v1.phonescoring.jd.ubisoft.com` com WS plain TCP para Just Dance 2017/2018 Legacy Offline.
 
 ---
 

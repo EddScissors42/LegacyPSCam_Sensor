@@ -466,7 +466,7 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
             )
             cv2.putText(
                 frame,
-                "[L1] Prev Coach   •   [R1] Next Coach   •   [X / Enter] Confirm",
+                "[L1] Prev Coach   •   [R1] Next Coach   •   [Enter] Confirm",
                 (175, 365),
                 cv2.FONT_HERSHEY_DUPLEX,
                 0.42,
@@ -493,7 +493,7 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
             cv2.rectangle(frame, (0, canvas_h - 40), (canvas_w, canvas_h), (20, 20, 20), -1)
             cv2.putText(
                 frame,
-                "[Q] Quit   •   [R] Reconnect DS4   •   [L1/R1] Switch Coach   •   [X/Enter] Confirm",
+                "[Q] Quit   •   [R] Reconnect DS4   •   [L1/R1] Switch Coach",
                 (20, canvas_h - 15),
                 cv2.FONT_HERSHEY_DUPLEX,
                 0.42,
