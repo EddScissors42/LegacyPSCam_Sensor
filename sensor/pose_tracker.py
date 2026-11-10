@@ -3,6 +3,7 @@ Pose Tracking Engine for Legacy PSCam Sensor.
 Uses MediaPipe Pose Tasks API with custom Hand Anchor Filtering,
 Adaptive Dynamic EMA Smoothing, Height Normalization, and 20-joint Kinect v1 mapping.
 """
+import sys
 import math
 import time
 from pathlib import Path
@@ -30,6 +31,10 @@ from sensor.pose_filters import (
 
 
 def _resolve_model_path() -> Path:
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        meipass_model = Path(sys._MEIPASS) / "models" / "pose_landmarker_lite.task"
+        if meipass_model.exists():
+            return meipass_model
     base = Path(__file__).resolve().parent
     candidates = [
         base / "models" / "pose_landmarker_lite.task",

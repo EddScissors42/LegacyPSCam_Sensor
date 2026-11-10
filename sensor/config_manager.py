@@ -2,6 +2,7 @@
 Configuration Manager for Legacy PSCam Sensor.
 Saves and loads user preferences to/from config.json.
 """
+import sys
 import json
 import os
 from pathlib import Path
@@ -77,9 +78,12 @@ def parse_preset(preset_str):
 class ConfigManager:
     def __init__(self, config_path=None):
         if config_path is None:
-            parent_dir = Path(__file__).resolve().parent
-            candidates = [parent_dir / "config.json", parent_dir.parent / "config.json"]
-            self.config_path = next((c for c in candidates if c.exists()), parent_dir.parent / "config.json")
+            if getattr(sys, "frozen", False):
+                self.config_path = Path(sys.executable).parent / "config.json"
+            else:
+                parent_dir = Path(__file__).resolve().parent
+                candidates = [parent_dir / "config.json", parent_dir.parent / "config.json"]
+                self.config_path = next((c for c in candidates if c.exists()), parent_dir.parent / "config.json")
         else:
             self.config_path = Path(config_path)
         self.config = dict(DEFAULT_CONFIG)

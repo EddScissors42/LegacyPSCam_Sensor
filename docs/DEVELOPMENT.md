@@ -117,3 +117,23 @@ Ao criar novos recursos (como um novo algoritmo de suavização ou novo controle
 4. O `camera_manager.py` tentará negociar essa taxa com o DirectShow do PSCam4Win.
 5. Atualize o arquivo `docs/FEATURES.md` documentando o novo preset.
 6. Execute `python LegacyPSCam_Sensor/test_suite.py` para validar.
+
+---
+
+## 📦 Build e Publicação Automática de Releases (GitHub Actions)
+
+O projeto conta com automação completa de CI/CD para gerar o executável standalone do Windows através do workflow [`.github/workflows/release.yml`](../.github/workflows/release.yml) e a especificação [`legacy_pscam_sensor.spec`](../legacy_pscam_sensor.spec).
+
+### Como disparar uma nova Release:
+1. **Automático via Git Tag:**
+   ```powershell
+   git tag v0.3.1
+   git push origin v0.3.1
+   ```
+   O GitHub Actions iniciará o runner Windows, instalará as dependências, executará a suíte de testes (9/9), compilará o `LegacyPSCam_Sensor.exe` via PyInstaller, empacotará com a pasta `Kinect for Legacy DLL/` e anexará o `LegacyPSCam_Sensor-v0.3.1.zip` na página de Releases do repositório.
+
+2. **Manual para Testes (Workflow Dispatch):**
+   - Acesse a aba **Actions** no GitHub.
+   - Selecione **"Build & Release Legacy PSCam Sensor"**.
+   - Clique em **"Run workflow"**.
+   - O executável e o arquivo `.zip` serão gerados e ficarão disponíveis para download na seção de **Artifacts** da execução.

@@ -2896,6 +2896,7 @@ class LegacySensorQtGUI(QMainWindow):
 
     def _open_dll_folder(self):
         candidates = [
+            Path(sys.executable).parent / "Kinect for Legacy DLL",
             BASE_DIR / "Kinect for Legacy DLL",
             BASE_DIR.parent / "Kinect for Legacy DLL",
             BASE_DIR / "tools",

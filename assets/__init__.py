@@ -1,12 +1,21 @@
 """
 Legacy PSCam Sensor - Assets and Visual Media Package.
 """
+import sys
 from pathlib import Path
 
-ASSETS_DIR = Path(__file__).resolve().parent
+if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+    ROOT_DIR = Path(sys._MEIPASS)
+    ASSETS_DIR = ROOT_DIR / "assets"
+    MODELS_DIR = ROOT_DIR / "models"
+else:
+    ASSETS_DIR = Path(__file__).resolve().parent
+    MODELS_DIR = ASSETS_DIR.parent / "models"
+
 ICONS_DIR = ASSETS_DIR / "icons"
 FONTS_DIR = ASSETS_DIR / "fonts"
 
+ICON_APP_ICO_PATH = ICONS_DIR / "app_icon.ico"
 ICON_PSCAMERA_PATH = ICONS_DIR / "IconePSCAMERA.png"
 ICON_SETTINGS_PATH = ICONS_DIR / "settings.svg"
 ICON_SLIDERS_PATH = ICONS_DIR / "sliders.svg"
@@ -27,6 +36,7 @@ __all__ = [
     "ASSETS_DIR",
     "ICONS_DIR",
     "FONTS_DIR",
+    "ICON_APP_ICO_PATH",
     "ICON_PSCAMERA_PATH",
     "ICON_SETTINGS_PATH",
     "ICON_SLIDERS_PATH",

@@ -6,7 +6,9 @@ __pycache__/
 # Distribution / packaging
 build/
 dist/
+release_staging/
 *.egg-info/
+*.zip
 
 # Virtual Environments
 .env
