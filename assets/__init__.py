@@ -16,6 +16,8 @@ ICON_MODE_STABLE_PATH = ICONS_DIR / "mode_stable.svg"
 ICON_LAB_PATH = ICONS_DIR / "lab.svg"
 ICON_CAMERA_PATH = ICONS_DIR / "camera.svg"
 ICON_ARROW_DOWN_PATH = ICONS_DIR / "arrow_down.png" if (ICONS_DIR / "arrow_down.png").exists() else ICONS_DIR / "arrow_down.svg"
+ICON_DUALSHOCK4_PATH = ASSETS_DIR / "dualshock4.jpg"
+ICON_CONTROLLER_PATH = ASSETS_DIR / "controller.svg"
 
 MODELS_DIR = ASSETS_DIR.parent / "models"
 MODEL_POSE_PATH = MODELS_DIR / "pose_landmarker_lite.task"
@@ -33,6 +35,8 @@ __all__ = [
     "ICON_LAB_PATH",
     "ICON_CAMERA_PATH",
     "ICON_ARROW_DOWN_PATH",
+    "ICON_DUALSHOCK4_PATH",
+    "ICON_CONTROLLER_PATH",
     "MODELS_DIR",
     "MODEL_POSE_PATH",
 ]

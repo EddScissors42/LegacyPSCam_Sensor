@@ -28,6 +28,7 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
 | **Rastreamento Multi-Jogador (2P)** | 🟡 Parcialmente Implementado | `pose_tracker.py` | O MediaPipe suporta `num_poses=2`, mas o Lite foca em 1P. |
 | **Auto-Framing / FaceFollow PTZ** | ✅ Totalmente Implementado | `pose_tracker.py` | Auto-framing digital com zoom suave (1.22x) e centralização dinâmica do rosto para a foto/avatar do dançarino no Just Dance. |
 | **Celular Virtual (Emulador JD Controller via Câmera)** | ✅ Totalmente Implementado | `virtual_phone.py` / `ui/gui_qt.py` | Emula um smartphone conectado via WebSocket local (`/smartphone`) e converte o movimento 3D da mão na câmera em dados de acelerômetro 3D (`JD_PhoneScoringData`) e comandos de menu para músicas que só suportam controle de mão. |
+| **DualShock 4 [EXPERIMENTAL]** | 🟡 Interface Pronta (Aguardando Driver Técnico) | `ui/gui_qt.py` / `ui/icons.py` | Modo de entrada dedicado na barra lateral com aba exclusiva 'Controller Settings', ícones vetoriais/raster antialiased e aviso de segurança. |
 | **Modo Headless (Sem Janela)** | ⏳ Planejado | `tracking_session.py` | Rastrear em background sem gastar GPU com janela gráfica. |
 
 ---
@@ -248,6 +249,14 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
     - Botões com contorno elegante (`border: 1px solid #CBD5E1`) para **Reconnect**, **Auto-Find**, **Skip Finish** e **Record Log**.
     - Atualização do cabeçalho da sidebar para `"ooomaga :O"` e dica de DLL clarificada para `"Copy Kinect10.dll to the game folder (only for Legacy Offline PC)"`.
     - Tipografia de alto contraste com cores escuras explícitas (`#0F172A`) para "TRACKED HAND" e "SENSITIVITY", eliminando problemas de texto branco/invisível em temas escuros do Windows e seguindo rigorosamente o padrão visual da aba de Calibração.
+
+### 21. Modo DualShock 4 [EXPERIMENTAL] — Interface e Controller Settings (v0.2.17 Alpha)
+- **Objetivo:** Adicionar suporte visual e estrutural para usar o controle DualShock 4 como controle de mão (utilizando o sensor Sixaxis / IMU de 6 eixos de hardware).
+- **Interface Implementada (`ui/gui_qt.py`, `ui/icons.py` & `assets/`):**
+  - **Novo Card de Navegação na Barra Lateral:** Adicionado `DualShock 4 [EXPERIMENTAL]` abaixo da Standard Webcam em `CAPTURE DEVICE`, carregando o ícone supersampled de `assets/dualshock4.jpg`.
+  - **Aba Exclusiva "Controller Settings":** Ao selecionar o DualShock 4, as abas de câmera (`Video Settings`, `Calibration`, `Experimental`) são ocultadas e substituídas exclusivamente pela aba `Controller Settings` com o ícone vetorial `assets/controller.svg`.
+  - **Banner de Alerta de Segurança e Lunatismo:** Callout estilizado com o aviso formal em português e inglês instruindo a segurar o controle firmemente e destacando a natureza experimental da funcionalidade.
+  - **Layout de Configurações do Controle:** Bloco estilizado com seleção de mão ativa (`Right Hand` / `Left Hand`), seletor de ganho de hardware e instruções operacionais, preparado para a etapa de integração técnica.
 
 ---
 

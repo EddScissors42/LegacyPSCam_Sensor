@@ -67,6 +67,124 @@ def load_pscam_file_icon(png_path: Path, target_box=(38, 26), color=(255, 255, 2
         return None
 
 
+def load_ds4_file_icon(jpg_path: Path, target_box=(38, 26), color=(255, 255, 255), scale: int = 4):
+    """
+    Loads user-provided dualshock4.jpg, inverts the white background into transparent alpha,
+    recolors the controller graphic to target color, and scales it into target_box * scale.
+    """
+    if not jpg_path or not Path(jpg_path).exists():
+        return None
+    try:
+        import numpy as np
+        im = Image.open(jpg_path).convert("L")
+        arr = np.array(im)
+        inv = 255 - arr
+        alpha = np.clip((inv.astype(float) - 15) / (180 - 15) * 255, 0, 255).astype(np.uint8)
+
+        out_arr = np.zeros((arr.shape[0], arr.shape[1], 4), dtype=np.uint8)
+        out_arr[:, :, 0] = color[0]
+        out_arr[:, :, 1] = color[1]
+        out_arr[:, :, 2] = color[2]
+        out_arr[:, :, 3] = alpha
+
+        colored_im = Image.fromarray(out_arr, "RGBA")
+        bbox = colored_im.getbbox()
+        if not bbox:
+            return None
+        cropped = colored_im.crop(bbox)
+
+        bw, bh = target_box[0] * scale, target_box[1] * scale
+        fit_scale = min(bw / cropped.width, bh / cropped.height)
+        new_w = max(1, int(cropped.width * fit_scale))
+        new_h = max(1, int(cropped.height * fit_scale))
+        resized = cropped.resize((new_w, new_h), Image.Resampling.LANCZOS)
+
+        canvas = Image.new("RGBA", (bw, bh), (0, 0, 0, 0))
+        canvas.paste(resized, ((bw - new_w) // 2, (bh - new_h) // 2))
+        return canvas
+    except Exception as e:
+        print(f"[WARN] Failed to process dualshock4.jpg: {e}")
+        return None
+
+
+def generate_ds4_icons_pil(target_box=(38, 26), scale: int = 4):
+    """
+    Renders supersampled PIL.Image RGBA icons for the DualShock 4 sidebar navigation card.
+    Returns (pil_ds4_act, pil_ds4_inact) rendered at target_box * scale.
+    """
+    base_dir = Path(__file__).resolve().parent
+    jpg_candidates = [
+        base_dir.parent / "assets" / "dualshock4.jpg",
+        base_dir.parent / "assets" / "icons" / "dualshock4.jpg",
+        base_dir / "assets" / "dualshock4.jpg",
+        base_dir / "assets" / "icons" / "dualshock4.jpg",
+    ]
+    jpg_path = next((p for p in jpg_candidates if p.exists()), None)
+
+    ds4_act = load_ds4_file_icon(jpg_path, target_box=target_box, color=(255, 255, 255), scale=scale)
+    ds4_inact = load_ds4_file_icon(jpg_path, target_box=target_box, color=(0, 67, 156), scale=scale)
+
+    if ds4_act is None or ds4_inact is None:
+        w, h = target_box[0] * scale, target_box[1] * scale
+
+        def make_gamepad(col):
+            img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+            d = ImageDraw.Draw(img)
+            # Controller body pill
+            d.rounded_rectangle([int(w * 0.12), int(h * 0.20), int(w * 0.88), int(h * 0.75)],
+                                radius=int(6 * scale), fill=col)
+            # Left grip
+            d.rounded_rectangle([int(w * 0.12), int(h * 0.40), int(w * 0.35), int(h * 0.92)],
+                                radius=int(4 * scale), fill=col)
+            # Right grip
+            d.rounded_rectangle([int(w * 0.65), int(h * 0.40), int(w * 0.88), int(h * 0.92)],
+                                radius=int(4 * scale), fill=col)
+            return img
+
+        if ds4_act is None:
+            ds4_act = make_gamepad((255, 255, 255, 255))
+        if ds4_inact is None:
+            ds4_inact = make_gamepad((0, 67, 156, 255))
+
+    return ds4_act, ds4_inact
+
+
+def generate_controller_tab_icon_pil(size=(18, 18), scale: int = 4):
+    """
+    Renders supersampled PIL.Image RGBA icons for the 'Controller Settings' top navigation tab.
+    Loads controller.svg with vector fallback.
+    Returns (ctrl_act, ctrl_inact).
+    """
+    base_dir = Path(__file__).resolve().parent
+    svg_candidates = [
+        base_dir.parent / "assets" / "controller.svg",
+        base_dir.parent / "assets" / "icons" / "controller.svg",
+        base_dir / "assets" / "controller.svg",
+        base_dir / "assets" / "icons" / "controller.svg",
+    ]
+    svg_path = next((p for p in svg_candidates if p.exists()), None)
+
+    ctrl_act = render_svg_icon_pil(svg_path, size=size, color_hex="#0F172A", scale=scale)
+    ctrl_inact = render_svg_icon_pil(svg_path, size=size, color_hex="#64748B", scale=scale)
+
+    if ctrl_act is None or ctrl_inact is None:
+        w, h = size[0] * scale, size[1] * scale
+
+        def make_tab_gamepad(col):
+            img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+            d = ImageDraw.Draw(img)
+            d.rounded_rectangle([int(w * 0.08), int(h * 0.22), int(w * 0.92), int(h * 0.78)],
+                                radius=int(3 * scale), fill=col)
+            return img
+
+        if ctrl_act is None:
+            ctrl_act = make_tab_gamepad((15, 23, 42, 255))
+        if ctrl_inact is None:
+            ctrl_inact = make_tab_gamepad((100, 116, 139, 255))
+
+    return ctrl_act, ctrl_inact
+
+
 def generate_icons_pil(target_box=(38, 26), scale: int = 4):
     """
     Renders supersampled PIL.Image RGBA icons for the sidebar navigation:

@@ -51,11 +51,18 @@ from ui.theme import (
 )
 from ui.icons import (
     generate_icons_pil,
+    generate_ds4_icons_pil,
     generate_tab_icons_pil,
+    generate_controller_tab_icon_pil,
     generate_mode_icons_pil,
     generate_status_icons_pil
 )
-from assets import ICON_PSCAMERA_PATH, ICON_ARROW_DOWN_PATH
+from assets import (
+    ICON_PSCAMERA_PATH,
+    ICON_ARROW_DOWN_PATH,
+    ICON_DUALSHOCK4_PATH,
+    ICON_CONTROLLER_PATH
+)
 from version import WINDOW_TITLE, VERSION_STRING, APP_NAME
 from sensor.config_manager import ConfigManager, parse_preset, PRESETS_PSCAM, PRESETS_WEBCAM
 from sensor.camera_manager import CameraManager
@@ -472,6 +479,14 @@ class LegacySensorQtGUI(QMainWindow):
             self.pix_ps_act = self.pix_ps_inact = self.pix_web_act = self.pix_web_inact = QPixmap()
 
         try:
+            p_ds4_act, p_ds4_inact = generate_ds4_icons_pil(target_box=(38, 26), scale=4)
+            self.pix_ds4_act = pil_to_qpixmap(p_ds4_act, dpr=4.0)
+            self.pix_ds4_inact = pil_to_qpixmap(p_ds4_inact, dpr=4.0)
+        except Exception as e:
+            print(f"[WARN] Failed to load DS4 icons: {e}")
+            self.pix_ds4_act = self.pix_ds4_inact = QPixmap()
+
+        try:
             p_gear_act, p_gear_inact, p_slid_act, p_slid_inact, p_slid_dis, p_lab_act, p_lab_inact = generate_tab_icons_pil(size=(18, 18), scale=4)
             self.pix_gear_act = pil_to_qpixmap(p_gear_act, dpr=4.0)
             self.pix_gear_inact = pil_to_qpixmap(p_gear_inact, dpr=4.0)
@@ -483,6 +498,14 @@ class LegacySensorQtGUI(QMainWindow):
         except Exception as e:
             print(f"[WARN] Failed to load tab icons: {e}")
             self.pix_gear_act = self.pix_gear_inact = self.pix_slid_act = self.pix_slid_inact = self.pix_slid_disabled = self.pix_lab_act = self.pix_lab_inact = QPixmap()
+
+        try:
+            p_ctrl_act, p_ctrl_inact = generate_controller_tab_icon_pil(size=(18, 18), scale=4)
+            self.pix_ctrl_act = pil_to_qpixmap(p_ctrl_act, dpr=4.0)
+            self.pix_ctrl_inact = pil_to_qpixmap(p_ctrl_inact, dpr=4.0)
+        except Exception as e:
+            print(f"[WARN] Failed to load controller tab icons: {e}")
+            self.pix_ctrl_act = self.pix_ctrl_inact = QPixmap()
 
         try:
             p_modes = generate_mode_icons_pil(size=(15, 15), scale=4)
@@ -781,9 +804,22 @@ class LegacySensorQtGUI(QMainWindow):
         self.card_webcam.set_icons(self.pix_web_act, self.pix_web_inact)
         self.card_webcam.clicked.connect(lambda: self._set_mode("webcam"))
         sidebar_layout.addWidget(self.card_webcam)
-        sidebar_layout.addSpacing(16)
+        sidebar_layout.addSpacing(8)
 
-        # 1.5 Quick Action: Open Kinect10.dll folder
+        # 1.5 Card DualShock 4 [EXPERIMENTAL] (with supersampled icon)
+        self.card_ds4 = DeviceNavCard(
+            "DualShock 4 [EXPERIMENTAL]",
+            "Wireless or USB Controller",
+            self.font_heading,
+            self.font_body,
+            self.sidebar_frame
+        )
+        self.card_ds4.set_icons(self.pix_ds4_act, self.pix_ds4_inact)
+        self.card_ds4.clicked.connect(lambda: self._set_mode("ds4"))
+        sidebar_layout.addWidget(self.card_ds4)
+        sidebar_layout.addSpacing(14)
+
+        # 1.6 Quick Action: Open Kinect10.dll folder
         self.btn_dll_folder = QPushButton("Open Kinect10.dll Folder", self.sidebar_frame)
         self.btn_dll_folder.setProperty("class", "btn_secondary")
         self.btn_dll_folder.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -854,12 +890,21 @@ class LegacySensorQtGUI(QMainWindow):
         self.btn_tab_exp.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_tab_exp.clicked.connect(lambda: self._switch_tab("exp"))
 
+        self.btn_tab_controller = QPushButton("  Controller Settings", self.content_widget)
+        self.btn_tab_controller.setFixedSize(175, 42)
+        self.btn_tab_controller.setIcon(QIcon(self.pix_ctrl_act))
+        self.btn_tab_controller.setIconSize(QSize(18, 18))
+        self.btn_tab_controller.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_tab_controller.clicked.connect(lambda: self._switch_tab("controller"))
+        self.btn_tab_controller.setVisible(False)
+
         top_nav_layout.addStretch()
         top_nav_layout.addWidget(self.btn_tab_video)
         top_nav_layout.addSpacing(10)
         top_nav_layout.addWidget(self.btn_tab_calib)
         top_nav_layout.addSpacing(10)
         top_nav_layout.addWidget(self.btn_tab_exp)
+        top_nav_layout.addWidget(self.btn_tab_controller)
         top_nav_layout.addStretch()
         content_layout.addLayout(top_nav_layout)
         self._apply_tab_styles("video")
@@ -874,10 +919,11 @@ class LegacySensorQtGUI(QMainWindow):
         self.stacked_view = SlidingStackedWidget(self.content_widget)
         content_layout.addWidget(self.stacked_view, stretch=1)
 
-        # Build Page 0 (Video), Page 1 (Calibration) & Page 2 (Experimental)
+        # Build Page 0 (Video), Page 1 (Calibration), Page 2 (Experimental) & Page 3 (DualShock 4)
         self._build_video_view()
         self._build_calib_view()
         self._build_exp_view()
+        self._build_ds4_view()
 
         # 2.3 Bottom Action Area (PlayStation Blue CTA & Footer)
         self.btn_start = QPushButton("START TRACKING", self.content_widget)
@@ -1713,13 +1759,173 @@ class LegacySensorQtGUI(QMainWindow):
         self.stacked_view.addWidget(self.scroll_exp)
         self._update_vphone_ui_readout()
 
+    def _build_ds4_view(self):
+        """Constructs Page 3: DualShock 4 [EXPERIMENTAL] Controller Settings."""
+        self.page_ds4 = QWidget()
+        layout = QVBoxLayout(self.page_ds4)
+        layout.setContentsMargins(0, 4, 6, 0)
+        layout.setSpacing(12)
+
+        ds4_card = QFrame(self.page_ds4)
+        ds4_card.setProperty("class", "card")
+        ds4_layout = QVBoxLayout(ds4_card)
+        ds4_layout.setContentsMargins(16, 16, 16, 16)
+        ds4_layout.setSpacing(14)
+
+        lbl_title = QLabel("DUALSHOCK® 4 CONTROLLER SETTINGS", ds4_card)
+        lbl_title.setStyleSheet(
+            f"font-family: '{self.font_heading}'; font-size: 12px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent; border: none;"
+        )
+        ds4_layout.addWidget(lbl_title)
+
+        # Warning Callout Box (Exact warning requested by user)
+        warn_box = QFrame(ds4_card)
+        warn_box.setStyleSheet("""
+            QFrame {
+                background-color: #FEF3C7;
+                border: 1px solid #FCD34D;
+                border-radius: 8px;
+            }
+        """)
+        warn_layout = QHBoxLayout(warn_box)
+        warn_layout.setContentsMargins(14, 12, 14, 12)
+        warn_layout.setSpacing(12)
+
+        lbl_warn_icon = QLabel("⚠️", warn_box)
+        lbl_warn_icon.setStyleSheet("font-size: 20px; background: transparent; border: none;")
+        warn_layout.addWidget(lbl_warn_icon, alignment=Qt.AlignmentFlag.AlignTop)
+
+        lbl_warn_text = QLabel(
+            "CUIDADO: Jogar com DualShock 4 é coisa de lunático, faça isso somente se você quiser "
+            "testar loucuras e não se esqueça de segurar firme o controle. "
+            "Esse recurso é ultra experimental e pode não ser suportado em novas versões.\n\n"
+            "CAUTION: Playing with a DualShock 4 is for lunatics! Only do this if you want to test "
+            "wild experiments, and do not forget to hold the controller firmly! "
+            "This feature is ultra-experimental and may not be supported in future versions.",
+            warn_box
+        )
+        lbl_warn_text.setWordWrap(True)
+        lbl_warn_text.setStyleSheet(
+            f"font-family: '{self.font_body}'; font-size: 11px; font-weight: 500; color: #92400E; background: transparent; border: none; line-height: 1.4;"
+        )
+        warn_layout.addWidget(lbl_warn_text, stretch=1)
+        ds4_layout.addWidget(warn_box)
+
+        # Controller Details & Settings Frame
+        ds4_info_frame = QFrame(ds4_card)
+        ds4_info_frame.setStyleSheet(f"""
+            QFrame {{
+                background-color: {PALETTE["bg_card"]};
+                border: 1px solid {PALETTE["border_subtle"]};
+                border-radius: 8px;
+            }}
+        """)
+        ds4_info_layout = QVBoxLayout(ds4_info_frame)
+        ds4_info_layout.setContentsMargins(16, 14, 16, 14)
+        ds4_info_layout.setSpacing(12)
+
+        self.lbl_ds4_status = QLabel("Status: Controller Ready for Setup (Awaiting Technical Driver Integration)", ds4_info_frame)
+        self.lbl_ds4_status.setStyleSheet(
+            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['ps_blue']}; background: transparent; border: none;"
+        )
+        ds4_info_layout.addWidget(self.lbl_ds4_status)
+
+        # Settings row: Tracked Hand & Sensitivity
+        settings_row = QHBoxLayout()
+        settings_row.setSpacing(16)
+
+        # Hand selection block
+        hand_box = QVBoxLayout()
+        hand_box.setSpacing(4)
+        lbl_hand = QLabel("TRACKED HAND (HOLDING CONTROLLER)", ds4_info_frame)
+        lbl_hand.setStyleSheet(
+            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: #0F172A; background: transparent; border: none;"
+        )
+        self.cb_ds4_hand = QComboBox(ds4_info_frame)
+        self.cb_ds4_hand.addItem("Right Hand (Standard)")
+        self.cb_ds4_hand.addItem("Left Hand")
+        self.cb_ds4_hand.setStyleSheet(f"""
+            QComboBox {{
+                background-color: #FFFFFF;
+                color: #0F172A;
+                font-family: '{self.font_body}', sans-serif;
+                border: 1px solid {PALETTE['tab_gray_border']};
+                border-radius: 6px;
+                padding: 6px 12px;
+                font-size: 11px;
+                font-weight: 500;
+                min-width: 170px;
+            }}
+            QComboBox:hover {{
+                border-color: {PALETTE['ps_blue']};
+            }}
+        """)
+        hand_box.addWidget(lbl_hand)
+        hand_box.addWidget(self.cb_ds4_hand)
+
+        # Sensitivity block
+        sens_box = QVBoxLayout()
+        sens_box.setSpacing(4)
+        lbl_sens = QLabel("HARDWARE ACCELEROMETER GAIN", ds4_info_frame)
+        lbl_sens.setStyleSheet(
+            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: #0F172A; background: transparent; border: none;"
+        )
+        self.cb_ds4_sens = QComboBox(ds4_info_frame)
+        self.cb_ds4_sens.addItem("1.00x (Standard Hardware Scale)")
+        self.cb_ds4_sens.addItem("1.25x (High Energy / Fast Dances)")
+        self.cb_ds4_sens.addItem("0.85x (Smooth / Gentle Gestures)")
+        self.cb_ds4_sens.setStyleSheet(f"""
+            QComboBox {{
+                background-color: #FFFFFF;
+                color: #0F172A;
+                font-family: '{self.font_body}', sans-serif;
+                border: 1px solid {PALETTE['tab_gray_border']};
+                border-radius: 6px;
+                padding: 6px 12px;
+                font-size: 11px;
+                font-weight: 500;
+                min-width: 190px;
+            }}
+            QComboBox:hover {{
+                border-color: {PALETTE['ps_blue']};
+            }}
+        """)
+        sens_box.addWidget(lbl_sens)
+        sens_box.addWidget(self.cb_ds4_sens)
+
+        settings_row.addLayout(hand_box, stretch=0)
+        settings_row.addLayout(sens_box, stretch=1)
+        ds4_info_layout.addLayout(settings_row)
+
+        # Instruction details
+        lbl_instructions = QLabel(
+            "• Hold the DualShock 4 in your active dancing hand with the light bar pointing forward.\n"
+            "• Connect via USB cable or pair wirelessly via Windows Bluetooth settings.\n"
+            "• When started, the controller's internal 6-axis IMU will stream physical 3D G-force data directly to Just Dance via the Virtual Phone scoring bridge.",
+            ds4_info_frame
+        )
+        lbl_instructions.setWordWrap(True)
+        lbl_instructions.setStyleSheet(
+            f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
+        )
+        ds4_info_layout.addWidget(lbl_instructions)
+
+        ds4_layout.addWidget(ds4_info_frame)
+        layout.addWidget(ds4_card)
+        layout.addStretch()
+
+        self.scroll_ds4 = self._create_scroll_page(self.page_ds4)
+        self.stacked_view.addWidget(self.scroll_ds4)
+
     # =========================================================================
     # UI STATE MANAGEMENT & VISIBILITY
     # =========================================================================
     def is_camera_accessible(self) -> bool:
         """Returns True if the currently selected camera device is connected and accessible."""
         mode = self.cfg.get("camera_mode", "pscam")
-        if mode == "pscam":
+        if mode == "ds4":
+            return True
+        elif mode == "pscam":
             return getattr(self, "_current_pscam_state", "DISCONNECTED") == "READY"
         else:
             cams = getattr(self, "camera_list", [])
@@ -1819,6 +2025,15 @@ class LegacySensorQtGUI(QMainWindow):
                 self.btn_tab_exp.setStyleSheet(inact_css)
                 self.btn_tab_exp.setIcon(QIcon(self.pix_lab_inact))
 
+        # Controller Settings Tab (DualShock 4 Mode)
+        if hasattr(self, "btn_tab_controller"):
+            if tab_id == "controller":
+                self.btn_tab_controller.setStyleSheet(act_css)
+                self.btn_tab_controller.setIcon(QIcon(self.pix_ctrl_act))
+            else:
+                self.btn_tab_controller.setStyleSheet(inact_css)
+                self.btn_tab_controller.setIcon(QIcon(self.pix_ctrl_inact))
+
     def _switch_tab(self, tab_id: str):
         if tab_id == "calib" and not self.is_camera_accessible():
             return
@@ -1834,21 +2049,48 @@ class LegacySensorQtGUI(QMainWindow):
             self.stacked_view.slide_to_index(1)
         elif tab_id == "exp":
             self.stacked_view.slide_to_index(2)
+        elif tab_id == "controller":
+            self.stacked_view.slide_to_index(3)
 
     def _set_mode(self, mode: str, animate: bool = True):
         self.cfg["camera_mode"] = mode
         self._update_sidebar_buttons()
-        self._refresh_presets()
-        self._update_camera_dropdown_for_mode()
-        self._update_pscam_status()
-        self._update_video_view_visibility()
-        self._switch_tab("video")
+        if mode == "ds4":
+            if hasattr(self, "btn_tab_video"):
+                self.btn_tab_video.setVisible(False)
+            if hasattr(self, "btn_tab_calib"):
+                self.btn_tab_calib.setVisible(False)
+            if hasattr(self, "btn_tab_exp"):
+                self.btn_tab_exp.setVisible(False)
+            if hasattr(self, "btn_tab_controller"):
+                self.btn_tab_controller.setVisible(True)
+            self._switch_tab("controller")
+            if hasattr(self, "btn_start"):
+                self.btn_start.setText("START CONTROLLER (DS4)")
+        else:
+            if hasattr(self, "btn_tab_controller"):
+                self.btn_tab_controller.setVisible(False)
+            if hasattr(self, "btn_tab_video"):
+                self.btn_tab_video.setVisible(True)
+            if hasattr(self, "btn_tab_calib"):
+                self.btn_tab_calib.setVisible(True)
+            if hasattr(self, "btn_tab_exp"):
+                self.btn_tab_exp.setVisible(True)
+            self._refresh_presets()
+            self._update_camera_dropdown_for_mode()
+            self._update_pscam_status()
+            self._update_video_view_visibility()
+            self._switch_tab("video")
+            if hasattr(self, "btn_start"):
+                self.btn_start.setText("START TRACKING")
         self._save_settings()
 
     def _update_sidebar_buttons(self):
         mode = self.cfg.get("camera_mode", "pscam")
         self.card_pscam.set_active(mode == "pscam")
         self.card_webcam.set_active(mode == "webcam")
+        if hasattr(self, "card_ds4"):
+            self.card_ds4.set_active(mode == "ds4")
 
     def _update_video_view_visibility(self):
         """
@@ -2410,6 +2652,16 @@ class LegacySensorQtGUI(QMainWindow):
             return
 
         mode = self.cfg.get("camera_mode", "pscam")
+
+        if mode == "ds4":
+            QMessageBox.information(
+                self,
+                "DualShock 4 [EXPERIMENTAL]",
+                "DualShock 4 UI setup complete!\n\n"
+                "The interface layout and navigation card are configured.\n"
+                "Technical Bluetooth/USB HID polling and motion scoring mapping will be connected in the next phase."
+            )
+            return
 
         if mode == "pscam":
             if CameraManager.is_pscam_installed() and not CameraManager.is_pscam_running():
