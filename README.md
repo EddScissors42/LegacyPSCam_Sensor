@@ -8,7 +8,7 @@ Currently, you can use the following devices for tracking and control:
 
 - **PlayStation Camera:** Use a PS Camera with PSCam4Win for tracking.
 - **Webcam:** Use your regular webcam for tracking.
-- **DualShock 4:** Use a PS4 controller as a hand controller.
+- **DualShock 4:** Use it as a hand controller.
 
 ### Virtual Phone
 
