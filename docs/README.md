@@ -57,7 +57,7 @@ All non-essential overhead has been removed while perfecting the core components
 ```
 LegacyPSCam_Sensor/
 ├── main.py                     # CLI launcher and entry point
-├── version.py                  # Official versioning & build metadata (v0.2.11 Alpha)
+├── version.py                  # Official versioning & build metadata (v0.3.1 Alpha)
 ├── test_suite.py               # 9 complete automated test suites
 ├── config.json                 # Saved user preferences
 ├── sensor/                     # Tracking Engine and AI package

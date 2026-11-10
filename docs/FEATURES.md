@@ -284,6 +284,14 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
       - `[Q]`: Encerra o rastreamento e fecha a janela de telemetria de forma limpa.
       - `[R]`: Reconecta imediatamente o controle DualShock 4 via Bluetooth com confirmação de vibração tátil.
 
+### 22. Atalho Rápido "Skip Finish" na UI Principal & Polimento Geral (v0.3.1 Alpha)
+- **Objetivo:** Facilitar a navegação rápida durante a inicialização do Just Dance 2022 (ou Dreyn Mod), permitindo pular a tela de tutorial de smartphone ("Finish") diretamente da tela principal do aplicativo com um único clique, sem precisar alternar para a aba Experimental.
+- **Implementação na Interface Principal (`ui/gui_qt.py`):**
+  - **Botão "Skip Finish" na Barra de Ação:** Adicionado botão secundário estilizado em azul pastel PlayStation (`btn_secondary`) ao lado do botão principal "START TRACKING" no rodapé da janela.
+  - **Dica de Contexto Explicativa (Tooltip/Boxtip):** Exibe a dica `"for Just Dance 2022 phone tutorial"` ao passar o cursor sobre o botão (tanto na tela principal quanto na aba Experimental).
+  - **Ativação Inteligente com Auto-Conexão:** Caso o Dançarino clique em "Skip Finish" antes de ter ativado manualmente o Celular Virtual na aba Experimental, o sistema automaticamente inicializa o cliente WebSocket UbiArt (`set_enabled(True)`), atualiza a interface e dispara a sequência de bypass `PHONE_FTUE_FINISH` por 4 segundos contínuos, garantindo a transição imediata para o menu do jogo.
+  - **Restauração de Rótulo Pós-Tracking:** Ao encerrar uma sessão de dança no modo DualShock 4, o botão restaura perfeitamente o texto `"START CONTROLLER (DS4)"`, preservando a consistência de estado.
+
 ---
 
 ## 🟡 Funcionalidades Parciais e ⏳ Roadmap Futuro

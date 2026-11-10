@@ -784,7 +784,7 @@ class LegacySensorQtGUI(QMainWindow):
         # 1.3 Card PS Camera (with supersampled icon)
         self.card_pscam = DeviceNavCard(
             "PlayStation®Camera",
-            "OV580 Stereo • 60 FPS",
+            "the most hated one",
             self.font_heading,
             self.font_body,
             self.sidebar_frame
@@ -926,13 +926,27 @@ class LegacySensorQtGUI(QMainWindow):
         self._build_exp_view()
         self._build_ds4_view()
 
-        # 2.3 Bottom Action Area (PlayStation Blue CTA & Footer)
+        # 2.3 Bottom Action Area (PlayStation Blue CTA & Secondary Action)
+        bottom_action_layout = QHBoxLayout()
+        bottom_action_layout.setSpacing(10)
+
         self.btn_start = QPushButton("START TRACKING", self.content_widget)
         self.btn_start.setProperty("class", "btn_cta")
         self.btn_start.setFixedHeight(48)
         self.btn_start.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_start.clicked.connect(self._start_tracking)
-        content_layout.addWidget(self.btn_start)
+        bottom_action_layout.addWidget(self.btn_start, stretch=1)
+
+        self.btn_main_skip_finish = QPushButton("Skip Finish", self.content_widget)
+        self.btn_main_skip_finish.setProperty("class", "btn_secondary")
+        self.btn_main_skip_finish.setFixedHeight(48)
+        self.btn_main_skip_finish.setFixedWidth(130)
+        self.btn_main_skip_finish.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_main_skip_finish.setToolTip("for Just Dance 2022 phone tutorial")
+        self.btn_main_skip_finish.clicked.connect(self._on_skip_finish_clicked)
+        bottom_action_layout.addWidget(self.btn_main_skip_finish)
+
+        content_layout.addLayout(bottom_action_layout)
 
         footer_layout = QHBoxLayout()
         footer_layout.setContentsMargins(0, 2, 0, 0)
@@ -1678,8 +1692,8 @@ class LegacySensorQtGUI(QMainWindow):
         self.btn_vphone_ftue = QPushButton("Skip Finish", self.vphone_details_frame)
         self.btn_vphone_ftue.setStyleSheet(btn_outline_style)
         self.btn_vphone_ftue.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_vphone_ftue.setToolTip("Skips the phone tutorial Finish screen")
-        self.btn_vphone_ftue.clicked.connect(lambda: self.vphone.send_input("FTUE_FINISH"))
+        self.btn_vphone_ftue.setToolTip("for Just Dance 2022 phone tutorial")
+        self.btn_vphone_ftue.clicked.connect(self._on_skip_finish_clicked)
 
         self.btn_vphone_log = QPushButton("Record Log", self.vphone_details_frame)
         self.btn_vphone_log.setStyleSheet(btn_outline_style)
@@ -1797,9 +1811,9 @@ class LegacySensorQtGUI(QMainWindow):
         warn_layout.addWidget(lbl_warn_icon, alignment=Qt.AlignmentFlag.AlignTop)
 
         lbl_warn_text = QLabel(
-            "CAUTION: Playing with a DualShock 4 is for lunatics! Only do this if you want to test "
-            "wild experiments, and do not forget to hold the controller firmly! "
-            "This feature is ultra-experimental and may not be supported in future versions.",
+            "CAUTION: Playing with a DualShock 4 is for lunatics! Only do this if you want to do "
+            "wild experiments, and do not forget to hold the controller so f*ing firmly! "
+            "This feature is ultra-experimental and may not be supported in future versions. (maybe...)",
             warn_box
         )
         lbl_warn_text.setWordWrap(True)
@@ -1919,7 +1933,7 @@ class LegacySensorQtGUI(QMainWindow):
         actions_row = QHBoxLayout()
         actions_row.setSpacing(10)
 
-        self.btn_ds4_rumble = QPushButton("⚡ Test Rumble Vibration", ds4_info_frame)
+        self.btn_ds4_rumble = QPushButton("Test Rumble Vibration", ds4_info_frame)
         self.btn_ds4_rumble.setStyleSheet(f"""
             QPushButton {{
                 background-color: #FFFFFF;
@@ -1939,7 +1953,7 @@ class LegacySensorQtGUI(QMainWindow):
         self.btn_ds4_rumble.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_ds4_rumble.clicked.connect(self._test_ds4_rumble)
 
-        self.btn_ds4_reconnect = QPushButton("🔄 Reconnect Controller", ds4_info_frame)
+        self.btn_ds4_reconnect = QPushButton("Reconnect Controller", ds4_info_frame)
         self.btn_ds4_reconnect.setStyleSheet(f"""
             QPushButton {{
                 background-color: #FFFFFF;
@@ -2578,6 +2592,15 @@ class LegacySensorQtGUI(QMainWindow):
                 "If the game is running on the same PC, port 8080 works directly."
             )
 
+    def _on_skip_finish_clicked(self):
+        """Sends the FTUE_FINISH shortcut packet for Just Dance 2022 phone tutorial."""
+        if not self.vphone.enabled:
+            self.vphone.set_enabled(True)
+            if hasattr(self, "chk_vphone_enabled"):
+                self.chk_vphone_enabled.setChecked(True)
+        self.vphone.send_input("FTUE_FINISH")
+        self.vphone._ftue_until_ts = time.perf_counter() + 4.0
+
     def _toggle_vphone_logging(self):
         if not self.vphone.is_logging:
             path = self.vphone.set_logging(True)
@@ -2891,7 +2914,10 @@ class LegacySensorQtGUI(QMainWindow):
         self.is_tracking_active = False
         if hasattr(self, "lbl_vphone_accel"):
             self.lbl_vphone_accel.setVisible(False)
-        self.btn_start.setText("START TRACKING")
+        if self.cfg.get("camera_source") == "ds4":
+            self.btn_start.setText("START CONTROLLER (DS4)")
+        else:
+            self.btn_start.setText("START TRACKING")
         self.btn_start.setEnabled(True)
         self.showNormal()
         self.activateWindow()
