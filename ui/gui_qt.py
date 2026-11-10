@@ -1801,7 +1801,7 @@ class LegacySensorQtGUI(QMainWindow):
             "CAUTION: Playing with a DualShock 4 is for lunatics! Only do this if you want to do "
             "wild experiments, and do not forget to hold the controller so f*ing firmly! "
             "This feature is ultra-experimental and may not be supported in future versions. (maybe...)\n\n"
-            "Esse modo de controle automaticamente usa o metodo experiemental Celular virtual, problemas podem acontecer.",
+            "This controller mode automatically enables the virtual phone feature, and may not work as intended. Use at your own risk.",
             warn_box
         )
         lbl_warn_text.setWordWrap(True)
@@ -1843,13 +1843,6 @@ class LegacySensorQtGUI(QMainWindow):
         text_col.addWidget(self.lbl_ds4_conn_info)
         card_layout.addLayout(text_col, stretch=1)
         ds4_disc_layout.addWidget(self.ds4_status_card)
-
-        self.btn_search_ds4 = QPushButton("Search for DualShock® 4", self.ds4_disconnected_box)
-        self.btn_search_ds4.setProperty("class", "btn_balloon_action")
-        self.btn_search_ds4.setFixedHeight(42)
-        self.btn_search_ds4.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_search_ds4.clicked.connect(self._reconnect_ds4)
-        ds4_disc_layout.addWidget(self.btn_search_ds4)
         ds4_layout.addWidget(self.ds4_disconnected_box)
 
         # Controller Details & Settings Frame (Shown when DualShock 4 is connected)
@@ -2766,8 +2759,8 @@ class LegacySensorQtGUI(QMainWindow):
             paths = find_ds4_devices()
             if paths:
                 if hasattr(self, "lbl_ds4_conn_info"):
-                    self.lbl_ds4_conn_info.setText("DualShock® 4 paired via Bluetooth. Click Search to connect.")
-                self.lbl_ds4_status.setText("Status: DualShock 4 Paired (Press Reconnect)")
+                    self.lbl_ds4_conn_info.setText("DualShock® 4 paired via Bluetooth. Turn controller on (PS button).")
+                self.lbl_ds4_status.setText("Status: DualShock 4 Paired (Turn Controller On)")
                 self.lbl_ds4_status.setStyleSheet(
                     f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['status_warn']}; background: transparent; border: none;"
                 )
@@ -2797,8 +2790,6 @@ class LegacySensorQtGUI(QMainWindow):
             )
 
     def _reconnect_ds4(self):
-        if hasattr(self, "btn_search_ds4"):
-            self.btn_search_ds4.setEnabled(False)
         if hasattr(self, "lbl_ds4_conn_info"):
             self.lbl_ds4_conn_info.setText("Searching for DualShock® 4 via Bluetooth HID...")
         def worker():
@@ -2814,8 +2805,6 @@ class LegacySensorQtGUI(QMainWindow):
 
     @Slot()
     def _finish_ds4_reconnect(self):
-        if hasattr(self, "btn_search_ds4"):
-            self.btn_search_ds4.setEnabled(True)
         self._update_ds4_ui_readout()
 
     def _on_ds4_hand_changed(self, idx: int):
