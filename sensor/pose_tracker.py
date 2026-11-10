@@ -9,6 +9,16 @@ import time
 from pathlib import Path
 import numpy as np
 import cv2
+
+# Lightweight matplotlib mock for MediaPipe drawing_utils when excluded in binary
+if "matplotlib" not in sys.modules:
+    import types
+    _m = types.ModuleType("matplotlib")
+    _plt = types.ModuleType("matplotlib.pyplot")
+    _m.pyplot = _plt
+    sys.modules["matplotlib"] = _m
+    sys.modules["matplotlib.pyplot"] = _plt
+
 import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision

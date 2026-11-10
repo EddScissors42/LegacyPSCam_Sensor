@@ -11,6 +11,15 @@ BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
+# Provide lightweight mock for matplotlib if excluded or missing (MediaPipe drawing_utils requires it on import)
+if "matplotlib" not in sys.modules:
+    import types
+    _m = types.ModuleType("matplotlib")
+    _plt = types.ModuleType("matplotlib.pyplot")
+    _m.pyplot = _plt
+    sys.modules["matplotlib"] = _m
+    sys.modules["matplotlib.pyplot"] = _plt
+
 from sensor import ConfigManager, run_tracking_session
 from ui import launch_app, LegacySensorGUI
 from version import WINDOW_TITLE, VERSION_STRING, APP_NAME
