@@ -255,25 +255,30 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
 - **Implementação Técnica do Driver (`sensor/ds4_controller.py`):**
   - **Zero Dependências Externas (Native Win32):** Implementado 100% com `ctypes` utilizando as bibliotecas padrão do Windows (`setupapi.dll`, `hid.dll` e `kernel32.dll`), sem exigir pacotes externos adicionais.
   - **Enumeração Automática de Interfaces HID Bluetooth:** Busca pelas interfaces registradas sob a GUID de dispositivo HID (`{4d1e55b2-f16f-11cf-88cb-001111000030}`) filtrando por Sony Interactive Entertainment (`VID 0x054C`) e modelos DS4 v1/v2 (`PID 0x05C4` e `PID 0x09CC`).
-  - **Handshake de Ativação do Relatório Estendido 0x11:**
-    - Por padrão, o Windows Bluetooth inicia o controle no modo simplificado PC (Relatório `0x01`), que transmite apenas analógicos e botões e omite o sensor IMU.
-    - O driver envia um **Output Report `0x11`** de 78 bytes com checksum **CRC-32 (IEEE 802.3)** inicializado com a semente específica de Bluetooth Output `0xA2`, ativando o streaming completo de alta frequência dos sensores.
+  - **Compatibilidade Dual HID (Relatório Padrão 0x01 e Estendido 0x11):**
+    - Suporte híbrido transparente para ambos os modos do driver Bluetooth do Windows: processa nativamente o relatório padrão `0x01` (64 bytes com IMU nos offsets 13 a 25 e bateria no byte 30) e o relatório estendido `0x11` (78 bytes com IMU nos offsets 15 a 27 e bateria no byte 32).
+    - Suporte adaptativo de Output Report: detecta dinamicamente via `HidP_GetCaps` o tamanho esperado pelo driver (`32 bytes` para relatório `0x05` ou `78 bytes` para `0x11` com CRC-32), garantindo que vibração (rumble) e lightbar funcionem sem erros de parâmetro (`ERROR_INVALID_PARAMETER`).
     - Configura a barra de luz (Lightbar) para o tom icônico **PlayStation Blue** (`RGB: 0, 67, 156`).
-  - **Taxa de Amostragem Ultrarrápida (~500 a 600 Hz):** Leitura assíncrona contínua via thread dedicada com baixa sobrecarga de CPU, capturando mais de 500 amostras por segundo.
+  - **Taxa de Amostragem Ultrarrápida (~250 a 600 Hz):** Leitura assíncrona contínua via thread dedicada com baixíssima sobrecarga de CPU, capturando centenas de amostras por segundo.
   - **Escala Física e Orientação:**
     - Escala bruta de hardware de 8192 LSB por 1.0G traduzida em forças G reais.
     - Mapeamento coordenado para o protocolo de pontuação do Just Dance (eixos lateral X, vertical Y e longitudinal Z).
   - **Isolamento de Botões Anti-Missclick (Uso Exclusivo do Sensor):**
     - Para evitar que o dançarino pause ou saia da música acidentalmente ao segurar o controle com firmeza ou trocar de pegada durante passos rápidos, o envio de comandos de jogo através dos botões físicos foi desativado. Apenas o sensor inercial (acelerômetro 3D) alimenta a pontuação da dança.
-  - **Identidade Visual e Assets Atualizados:**
-    - O ícone do DualShock 4 na barra lateral agora utiliza `officialdualshock.png` com renderização supersampled e fundo transparente.
-    - O ícone da Standard Webcam foi substituído pelo vetor vetorial nítido `webcam.svg`.
+  - **Desvinculação Completa de Câmera no Modo DualShock 4:**
+    - Nenhuma webcam ou PlayStation Camera é inicializada ou aberta ao iniciar o tracking com o controle. O pipeline de hardware de vídeo permanece totalmente desligado, economizando CPU/energia e garantindo que o LED de privacidade da câmera permaneça apagado.
+  - **Identidade Visual e Proporção Vetorial dos Ícones:**
+    - O ícone do DualShock 4 na barra lateral utiliza `officialdualshock.png` com renderização supersampled e fundo transparente.
+    - O ícone da Standard Webcam utiliza o vetor `webcam.svg` com preservação estrita de proporção 1:1 (`QRectF` centralizado em `render_svg_icon_pil`), impedindo distorções ou aspecto achatado/gordo.
     - Pasta `assets/` reorganizada categoricamente em `assets/icons/` e `assets/fonts/`.
   - **Feedback Háptico (Vibração / Rumble):**
     - Suporte a pulsos de vibração de alta e baixa frequência nos motores esquerdo e direito, com confirmação háptica ao conectar e teste interativo na interface.
-  - **Telemetria de Bateria:** Leitura em tempo real do nível de carga (0% a 100%) e status de carregamento a partir do byte 32 do relatório.
-  - **Sessão de Dança Visual (`run_ds4_tracking_session`):**
-    - Janela gráfica estilizada com indicadores em barras das forças G em 3 eixos, magnitude total, atalhos de teclado e integração direta com a memória compartilhada e o servidor WebSocket local do Just Dance.
+  - **Telemetria de Bateria:** Leitura em tempo real do nível de carga (0% a 100%) e status de carregamento a partir dos relatórios HID.
+  - **Janela de Telemetria e Dança (`run_ds4_tracking_session`):**
+    - Janela gráfica estilizada com indicadores em barras das forças G em 3 eixos (`ACCEL X`, `ACCEL Y`, `ACCEL Z`), magnitude total de aceleração (`TOTAL G-FORCE`), percentual e status de carregamento da bateria, taxa de atualização HID em Hz e status de conexão com o Just Dance PC.
+    - **Teclas de Atalho Dedicadas:**
+      - `[Q]`: Encerra o rastreamento e fecha a janela de telemetria de forma limpa.
+      - `[R]`: Reconecta imediatamente o controle DualShock 4 via Bluetooth com confirmação de vibração tátil.
 
 ---
 

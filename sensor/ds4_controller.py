@@ -9,14 +9,8 @@ Features:
   3. Extended Report 0x11 handshake: Activates 6-axis IMU (gyro + accel) and lightbar.
   4. Hardware Accelerometer scaling: Translates raw 8192 LSB/1G into calibrated G-forces.
   5. High-frequency streaming: Up to 500+ Hz polling rate with low CPU overhead.
-  6. Button mapping to Just Dance menu actions:
-     - Cross (✕) -> VALID / Confirm (Enter)
-     - Circle (○) -> BACK (Esc)
-     - D-Pad -> UP / DOWN / LEFT / RIGHT
-     - Options -> PAUSE
-     - Triangle (△) -> FTUE_FINISH / Skip
-  7. Haptic rumble feedback and customizable RGB lightbar (default: PlayStation Blue).
-  8. Live battery percentage and charging state detection.
+  6. Haptic rumble feedback and customizable RGB lightbar (default: PlayStation Blue).
+  7. Live battery percentage and charging state detection.
 """
 
 from __future__ import annotations
@@ -65,10 +59,40 @@ class SP_DEVICE_INTERFACE_DATA(ctypes.Structure):
     ]
 
 
+class HIDP_CAPS(ctypes.Structure):
+    _fields_ = [
+        ("Usage", wintypes.USHORT),
+        ("UsagePage", wintypes.USHORT),
+        ("InputReportByteLength", wintypes.USHORT),
+        ("OutputReportByteLength", wintypes.USHORT),
+        ("FeatureReportByteLength", wintypes.USHORT),
+        ("Reserved", wintypes.USHORT * 17),
+        ("NumberLinkCollectionNodes", wintypes.USHORT),
+        ("NumberInputButtonCaps", wintypes.USHORT),
+        ("NumberInputValueCaps", wintypes.USHORT),
+        ("NumberInputDataIndices", wintypes.USHORT),
+        ("NumberOutputButtonCaps", wintypes.USHORT),
+        ("NumberOutputValueCaps", wintypes.USHORT),
+        ("NumberOutputDataIndices", wintypes.USHORT),
+        ("NumberFeatureButtonCaps", wintypes.USHORT),
+        ("NumberFeatureValueCaps", wintypes.USHORT),
+        ("NumberFeatureDataIndices", wintypes.USHORT),
+    ]
+
+
 def _init_win32_apis():
     setupapi = ctypes.WinDLL("setupapi", use_last_error=True)
     hid = ctypes.WinDLL("hid", use_last_error=True)
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+    hid.HidD_GetPreparsedData.restype = wintypes.BOOL
+    hid.HidD_GetPreparsedData.argtypes = [wintypes.HANDLE, ctypes.c_void_p]
+
+    hid.HidP_GetCaps.restype = wintypes.LONG
+    hid.HidP_GetCaps.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+
+    hid.HidD_FreePreparsedData.restype = wintypes.BOOL
+    hid.HidD_FreePreparsedData.argtypes = [ctypes.c_void_p]
 
     setupapi.SetupDiGetClassDevsW.restype = wintypes.HANDLE
     setupapi.SetupDiGetClassDevsW.argtypes = [
@@ -201,6 +225,8 @@ class DS4Controller:
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
         self._lock = threading.Lock()
+        self._input_len: int = 64
+        self._output_len: int = 32
 
         # Configurable attributes
         self.hand: str = "right"
@@ -258,7 +284,21 @@ class DS4Controller:
             self._device_path = target_path
             self._stop_event.clear()
 
-            # Perform Extended Report 0x11 handshake + Welcome rumble buzz
+            # Query report lengths via HID capabilities
+            self._input_len = 64
+            self._output_len = 32
+            try:
+                prep = ctypes.c_void_p()
+                if _hid.HidD_GetPreparsedData(handle, ctypes.byref(prep)):
+                    caps = HIDP_CAPS()
+                    if _hid.HidP_GetCaps(prep, ctypes.byref(caps)):
+                        self._input_len = int(caps.InputReportByteLength)
+                        self._output_len = int(caps.OutputReportByteLength)
+                    _hid.HidD_FreePreparsedData(prep)
+            except Exception:
+                pass
+
+            # Perform Extended Report handshake + Welcome rumble buzz
             self._send_output_report(
                 r=self.led_r,
                 g=self.led_g,
@@ -356,33 +396,49 @@ class DS4Controller:
         rumble_small: int = 0,
         rumble_large: int = 0,
     ) -> bool:
-        """Constructs and writes Bluetooth Output Report 0x11 with IEEE 802.3 CRC-32."""
+        """Constructs and writes Bluetooth Output Report (32-byte report 0x05 or 78-byte report 0x11)."""
         if not self._handle:
             return False
 
-        out_rep = bytearray(78)
-        out_rep[0] = 0x11
-        out_rep[1] = 0xC0  # Polling rate & streaming flags
-        out_rep[2] = 0x20
-        out_rep[3] = 0x07  # Enable rumble small/large and lightbar
-        out_rep[6] = max(0, min(255, int(rumble_small)))
-        out_rep[7] = max(0, min(255, int(rumble_large)))
-        out_rep[8] = max(0, min(255, int(r)))
-        out_rep[9] = max(0, min(255, int(g)))
-        out_rep[10] = max(0, min(255, int(b)))
+        if self._output_len == 32:
+            # 32-byte Output Report 0x05 (Standard Windows Bluetooth DS4 driver)
+            out_rep = bytearray(32)
+            out_rep[0] = 0x05
+            out_rep[1] = 0x07  # Enable rumble motors and RGB lightbar
+            out_rep[4] = max(0, min(255, int(rumble_small)))
+            out_rep[5] = max(0, min(255, int(rumble_large)))
+            out_rep[6] = max(0, min(255, int(r)))
+            out_rep[7] = max(0, min(255, int(g)))
+            out_rep[8] = max(0, min(255, int(b)))
 
-        # CRC32 calculation: Bluetooth Output Report seed 0xA2 + out_rep[0:74]
-        crc = zlib.crc32(bytes([0xA2]) + bytes(out_rep[:74])) & 0xFFFFFFFF
-        out_rep[74:78] = struct.pack("<I", crc)
+            c_buf = (ctypes.c_ubyte * 32)(*out_rep)
+            written = wintypes.DWORD()
+            res = _kernel32.WriteFile(self._handle, ctypes.byref(c_buf), 32, ctypes.byref(written), None)
+            return bool(res)
+        else:
+            # 78-byte Extended Output Report 0x11 with IEEE 802.3 CRC-32
+            out_rep = bytearray(78)
+            out_rep[0] = 0x11
+            out_rep[1] = 0xC0  # Polling rate & streaming flags
+            out_rep[2] = 0x20
+            out_rep[3] = 0x07  # Enable rumble small/large and lightbar
+            out_rep[6] = max(0, min(255, int(rumble_small)))
+            out_rep[7] = max(0, min(255, int(rumble_large)))
+            out_rep[8] = max(0, min(255, int(r)))
+            out_rep[9] = max(0, min(255, int(g)))
+            out_rep[10] = max(0, min(255, int(b)))
 
-        c_buf = (ctypes.c_ubyte * 78)(*out_rep)
-        written = wintypes.DWORD()
-        res = _kernel32.WriteFile(self._handle, ctypes.byref(c_buf), 78, ctypes.byref(written), None)
-        return bool(res)
+            crc = zlib.crc32(bytes([0xA2]) + bytes(out_rep[:74])) & 0xFFFFFFFF
+            out_rep[74:78] = struct.pack("<I", crc)
+
+            c_buf = (ctypes.c_ubyte * 78)(*out_rep)
+            written = wintypes.DWORD()
+            res = _kernel32.WriteFile(self._handle, ctypes.byref(c_buf), 78, ctypes.byref(written), None)
+            return bool(res)
 
     def _worker_loop(self) -> None:
-        """High-frequency background reader for Report 0x11."""
-        buf_len = 547
+        """High-frequency background reader supporting Report 0x01 and Report 0x11."""
+        buf_len = max(64, self._input_len)
         buf = (ctypes.c_ubyte * buf_len)()
         bytes_read = wintypes.DWORD()
 
@@ -403,28 +459,71 @@ class DS4Controller:
                 break
 
             data = bytes(buf[: bytes_read.value])
-            if len(data) < 33 or data[0] != 0x11:
-                # If controller fell back to Report 0x01, kick it back to 0x11
-                if time.perf_counter() - last_out_refresh > 1.0:
-                    last_out_refresh = time.perf_counter()
-                    self._send_output_report(self.led_r, self.led_g, self.led_b)
+            if len(data) < 30:
                 continue
 
             now = time.perf_counter()
+            rep_id = data[0]
 
-            # 1. Unpack IMU sensors: 3-axis gyro and 3-axis accel (int16 little-endian starting at byte 15)
-            gyro_x, gyro_y, gyro_z, acc_x, acc_y, acc_z = struct.unpack_from("<hhhhhh", data, 15)
+            if rep_id == 0x01:
+                # Standard Report 0x01 (Windows Bluetooth default / USB)
+                gyro_x, gyro_y, gyro_z, acc_x, acc_y, acc_z = struct.unpack_from("<hhhhhh", data, 13)
 
-            # 2. Hardware scaling: 8192 LSB = 1.0 G
+                dpad_val = data[5] & 0x0F
+                dpad_dict = self.DPAD_MAP.get(dpad_val, self.DPAD_MAP[8])
+
+                btn_square = bool(data[5] & 0x10)
+                btn_cross = bool(data[5] & 0x20)
+                btn_circle = bool(data[5] & 0x40)
+                btn_triangle = bool(data[5] & 0x80)
+
+                btn_l1 = bool(data[6] & 0x01)
+                btn_r1 = bool(data[6] & 0x02)
+                btn_l2 = bool(data[6] & 0x04)
+                btn_r2 = bool(data[6] & 0x08)
+                btn_share = bool(data[6] & 0x10)
+                btn_options = bool(data[6] & 0x20)
+                btn_l3 = bool(data[6] & 0x40)
+                btn_r3 = bool(data[6] & 0x80)
+
+                btn_ps = bool(data[7] & 0x01)
+                btn_touch = bool(data[7] & 0x02)
+
+                batt_byte = data[30] if len(data) > 30 else 0
+            elif rep_id == 0x11 and len(data) >= 33:
+                # Extended Report 0x11
+                gyro_x, gyro_y, gyro_z, acc_x, acc_y, acc_z = struct.unpack_from("<hhhhhh", data, 15)
+
+                dpad_val = data[7] & 0x0F
+                dpad_dict = self.DPAD_MAP.get(dpad_val, self.DPAD_MAP[8])
+
+                btn_square = bool(data[7] & 0x10)
+                btn_cross = bool(data[7] & 0x20)
+                btn_circle = bool(data[7] & 0x40)
+                btn_triangle = bool(data[7] & 0x80)
+
+                btn_l1 = bool(data[8] & 0x01)
+                btn_r1 = bool(data[8] & 0x02)
+                btn_l2 = bool(data[8] & 0x04)
+                btn_r2 = bool(data[8] & 0x08)
+                btn_share = bool(data[8] & 0x10)
+                btn_options = bool(data[8] & 0x20)
+                btn_l3 = bool(data[8] & 0x40)
+                btn_r3 = bool(data[8] & 0x80)
+
+                btn_ps = bool(data[9] & 0x01)
+                btn_touch = bool(data[9] & 0x02)
+
+                batt_byte = data[32] if len(data) > 32 else 0
+            else:
+                continue
+
+            # Hardware scaling: 8192 LSB = 1.0 G
             raw_ax = (acc_x / 8192.0) * self.sensitivity
             raw_ay = (acc_y / 8192.0) * self.sensitivity
             raw_az = (acc_z / 8192.0) * self.sensitivity
 
             # Just Dance Smartphone coordinate mapping:
-            # When holding the DS4 controller in hand with lightbar pointing forward:
-            #   - Lateral movement: acc_x
-            #   - Up / Down dance gestures & vertical gravity: acc_y
-            #   - Forward / Back pushes & sweeps: acc_z
             phone_ax = round(raw_ax, 4)
             phone_ay = round(raw_ay, 4)
             phone_az = round(raw_az, 4)
@@ -432,27 +531,6 @@ class DS4Controller:
             # Feed to Virtual Phone scoring bridge if enabled
             if vphone.enabled:
                 vphone.update_from_hardware_accel(phone_ax, phone_ay, phone_az)
-
-            # 3. Parse Buttons & D-Pad
-            dpad_val = data[7] & 0x0F
-            dpad_dict = self.DPAD_MAP.get(dpad_val, self.DPAD_MAP[8])
-
-            btn_square = bool(data[7] & 0x10)
-            btn_cross = bool(data[7] & 0x20)
-            btn_circle = bool(data[7] & 0x40)
-            btn_triangle = bool(data[7] & 0x80)
-
-            btn_l1 = bool(data[8] & 0x01)
-            btn_r1 = bool(data[8] & 0x02)
-            btn_l2 = bool(data[8] & 0x04)
-            btn_r2 = bool(data[8] & 0x08)
-            btn_share = bool(data[8] & 0x10)
-            btn_options = bool(data[8] & 0x20)
-            btn_l3 = bool(data[8] & 0x40)
-            btn_r3 = bool(data[8] & 0x80)
-
-            btn_ps = bool(data[9] & 0x01)
-            btn_touch = bool(data[9] & 0x02)
 
             curr_buttons = {
                 "cross": btn_cross,
@@ -473,7 +551,7 @@ class DS4Controller:
                 "touchpad": btn_touch,
             }
 
-            # 4. Edge triggering for button actions (send once per press)
+            # Edge triggering for button actions (send once per press)
             for btn_name, is_pressed in curr_buttons.items():
                 was_pressed = self._prev_buttons.get(btn_name, False)
                 if is_pressed and not was_pressed:
@@ -481,12 +559,11 @@ class DS4Controller:
 
             self._prev_buttons = curr_buttons
 
-            # 5. Parse Battery level (Byte 32)
-            batt_byte = data[32]
+            # Battery level parsing
             batt_level = min(100, (batt_byte & 0x0F) * 10)
             is_charging = bool(batt_byte & 0x10)
 
-            # 6. Update sample rate counter
+            # Update sample rate counter
             samples_count += 1
             elapsed = now - samples_time_start
             if elapsed >= 0.5:
@@ -497,6 +574,18 @@ class DS4Controller:
             # Update state snapshot
             self.state.accel_g = (phone_ax, phone_ay, phone_az)
             self.state.gyro = (gyro_x, gyro_y, gyro_z)
+            self.state.buttons = curr_buttons
+            self.state.battery_pct = batt_level
+            self.state.is_charging = is_charging
+            self.state.last_update_ts = now
+
+            if self.on_state_update is not None:
+                self.on_state_update(self.state)
+
+            # Periodic heartbeat (every 4s) to keep lightbar/rumble alive
+            if now - last_out_refresh > 4.0:
+                last_out_refresh = now
+                self._send_output_report(self.led_r, self.led_g, self.led_b)
             self.state.buttons = curr_buttons
             self.state.battery_pct = batt_level
             self.state.is_charging = is_charging

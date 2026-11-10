@@ -338,7 +338,19 @@ def render_svg_icon_pil(svg_path: Path, size: tuple = (18, 18), color_hex: str =
         p = QPainter(qimg)
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
-        ren.render(p)
+
+        from PySide6.QtCore import QRectF
+        d_size = ren.defaultSize()
+        if d_size.isValid() and d_size.width() > 0 and d_size.height() > 0:
+            scale_fit = min(pw / d_size.width(), ph / d_size.height()) * 0.85
+            draw_w = d_size.width() * scale_fit
+            draw_h = d_size.height() * scale_fit
+            draw_x = (pw - draw_w) / 2.0
+            draw_y = (ph - draw_h) / 2.0
+            ren.render(p, QRectF(draw_x, draw_y, draw_w, draw_h))
+        else:
+            ren.render(p)
+
         p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
         p.fillRect(qimg.rect(), QColor(color_hex))
         p.end()

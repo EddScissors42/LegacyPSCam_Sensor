@@ -163,6 +163,16 @@ flowchart TD
 ### 8. `config_manager.py` — Persistência de Configurações
 - **Responsabilidade:** Lê, valida e grava as preferências do usuário no arquivo `config.json`. Oferece fallbacks robustos caso o arquivo seja corrompido ou inacessível.
 
+### 9. `ds4_controller.py` — Driver Nativo DualShock 4 Bluetooth HID
+- **Responsabilidade:** Comunicação direta de ultra-alta frequência via Win32 SetupAPI e HID com controles Sony DualShock 4 conectados por Bluetooth:
+  1. Suporta nativamente relatórios padrão `0x01` (64 bytes) e relatórios estendidos `0x11` (78 bytes).
+  2. Suporte adaptativo de Output Report para vibração háptica (rumble) e lightbar RGB (`32 bytes` report `0x05` ou `78 bytes` report `0x11` com CRC-32).
+  3. Desacoplamento total de hardware de câmera durante o modo de controle.
+  4. Mapeamento de 3 eixos de aceleração diretamente para o protocolo de pontuação do Just Dance PC através do `virtual_phone.py`.
+
+### 10. `virtual_phone.py` — Emulador de Celular UbiArt Just Dance Controller
+- **Responsabilidade:** Emula um smartphone conectado via WebSocket local (`/smartphone`), permitindo dançar músicas que exigem controle de mão tanto por visão computacional da mão quanto via hardware físico (DualShock 4).
+
 ---
 
 ## 🎮 Integração de Hardware: PlayStation 4 Camera (OV580)

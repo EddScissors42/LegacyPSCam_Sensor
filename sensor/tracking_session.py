@@ -4,8 +4,10 @@ Coordinates camera stream, MediaPipe pose processing, shared memory output,
 and OpenCV HUD preview window.
 """
 import time
+import math
 import cv2
 import ctypes
+import numpy as np
 from sensor.camera_manager import LatestFrameCamera, CameraManager
 from sensor.kinect_shared_memory import KinectBridge
 from sensor.pose_tracker import PoseTracker
@@ -272,19 +274,15 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
     """
     Dedicated motion tracking loop for the Sony DualShock 4 controller over Bluetooth.
     Streams 3D physical accelerometer samples directly into Just Dance via Virtual Phone,
-    provides visual feedback and handles button shortcuts.
+    provides visual telemetry (3D accel gauges, battery %, HID sample rate),
+    and handles hotkeys ([Q] Quit, [R] Reconnect).
     """
-    import numpy as np
     from sensor.ds4_controller import get_ds4_controller
     from sensor.virtual_phone import get_virtual_phone
 
     ds4 = get_ds4_controller()
     if not ds4.is_connected:
-        if not ds4.connect():
-            print("[ERROR] Failed to connect to DualShock 4 via Bluetooth.")
-            if on_close_callback:
-                on_close_callback()
-            return False
+        ds4.connect()
 
     hand = str(config.get("ds4_hand", "right")).lower()
     sens = float(config.get("ds4_sensitivity", 1.0))
@@ -305,19 +303,6 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
     set_high_resolution_timer(True)
     bridge = KinectBridge()
 
-    # Optional webcam grabber for silhouette if camera is present
-    cam = None
-    try:
-        cams = CameraManager.enumerate_cameras()
-        webcams = [c for c in cams if not c.is_pscam]
-        if webcams:
-            cam = cv2.VideoCapture(webcams[0].index, cv2.CAP_DSHOW)
-            cam.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-            cam.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-            cam.set(cv2.CAP_PROP_FPS, 30)
-    except Exception:
-        cam = None
-
     window_name = "Legacy PSCam Sensor — DualShock 4"
     cv2.namedWindow(window_name, cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_EXPANDED)
     cv2.resizeWindow(window_name, 720, 480)
@@ -325,10 +310,10 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
     print(f"\n==========================================")
     print(f"  STARTING DUALSHOCK 4 TRACKING SESSION")
     print(f"  Hand: {hand.upper()} | Sensitivity: {sens:.2f}x")
-    print(f"  HID Polling: {ds4.state.sample_rate_hz:.0f} Hz | Battery: {ds4.state.battery_pct}%")
+    print(f"  Connected: {ds4.is_connected} | Polling: {ds4.state.sample_rate_hz:.0f} Hz | Battery: {ds4.state.battery_pct}%")
     print(f"==========================================\n")
 
-    # Dark background canvas for rendering
+    # Dark gradient background canvas for telemetry rendering
     canvas_w, canvas_h = 640, 480
     dark_bg = np.zeros((canvas_h, canvas_w, 3), dtype=np.uint8)
     for y in range(canvas_h):
@@ -336,6 +321,8 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
         g_val = int(18 + (y / canvas_h) * 12)
         b_val = int(28 + (y / canvas_h) * 20)
         dark_bg[y, :] = (b_val, g_val, r_val)
+
+    reconnect_feedback_until = 0.0
 
     try:
         while True:
@@ -346,18 +333,7 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
             ax, ay, az = st.accel_g
             tot_g = math.sqrt(ax * ax + ay * ay + az * az)
 
-            # Grab camera frame if available, else copy gradient canvas
-            if cam is not None and cam.isOpened():
-                ret_cam, cam_frame = cam.read()
-                if ret_cam and cam_frame is not None:
-                    cam_frame = cv2.flip(cam_frame, 1)
-                    if cam_frame.shape[1] != canvas_w or cam_frame.shape[0] != canvas_h:
-                        cam_frame = cv2.resize(cam_frame, (canvas_w, canvas_h))
-                    frame = cv2.addWeighted(cam_frame, 0.40, dark_bg, 0.60, 0)
-                else:
-                    frame = dark_bg.copy()
-            else:
-                frame = dark_bg.copy()
+            frame = dark_bg.copy()
 
             # Render DualShock 4 HUD Header (PlayStation Blue banner)
             cv2.rectangle(frame, (0, 0), (canvas_w, 54), (156, 67, 0), -1)
@@ -366,21 +342,27 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
                 "DUALSHOCK 4 MOTION SENSOR (BLUETOOTH)",
                 (18, 34),
                 cv2.FONT_HERSHEY_DUPLEX,
-                0.64,
+                0.60,
                 (255, 255, 255),
                 1,
                 cv2.LINE_AA,
             )
 
-            # Connection & Battery badge
-            batt_str = f"BATTERY: {st.battery_pct}%" + (" [CHARGING]" if st.is_charging else "")
+            # Connection & Battery badge in header
+            if ds4.is_connected:
+                batt_str = f"BATTERY: {st.battery_pct}%" + (" [CHARGING]" if st.is_charging else "")
+                batt_col = (200, 240, 255)
+            else:
+                batt_str = "DISCONNECTED"
+                batt_col = (100, 100, 255)
+
             cv2.putText(
                 frame,
                 batt_str,
-                (canvas_w - 210, 34),
+                (canvas_w - 220, 34),
                 cv2.FONT_HERSHEY_DUPLEX,
-                0.44,
-                (200, 240, 255),
+                0.46,
+                batt_col,
                 1,
                 cv2.LINE_AA,
             )
@@ -398,20 +380,35 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
                 cv2.LINE_AA,
             )
 
-            # Hand & Sensitivity info
+            # Hand & Sensitivity & Polling Rate info
             cv2.putText(
                 frame,
-                f"Active Hand: {hand.upper()} | Sens: {sens:.2f}x | HID: {st.sample_rate_hz:.0f} Hz",
+                f"Active Hand: {hand.upper()} | Sens: {sens:.2f}x | Polling: {st.sample_rate_hz:.0f} Hz",
                 (20, 115),
                 cv2.FONT_HERSHEY_DUPLEX,
-                0.48,
+                0.46,
                 (255, 255, 255),
                 1,
                 cv2.LINE_AA,
             )
 
+            # Disconnected alert banner
+            if not ds4.is_connected:
+                cv2.rectangle(frame, (18, 132), (canvas_w - 18, 172), (20, 20, 140), -1)
+                cv2.rectangle(frame, (18, 132), (canvas_w - 18, 172), (60, 60, 220), 1)
+                cv2.putText(
+                    frame,
+                    "[!] CONTROLLER NOT CONNECTED — Press [R] to Reconnect",
+                    (30, 158),
+                    cv2.FONT_HERSHEY_DUPLEX,
+                    0.46,
+                    (255, 255, 255),
+                    1,
+                    cv2.LINE_AA,
+                )
+
             # 3D G-Force Gauge Bars (X, Y, Z)
-            gauge_y_start = 160
+            gauge_y_start = 175
             bar_w_max = 180
             axes_data = [
                 ("ACCEL X (Lateral)", ax, (0, 215, 255)),    # Gold/Yellow
@@ -420,19 +417,19 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
             ]
 
             for idx, (label, val, bar_col) in enumerate(axes_data):
-                y_pos = gauge_y_start + idx * 45
+                y_pos = gauge_y_start + idx * 42
                 cv2.putText(
                     frame,
                     f"{label}: {val:+.2f} G",
                     (20, y_pos + 12),
                     cv2.FONT_HERSHEY_DUPLEX,
-                    0.46,
+                    0.45,
                     (220, 220, 220),
                     1,
                     cv2.LINE_AA,
                 )
                 # Background track
-                bx = 260
+                bx = 270
                 cv2.rectangle(frame, (bx - bar_w_max, y_pos), (bx + bar_w_max, y_pos + 14), (45, 45, 45), -1)
                 cv2.line(frame, (bx, y_pos - 2), (bx, y_pos + 16), (150, 150, 150), 1)
 
@@ -447,39 +444,40 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
             cv2.putText(
                 frame,
                 f"TOTAL G-FORCE: {tot_g:.2f} G",
-                (20, 310),
+                (20, 315),
                 cv2.FONT_HERSHEY_DUPLEX,
-                0.60,
+                0.58,
                 (0, 255, 200) if tot_g >= 2.5 else (200, 200, 200),
                 1,
                 cv2.LINE_AA,
             )
 
-            # Interactive Button Indicators
-            btn_y = 365
+            # Interactive Button Indicators (visual test only)
+            btn_y = 368
             btns = st.buttons
             cv2.putText(
                 frame,
-                "PHYSICAL BUTTONS:",
+                "BUTTONS TEST:",
                 (20, btn_y),
                 cv2.FONT_HERSHEY_DUPLEX,
-                0.46,
+                0.44,
                 (160, 160, 160),
                 1,
                 cv2.LINE_AA,
             )
 
             btn_badges = [
-                ("✕ VALID", btns.get("cross", False), (0, 230, 100)),
-                ("○ BACK", btns.get("circle", False), (60, 60, 240)),
-                ("△ FTUE", btns.get("triangle", False), (0, 180, 255)),
+                ("✕", btns.get("cross", False), (0, 230, 100)),
+                ("○", btns.get("circle", False), (60, 60, 240)),
+                ("△", btns.get("triangle", False), (0, 180, 255)),
                 ("□", btns.get("square", False), (200, 100, 255)),
                 ("OPTIONS", btns.get("options", False), (240, 240, 60)),
+                ("SHARE", btns.get("share", False), (200, 200, 200)),
             ]
 
-            badge_x = 180
+            badge_x = 160
             for label, is_act, col in btn_badges:
-                txt_w = len(label) * 9 + 16
+                txt_w = len(label) * 11 + 16
                 b_bg = col if is_act else (50, 50, 50)
                 b_txt_col = (0, 0, 0) if is_act else (180, 180, 180)
                 cv2.rectangle(frame, (badge_x, btn_y - 15), (badge_x + txt_w, btn_y + 8), b_bg, -1)
@@ -494,17 +492,31 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
                     1,
                     cv2.LINE_AA,
                 )
-                badge_x += txt_w + 10
+                badge_x += txt_w + 8
 
-            # Footer navigation hints
-            cv2.rectangle(frame, (0, canvas_h - 38), (canvas_w, canvas_h), (20, 20, 20), -1)
+            # Reconnection visual feedback
+            now_ts = time.time()
+            if now_ts < reconnect_feedback_until:
+                cv2.putText(
+                    frame,
+                    "Reconnecting DualShock 4...",
+                    (canvas_w - 260, btn_y),
+                    cv2.FONT_HERSHEY_DUPLEX,
+                    0.44,
+                    (0, 255, 255),
+                    1,
+                    cv2.LINE_AA,
+                )
+
+            # Footer navigation hints ([Q] Quit and [R] Reconnect)
+            cv2.rectangle(frame, (0, canvas_h - 40), (canvas_w, canvas_h), (20, 20, 20), -1)
             cv2.putText(
                 frame,
-                "[✕ / Enter / Space] Confirm   •   [○ / Esc] Back   •   [R] Test Rumble   •   [Q] Exit",
-                (20, canvas_h - 14),
+                "[Q] - Quit Tracking        [R] - Reconnect Controller",
+                (30, canvas_h - 15),
                 cv2.FONT_HERSHEY_DUPLEX,
-                0.40,
-                (140, 140, 140),
+                0.46,
+                (255, 255, 255),
                 1,
                 cv2.LINE_AA,
             )
@@ -518,13 +530,19 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
 
             key = cv2.waitKey(16) & 0xFF
             if key in (27, ord('q'), ord('Q')):
-                print("[INFO] Exit requested by user.")
+                print("[INFO] DualShock 4 tracking session terminated by user ([Q] key).")
                 break
             elif key in (ord('r'), ord('R')):
-                ds4.trigger_rumble(small=160, large=100, duration_sec=0.25)
-            elif key in (13, 32):  # Enter or Space
-                vphone.send_input("VALID")
-                ds4.trigger_rumble(small=120, large=0, duration_sec=0.08)
+                print("[INFO] Reconnecting DualShock 4 controller ([R] key)...")
+                reconnect_feedback_until = time.time() + 1.5
+                ds4.disconnect()
+                time.sleep(0.15)
+                success = ds4.connect()
+                if success:
+                    ds4.trigger_rumble(small=160, large=100, duration_sec=0.25)
+                    print("[INFO] DualShock 4 reconnected successfully!")
+                else:
+                    print("[WARN] Failed to reconnect DualShock 4.")
 
             if cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1:
                 break
@@ -535,8 +553,7 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
         set_high_resolution_timer(False)
         bridge.write_empty()
         bridge.close()
-        if cam is not None:
-            cam.release()
+        ds4.disconnect()
         cv2.destroyAllWindows()
         print("[INFO] DualShock 4 tracking session ended.")
         if on_close_callback:
