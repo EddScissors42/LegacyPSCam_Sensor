@@ -35,5 +35,7 @@
     "virtual_phone_hand": "right",
     "virtual_phone_sensitivity": 1.2,
     "virtual_phone_name": "Legacy PSCam Phone",
-    "camera_orientation": 0
+    "camera_orientation": 0,
+    "benchmark_auto_record": true,
+    "virtual_phone_auto_record": true
 }

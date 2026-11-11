@@ -420,16 +420,16 @@ class TelemetryBenchmarkChart(QWidget):
         margin_top = 26
         margin_bottom = 26
 
-        # Background
-        painter.fillRect(0, 0, w, h, QColor("#F8FAFC"))
-        painter.setPen(QPen(QColor("#E2E8F0"), 1))
+        # Background: Crisp white canvas matching main GUI cards
+        painter.fillRect(0, 0, w, h, QColor("#FFFFFF"))
+        painter.setPen(QPen(QColor(PALETTE["border_subtle"]), 1))
         painter.drawRect(0, 0, w - 1, h - 1)
 
         plot_w = w - margin_left - margin_right
         plot_h = h - margin_top - margin_bottom
 
         if plot_w <= 10 or plot_h <= 10 or not self.chart_t:
-            painter.setPen(QPen(QColor("#94A3B8")))
+            painter.setPen(QPen(QColor(PALETTE["text_muted"])))
             painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "No telemetry curves available to display.")
             return
 
@@ -446,13 +446,13 @@ class TelemetryBenchmarkChart(QWidget):
         for g_level in [1.0, 2.0, 3.5, 5.0]:
             if g_level <= max_g:
                 y = int(margin_top + plot_h - (g_level / max_g) * plot_h)
-                painter.setPen(QPen(QColor("#E2E8F0"), 1, Qt.PenStyle.DashLine))
+                painter.setPen(QPen(QColor(PALETTE["border_subtle"]), 1, Qt.PenStyle.DashLine))
                 painter.drawLine(margin_left, y, margin_left + plot_w, y)
-                painter.setPen(QPen(QColor("#94A3B8")))
+                painter.setPen(QPen(QColor(PALETTE["text_muted"])))
                 painter.drawText(6, y + 4, f"{g_level:.1f}G")
 
         # Time markers (start, mid, end)
-        painter.setPen(QPen(QColor("#94A3B8")))
+        painter.setPen(QPen(QColor(PALETTE["text_muted"])))
         painter.drawText(margin_left, h - 8, "0.0s")
         painter.drawText(margin_left + plot_w // 2 - 15, h - 8, f"{max_t / 2:.1f}s")
         painter.drawText(margin_left + plot_w - 30, h - 8, f"{max_t:.1f}s")
@@ -468,7 +468,7 @@ class TelemetryBenchmarkChart(QWidget):
             path_ds4.moveTo(pt(self.chart_t[0], self.chart_ds4[0]))
             for t_val, g_val in zip(self.chart_t[1:], self.chart_ds4[1:]):
                 path_ds4.lineTo(pt(t_val, g_val))
-            painter.setPen(QPen(QColor("#00439C"), 2))
+            painter.setPen(QPen(QColor(PALETTE["ps_blue"]), 2))
             painter.drawPath(path_ds4)
 
         # Draw Camera curve (Amber #EA580C)
@@ -481,9 +481,9 @@ class TelemetryBenchmarkChart(QWidget):
             painter.drawPath(path_cam)
 
         # Legend at top
-        painter.setPen(QPen(QColor("#00439C"), 2))
+        painter.setPen(QPen(QColor(PALETTE["ps_blue"]), 2))
         painter.drawLine(margin_left + 10, 14, margin_left + 30, 14)
-        painter.setPen(QPen(QColor("#00439C")))
+        painter.setPen(QPen(QColor(PALETTE["ps_blue"])))
         painter.drawText(margin_left + 35, 18, "DualShock 4 IMU (Physical Ground Truth)")
 
         painter.setPen(QPen(QColor("#EA580C"), 2))
@@ -502,22 +502,61 @@ class TelemetryBenchmarkDialog(QDialog):
     def __init__(self, parent=None, logs_dir: Optional[str] = None, current_sens: float = 1.2):
         super().__init__(parent)
         self.setWindowTitle("Telemetry Benchmark & Calibration Comparator")
-        self.resize(760, 560)
-        self.setMinimumSize(700, 500)
+        self.resize(780, 580)
+        self.setMinimumSize(720, 520)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.current_sens = float(current_sens)
         base_dir = Path(__file__).resolve().parent.parent
         self.logs_dir = Path(logs_dir) if logs_dir else base_dir / "logs"
         self._last_result: Optional[Dict[str, Any]] = None
 
+        # Clean Crisp-White & PlayStation Blue dialog stylesheet
+        self.setStyleSheet(f"""
+            QDialog {{
+                background-color: {PALETTE["bg_window"]};
+                color: {PALETTE["text_main"]};
+                font-family: '{FONT_BODY}', 'Segoe UI', sans-serif;
+            }}
+            QLabel {{
+                color: {PALETTE["text_main"]};
+                font-family: '{FONT_BODY}', 'Segoe UI', sans-serif;
+            }}
+            QComboBox {{
+                background-color: {PALETTE["input_bg"]};
+                color: {PALETTE["text_main"]};
+                font-family: '{FONT_BODY}', sans-serif;
+                border: 1px solid {PALETTE["input_border"]};
+                border-radius: 6px;
+                padding: 6px 12px;
+                font-size: 11px;
+                min-width: 280px;
+            }}
+            QComboBox:hover {{
+                border-color: {PALETTE["ps_blue"]};
+            }}
+            QComboBox QAbstractItemView {{
+                background-color: #FFFFFF;
+                color: {PALETTE["text_main"]};
+                selection-background-color: {PALETTE["ps_blue"]};
+                selection-color: #FFFFFF;
+                border: 1px solid {PALETTE["border_subtle"]};
+            }}
+        """)
+
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setContentsMargins(20, 18, 20, 18)
         layout.setSpacing(12)
 
         # Header Title
-        lbl_head = QLabel("TELEMETRY COMPARATIVE BENCHMARK (CAMERA vs DUALSHOCK® 4)")
-        lbl_head.setStyleSheet(
-            f"font-size: 13px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent;"
-        )
+        lbl_head = QLabel("TELEMETRY COMPARATIVE BENCHMARK (CAMERA vs DUALSHOCK 4)")
+        lbl_head.setStyleSheet(f"""
+            font-family: '{FONT_HEADING}', 'Segoe UI', sans-serif;
+            font-size: 13px;
+            font-weight: bold;
+            color: {PALETTE['blue_dark']};
+            background: transparent;
+            border: none;
+        """)
         layout.addWidget(lbl_head)
 
         lbl_sub = QLabel(
@@ -525,58 +564,72 @@ class TelemetryBenchmarkDialog(QDialog):
             "The comparator aligns both curves to calculate time latency, peak G-forces, and suggests optimal camera sensitivity."
         )
         lbl_sub.setWordWrap(True)
-        lbl_sub.setStyleSheet(f"font-size: 11px; color: {PALETTE['text_muted']};")
+        lbl_sub.setStyleSheet(f"""
+            font-family: '{FONT_BODY}', 'Segoe UI', sans-serif;
+            font-size: 11px;
+            color: {PALETTE['text_muted']};
+            background: transparent;
+            border: none;
+            line-height: 1.4;
+        """)
         layout.addWidget(lbl_sub)
 
         # Session Selector Card
         sel_card = QFrame()
+        sel_card.setObjectName("sel_card")
         sel_card.setStyleSheet(f"""
-            QFrame {{
-                background-color: {PALETTE['bg_card']};
+            QFrame#sel_card {{
+                background-color: #FFFFFF;
                 border: 1px solid {PALETTE['border_subtle']};
                 border-radius: 8px;
             }}
         """)
         sel_layout = QHBoxLayout(sel_card)
-        sel_layout.setContentsMargins(12, 10, 12, 10)
+        sel_layout.setContentsMargins(14, 10, 14, 10)
         sel_layout.setSpacing(10)
 
         lbl_sess = QLabel("Available Song Runs:")
-        lbl_sess.setStyleSheet(f"font-weight: bold; font-size: 11px; color: {PALETTE['text_main']}; border: none;")
-        self.cb_sessions = QComboBox()
-        self.cb_sessions.setStyleSheet(f"""
-            QComboBox {{
-                background: #FFFFFF;
-                border: 1px solid {PALETTE['tab_gray_border']};
-                border-radius: 6px;
-                padding: 6px 12px;
-                font-size: 11px;
-                min-width: 280px;
-            }}
+        lbl_sess.setStyleSheet(f"""
+            font-family: '{FONT_HEADING}', sans-serif;
+            font-weight: bold;
+            font-size: 11px;
+            color: {PALETTE['text_main']};
+            background: transparent;
+            border: none;
         """)
+
+        self.cb_sessions = QComboBox()
         self.cb_sessions.currentIndexChanged.connect(self._on_session_selected)
+
+        btn_style = f"""
+            QPushButton {{
+                background-color: #FFFFFF;
+                color: {PALETTE["text_main"]};
+                font-family: '{FONT_HEADING}', sans-serif;
+                font-size: 11px;
+                font-weight: bold;
+                border: 1px solid {PALETTE["tab_gray_border"]};
+                border-radius: 6px;
+                padding: 6px 14px;
+            }}
+            QPushButton:hover {{
+                border-color: {PALETTE["ps_blue"]};
+                color: {PALETTE["ps_blue"]};
+                background-color: {PALETTE["tab_gray_hover"]};
+            }}
+            QPushButton:pressed {{
+                background-color: {PALETTE["tab_gray_act"]};
+            }}
+        """
 
         self.btn_refresh = QPushButton("Refresh Logs")
         self.btn_refresh.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_refresh.setStyleSheet(f"""
-            QPushButton {{
-                background: #FFFFFF;
-                border: 1px solid {PALETTE['tab_gray_border']};
-                border-radius: 6px;
-                padding: 6px 12px;
-                font-size: 11px;
-                font-weight: bold;
-            }}
-            QPushButton:hover {{
-                border-color: {PALETTE['ps_blue']};
-                color: {PALETTE['ps_blue']};
-            }}
-        """)
+        self.btn_refresh.setStyleSheet(btn_style)
         self.btn_refresh.clicked.connect(self._populate_sessions)
 
         self.btn_browse = QPushButton("Browse Files...")
         self.btn_browse.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_browse.setStyleSheet(self.btn_refresh.styleSheet())
+        self.btn_browse.setStyleSheet(btn_style)
         self.btn_browse.clicked.connect(self._on_manual_browse)
 
         sel_layout.addWidget(lbl_sess)
@@ -585,32 +638,69 @@ class TelemetryBenchmarkDialog(QDialog):
         sel_layout.addWidget(self.btn_browse)
         layout.addWidget(sel_card)
 
-        # Metrics Card Grid (4 metrics)
+        # Metrics Card Grid (4 PlayStation Style Spec Tiles)
         metrics_card = QFrame()
+        metrics_card.setObjectName("metrics_card")
         metrics_card.setStyleSheet(f"""
-            QFrame {{
-                background-color: {PALETTE['input_bg']};
+            QFrame#metrics_card {{
+                background-color: #FFFFFF;
                 border: 1px solid {PALETTE['border_subtle']};
                 border-radius: 8px;
             }}
         """)
         m_layout = QGridLayout(metrics_card)
-        m_layout.setContentsMargins(14, 12, 14, 12)
-        m_layout.setHorizontalSpacing(16)
-        m_layout.setVerticalSpacing(8)
+        m_layout.setContentsMargins(12, 12, 12, 12)
+        m_layout.setHorizontalSpacing(12)
+        m_layout.setVerticalSpacing(10)
 
-        self.lbl_metric_corr = QLabel("Correlation: --%")
-        self.lbl_metric_lag = QLabel("Time Latency: -- ms")
-        self.lbl_metric_peaks = QLabel("Peak G (Cam / DS4): --G / --G")
-        self.lbl_metric_sens = QLabel(f"Suggested Sensitivity: --x (Current: {self.current_sens:.2f}x)")
+        def make_tile(title_text: str):
+            tile = QFrame()
+            tile.setStyleSheet(f"""
+                QFrame {{
+                    background-color: {PALETTE['input_bg']};
+                    border: 1px solid {PALETTE['border_subtle']};
+                    border-radius: 6px;
+                }}
+            """)
+            t_layout = QVBoxLayout(tile)
+            t_layout.setContentsMargins(10, 8, 10, 8)
+            t_layout.setSpacing(3)
+            lbl_t = QLabel(title_text)
+            lbl_t.setStyleSheet(f"""
+                font-family: '{FONT_BODY}', sans-serif;
+                font-size: 10px;
+                font-weight: bold;
+                color: {PALETTE['text_muted']};
+                background: transparent;
+                border: none;
+            """)
+            lbl_v = QLabel("--")
+            lbl_v.setStyleSheet(f"""
+                font-family: '{FONT_HEADING}', sans-serif;
+                font-size: 13px;
+                font-weight: bold;
+                color: {PALETTE['text_main']};
+                background: transparent;
+                border: none;
+            """)
+            t_layout.addWidget(lbl_t)
+            t_layout.addWidget(lbl_v)
+            return tile, lbl_v
 
-        for lbl in (self.lbl_metric_corr, self.lbl_metric_lag, self.lbl_metric_peaks, self.lbl_metric_sens):
-            lbl.setStyleSheet("font-weight: bold; font-size: 11px; border: none; background: transparent;")
+        tile_corr, self.lbl_metric_corr = make_tile("CURVE CORRELATION")
+        tile_lag, self.lbl_metric_lag = make_tile("TIME LATENCY")
+        tile_peaks, self.lbl_metric_peaks = make_tile("PEAK G-FORCE (CAM / DS4)")
+        tile_sens, self.lbl_metric_sens = make_tile("SUGGESTED SENSITIVITY")
 
-        m_layout.addWidget(self.lbl_metric_corr, 0, 0)
-        m_layout.addWidget(self.lbl_metric_lag, 0, 1)
-        m_layout.addWidget(self.lbl_metric_peaks, 1, 0)
-        m_layout.addWidget(self.lbl_metric_sens, 1, 1)
+        self.lbl_metric_corr.setText("--%")
+        self.lbl_metric_lag.setText("-- ms")
+        self.lbl_metric_peaks.setText("--G / --G")
+        self.lbl_metric_sens.setText(f"--x (Current: {self.current_sens:.2f}x)")
+
+        m_layout.addWidget(tile_corr, 0, 0)
+        m_layout.addWidget(tile_lag, 0, 1)
+        m_layout.addWidget(tile_peaks, 1, 0)
+        m_layout.addWidget(tile_sens, 1, 1)
         layout.addWidget(metrics_card)
 
         # Comparison Plot
@@ -628,25 +718,29 @@ class TelemetryBenchmarkDialog(QDialog):
             QPushButton {{
                 background-color: {PALETTE['ps_blue']};
                 color: #FFFFFF;
+                font-family: '{FONT_HEADING}', sans-serif;
+                font-size: 11px;
+                font-weight: bold;
                 border: none;
                 border-radius: 6px;
-                padding: 8px 18px;
-                font-weight: bold;
-                font-size: 11px;
+                padding: 9px 20px;
             }}
             QPushButton:hover {{
-                background-color: {PALETTE['blue_dark']};
+                background-color: {PALETTE['ps_blue_hover']};
+            }}
+            QPushButton:pressed {{
+                background-color: {PALETTE['ps_blue_active']};
             }}
             QPushButton:disabled {{
                 background-color: #CBD5E1;
-                color: #94A3B8;
+                color: #64748B;
             }}
         """)
         self.btn_apply_sens.clicked.connect(self._on_apply_sens_clicked)
 
         self.btn_close = QPushButton("Close")
         self.btn_close.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_close.setStyleSheet(self.btn_refresh.styleSheet())
+        self.btn_close.setStyleSheet(btn_style)
         self.btn_close.clicked.connect(self.accept)
 
         bot_row.addWidget(self.btn_apply_sens)
@@ -697,11 +791,23 @@ class TelemetryBenchmarkDialog(QDialog):
         try:
             res = compare_telemetries(cam_path, ds4_path, current_sensitivity=self.current_sens)
             self._last_result = res
-            self.lbl_metric_corr.setText(f"Correlation: {res['correlation_pct']:.1f}%")
-            self.lbl_metric_lag.setText(f"Time Latency: {res['lag_ms']:+.1f} ms")
-            self.lbl_metric_peaks.setText(f"Peak G (Cam / DS4): {res['cam_max_g']:.2f}G / {res['ds4_max_g']:.2f}G")
+            self.lbl_metric_corr.setText(f"{res['correlation_pct']:.1f}%")
+            self.lbl_metric_corr.setStyleSheet(
+                f"font-family: '{FONT_HEADING}', sans-serif; font-size: 13px; font-weight: bold; color: {PALETTE['ps_blue']}; background: transparent; border: none;"
+            )
+            self.lbl_metric_lag.setText(f"{res['lag_ms']:+.1f} ms")
+            self.lbl_metric_lag.setStyleSheet(
+                f"font-family: '{FONT_HEADING}', sans-serif; font-size: 13px; font-weight: bold; color: {PALETTE['ps_blue']}; background: transparent; border: none;"
+            )
+            self.lbl_metric_peaks.setText(f"{res['cam_max_g']:.2f}G / {res['ds4_max_g']:.2f}G")
+            self.lbl_metric_peaks.setStyleSheet(
+                f"font-family: '{FONT_HEADING}', sans-serif; font-size: 13px; font-weight: bold; color: {PALETTE['text_main']}; background: transparent; border: none;"
+            )
             self.lbl_metric_sens.setText(
-                f"Suggested Sensitivity: {res['suggested_sensitivity']:.2f}x (Current: {res['current_sensitivity']:.2f}x)"
+                f"{res['suggested_sensitivity']:.2f}x (Current: {res['current_sensitivity']:.2f}x)"
+            )
+            self.lbl_metric_sens.setStyleSheet(
+                f"font-family: '{FONT_HEADING}', sans-serif; font-size: 13px; font-weight: bold; color: {PALETTE['status_ok']}; background: transparent; border: none;"
             )
             self.chart.set_data(res["chart_t"], res["chart_cam"], res["chart_ds4"])
             self.btn_apply_sens.setEnabled(True)
@@ -712,10 +818,22 @@ class TelemetryBenchmarkDialog(QDialog):
 
     def _clear_results(self):
         self._last_result = None
-        self.lbl_metric_corr.setText("Correlation: --%")
-        self.lbl_metric_lag.setText("Time Latency: -- ms")
-        self.lbl_metric_peaks.setText("Peak G (Cam / DS4): --G / --G")
-        self.lbl_metric_sens.setText(f"Suggested Sensitivity: --x (Current: {self.current_sens:.2f}x)")
+        self.lbl_metric_corr.setText("--%")
+        self.lbl_metric_corr.setStyleSheet(
+            f"font-family: '{FONT_HEADING}', sans-serif; font-size: 13px; font-weight: bold; color: {PALETTE['text_muted']}; background: transparent; border: none;"
+        )
+        self.lbl_metric_lag.setText("-- ms")
+        self.lbl_metric_lag.setStyleSheet(
+            f"font-family: '{FONT_HEADING}', sans-serif; font-size: 13px; font-weight: bold; color: {PALETTE['text_muted']}; background: transparent; border: none;"
+        )
+        self.lbl_metric_peaks.setText("--G / --G")
+        self.lbl_metric_peaks.setStyleSheet(
+            f"font-family: '{FONT_HEADING}', sans-serif; font-size: 13px; font-weight: bold; color: {PALETTE['text_muted']}; background: transparent; border: none;"
+        )
+        self.lbl_metric_sens.setText(f"--x (Current: {self.current_sens:.2f}x)")
+        self.lbl_metric_sens.setStyleSheet(
+            f"font-family: '{FONT_HEADING}', sans-serif; font-size: 13px; font-weight: bold; color: {PALETTE['text_muted']}; background: transparent; border: none;"
+        )
         self.chart.set_data([], [], [])
         self.btn_apply_sens.setEnabled(False)
         self.btn_apply_sens.setText("Apply Suggested Sensitivity")
