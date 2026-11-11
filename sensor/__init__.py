@@ -28,8 +28,9 @@ from .kinect_shared_memory import (
 from .tracking_session import run_tracking_session
 from .tracking_overlay import TrackingOverlay
 from .config_manager import ConfigManager, parse_preset, PRESETS_PSCAM, PRESETS_WEBCAM
-from .virtual_phone import VirtualPhoneController, HandAccelerometer, get_virtual_phone
+from .virtual_phone import VirtualPhoneController, HandAccelerometer, AdaptiveCalibrationTuner, get_virtual_phone
 from .ds4_controller import DS4Controller, DS4State, find_ds4_devices, get_ds4_controller
+from .telemetry_benchmark import parse_telemetry_csv, compare_telemetries, find_available_benchmarks
 
 __all__ = [
     "CameraManager",
@@ -67,9 +68,13 @@ __all__ = [
     "PRESETS_WEBCAM",
     "VirtualPhoneController",
     "HandAccelerometer",
+    "AdaptiveCalibrationTuner",
     "get_virtual_phone",
     "DS4Controller",
     "DS4State",
     "find_ds4_devices",
     "get_ds4_controller",
+    "parse_telemetry_csv",
+    "compare_telemetries",
+    "find_available_benchmarks",
 ]

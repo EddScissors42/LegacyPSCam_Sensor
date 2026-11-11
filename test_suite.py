@@ -568,6 +568,10 @@ def test_project_structure():
         assert hasattr(win, "page_exp"), "Experimental page widget must exist"
         assert hasattr(win, "chk_vphone_enabled"), "Celular Virtual toggle must exist in Experimental"
         assert hasattr(win, "btn_vphone_ftue"), "Skip Finish button must exist in Celular Virtual block"
+        assert hasattr(win, "lbl_vphone_song"), "Song label must exist in Celular Virtual block"
+        assert hasattr(win, "btn_vphone_benchmark"), "Benchmark button must exist in Celular Virtual block"
+        assert hasattr(win, "chk_vphone_auto_record"), "Auto record checkbox must exist"
+        assert hasattr(win, "chk_vphone_adaptive"), "Adaptive calibration checkbox must exist"
         assert hasattr(win, "cb_res") and hasattr(win, "cb_fps"), "Split resolution and FPS combos must exist in webcam card"
         assert hasattr(win, "btn_refresh"), "Refresh button in device card must exist"
         if win.is_camera_accessible():
@@ -652,6 +656,108 @@ def test_project_structure():
 
     print("  -> Modular Project Structure PASSED")
 
+def test_telemetry_and_adaptive_benchmark():
+    print("[TEST] Telemetry Benchmark & Adaptive Calibration...")
+    import math
+    import tempfile
+    from pathlib import Path
+    from sensor.virtual_phone import AdaptiveCalibrationTuner, get_virtual_phone
+    from sensor.telemetry_benchmark import parse_telemetry_csv, compare_telemetries, find_available_benchmarks
+
+    # 1. Test AdaptiveCalibrationTuner
+    tuner = AdaptiveCalibrationTuner(base_sensitivity=1.2)
+    assert tuner.current_sensitivity == 1.2
+    assert tuner.multiplier == 1.0
+    assert tuner.enabled is False
+
+    # Disabled: feedback should not adjust multiplier
+    tuner.on_feedback("OK", current_speed=1.5, current_accel=(1.5, 2.5, 1.0))
+    assert tuner.multiplier == 1.0
+    assert tuner.counts["OK"] == 1
+
+    # Enabled: feedback on fast movement should gently boost sensitivity (+3%)
+    tuner.enabled = True
+    tuner._last_adjust_ts = 0.0  # bypass rate limiter
+    mult = tuner.on_feedback("OK", current_speed=1.5, current_accel=(1.5, 2.5, 1.0))
+    assert mult > 1.0
+    assert tuner.current_sensitivity > 1.2
+
+    # Summary
+    summary = tuner.get_summary()
+    assert summary["total_moves"] == 2
+    assert summary["counts"]["OK"] == 2
+    assert "current_sensitivity" in summary
+
+    # Reset
+    tuner.reset_song("TestMap")
+    assert tuner.total_moves == 0
+    assert tuner.counts["OK"] == 0
+
+    # 2. Test VirtualPhoneController auto-record and song tracking
+    vp = get_virtual_phone()
+    vp.set_auto_record(True)
+    assert vp.auto_record_enabled is True
+    vp.set_adaptive_calibration(True)
+    assert vp.adaptive_tuner.enabled is True
+
+    # 3. Test Telemetry Benchmark with synthetic data
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        cam_file = tmp_path / "Levitating_camera_1001.csv"
+        ds4_file = tmp_path / "Levitating_ds4_1002.csv"
+
+        # Generate 6 seconds of 60Hz synthetic telemetry (360 samples)
+        # Periodic peaks every 1.0s
+        with open(cam_file, "w", encoding="utf-8") as f:
+            f.write("timestamp_ms,ax,ay,az,speed_mps,alpha,hand_x,hand_y,hand_z,is_tracked,source,map_name,feedback\n")
+            for i in range(360):
+                ts = 1000 + i * 16
+                t = i / 60.0
+                peak = math.sin(t * 2 * math.pi) * 2.0
+                ax = peak
+                ay = -1.0 + (peak * 0.5)
+                az = 0.1
+                f.write(f"{ts},{ax:.4f},{ay:.4f},{az:.4f},1.2,0.8,0.5,0.5,2.0,1,camera,Levitating,\n")
+
+        with open(ds4_file, "w", encoding="utf-8") as f:
+            f.write("timestamp_ms,ax,ay,az,speed_mps,alpha,hand_x,hand_y,hand_z,is_tracked,source,map_name,feedback\n")
+            for i in range(360):
+                ts = 1000 + i * 16 + 32  # 32ms lag
+                t = i / 60.0
+                peak = math.sin(t * 2 * math.pi) * 2.6  # slightly higher peak
+                ax = peak
+                ay = -1.0 + (peak * 0.5)
+                az = 0.1
+                f.write(f"{ts},{ax:.4f},{ay:.4f},{az:.4f},0.0,1.0,0.0,0.0,0.0,1,ds4,Levitating,\n")
+
+        # Parse CSVs
+        cam_data = parse_telemetry_csv(cam_file)
+        ds4_data = parse_telemetry_csv(ds4_file)
+        assert cam_data["map_name"] == "Levitating"
+        assert ds4_data["map_name"] == "Levitating"
+        assert cam_data["source"] == "camera"
+        assert ds4_data["source"] == "ds4"
+        assert cam_data["sample_count"] == 360
+        assert ds4_data["sample_count"] == 360
+
+        # Run comparison
+        res = compare_telemetries(cam_data, ds4_data, current_sensitivity=1.2)
+        assert res["map_name"] == "Levitating"
+        assert res["correlation_pct"] > 80.0, f"Expected high correlation, got {res['correlation_pct']}%"
+        assert abs(res["lag_ms"]) < 100.0, f"Expected reasonable lag, got {res['lag_ms']} ms"
+        assert res["suggested_sensitivity"] > 1.0
+        assert len(res["chart_t"]) > 10
+        assert len(res["chart_cam"]) == len(res["chart_t"])
+        assert len(res["chart_ds4"]) == len(res["chart_t"])
+
+        # Check find_available_benchmarks
+        benchmarks = find_available_benchmarks(tmp_path)
+        assert len(benchmarks) == 1
+        assert benchmarks[0]["map_name"] == "Levitating"
+        assert benchmarks[0]["is_ready"] is True
+
+    print("  -> Telemetry Benchmark & Adaptive Calibration PASSED")
+
 def run_all_tests():
     print("==========================================")
     print("   RUNNING LEGACY PSCAM SENSOR TEST SUITE ")
@@ -665,8 +771,9 @@ def run_all_tests():
     test_pose_tracker()
     test_overlay()
     test_camera_manager()
+    test_telemetry_and_adaptive_benchmark()
     print("==========================================")
-    print("   ALL TESTS PASSED SUCCESSFULLY (9/9)    ")
+    print("   ALL TESTS PASSED SUCCESSFULLY (10/10)  ")
     print("==========================================")
 
 if __name__ == "__main__":

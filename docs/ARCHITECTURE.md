@@ -11,13 +11,14 @@ O sistema é baseado em uma **arquitetura modular em pacotes**, onde cada etapa 
 ```
 LegacySensor_Lite/
 ├── main.py                     # Ponto de entrada (CLI dispatcher e inicializador)
-├── test_suite.py               # Suíte de testes automatizados (9/9 suítes integradas)
+├── test_suite.py               # Suíte de testes automatizados (10/10 suítes integradas)
 ├── config.json                 # Gerenciamento e persistência das configurações locais
 ├── sensor/                     # Pacote do Motor de Rastreamento e Visão Computacional
 │   ├── __init__.py             # Exports unificados da API do sensor
 │   ├── camera_manager.py       # Descoberta, negociação DirectShow/MSMF e captura assíncrona
 │   ├── pose_tracker.py         # Motor MediaPipe Pose, Hand Anchor, Calibrador, EMA e Máscara
-│   ├── virtual_phone.py        # Cliente WebSocket UbiArt (/smartphone) e Acelerômetro 3D da Mão
+│   ├── virtual_phone.py        # Cliente WebSocket UbiArt (/smartphone), Calibrador Adaptativo e Acelerômetro 3D
+│   ├── telemetry_benchmark.py  # Benchmark comparativo de telemetria (Câmera vs DS4), alinhamento temporal e ganho
 │   ├── ds4_controller.py       # Driver Bluetooth HID nativo DualShock 4 (500+ Hz, IMU, botões e vibração)
 │   ├── kinect_shared_memory.py # Driver IPC com KinectBridge (JDP1 344B + JMI1/2 1.3MB + JXC1 28B)
 │   ├── tracking_session.py     # Orquestrador do loop de rastreamento e eventos de teclado
@@ -170,11 +171,21 @@ flowchart TD
   3. Desacoplamento total de hardware de câmera durante o modo de controle.
   4. Mapeamento de 3 eixos de aceleração diretamente para o protocolo de pontuação do Just Dance PC através do `virtual_phone.py`.
 
-### 10. `virtual_phone.py` — Emulador de Celular UbiArt Just Dance Controller
+### 10. `virtual_phone.py` — Emulador de Celular UbiArt Just Dance Controller & Calibração Adaptativa
 - **Responsabilidade:** Emula um smartphone conectado via WebSocket local (`/smartphone`), permitindo dançar músicas que exigem controle de mão tanto por visão computacional da mão quanto via hardware físico (DualShock 4).
 - **Auto-Detecção Multi-Versão:** Descoberta via UDP 6000/7000 com prioridade localhost (127.0.0.1) e negociação de subprotocolo estrito:
   - `v2.phonescoring.jd.ubisoft.com` com WSS/TLS para Just Dance 2020–2022.
   - `v1.phonescoring.jd.ubisoft.com` com WS plain TCP para Just Dance 2017/2018 Legacy Offline.
+- **Rastreamento de Música e Ciclo de Vida:** Extração de `mapName` do pacote `JD_PhoneUiSetupData` e monitoramento de ativação de pontuação (`JD_EnableScoringPhoneData`) para disparo de auto-gravação (`logs/[mapName]_[source]_[timestamp].csv`).
+- **Motor Adaptativo (`AdaptiveCalibrationTuner`):** Monitora eventos de feedback de dança (*PERFECT*, *GOOD*, *OK*, *MISS*) em tempo de execução e calibra o ganho da sensibilidade dinamicamente.
+
+### 11. `telemetry_benchmark.py` — Benchmark Comparativo (Câmera vs DualShock 4)
+- **Responsabilidade:** Processamento pós-dança de séries temporais de aceleração:
+  1. Parsing de arquivos CSV de telemetria nos formatos legado (10 colunas) e estendido (13 colunas).
+  2. Alinhamento temporal preciso via correlação cruzada (*cross-correlation*) e reamostragem a 60 Hz.
+  3. Cálculo de métricas comparativas: correlação de Pearson, atraso/latência média em milissegundos, picos G e P95.
+  4. Cálculo matemático do ganho de sensibilidade sugerido para equiparar a curva da câmera à aceleração real do acelerômetro de hardware.
+  5. Agrupamento de sessões prontas na pasta `logs/` para exibição instantânea no `TelemetryBenchmarkDialog`.
 
 ---
 

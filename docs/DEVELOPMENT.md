@@ -130,7 +130,7 @@ O projeto conta com automação completa de CI/CD para gerar o executável stand
    git tag v0.4.9
    git push origin v0.4.9
    ```
-   O GitHub Actions iniciará o runner Windows, instalará as dependências, executará a suíte de testes (9/9), compilará o `LegacyPSCam_Sensor.exe` via PyInstaller, empacotará o executável standalone e anexará o `LegacyPSCam_Sensor-v0.4.9.zip` e o `.exe` na página de Releases do repositório.
+   O GitHub Actions iniciará o runner Windows, instalará as dependências, executará a suíte de testes (10/10), compilará o `LegacyPSCam_Sensor.exe` via PyInstaller, empacotará o executável standalone e anexará o `LegacyPSCam_Sensor-v0.4.9.zip` e o `.exe` na página de Releases do repositório.
 
 2. **Manual para Testes (Workflow Dispatch):**
    - Acesse a aba **Actions** no GitHub.

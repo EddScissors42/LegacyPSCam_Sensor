@@ -29,6 +29,7 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
 | **Auto-Framing / FaceFollow PTZ** | ✅ Totalmente Implementado | `pose_tracker.py` | Auto-framing digital com zoom suave (1.22x) e centralização dinâmica do rosto para a foto/avatar do dançarino no Just Dance. |
 | **Celular Virtual (Emulador JD Controller via Câmera)** | ✅ Totalmente Implementado | `virtual_phone.py` / `ui/gui_qt.py` | Emula um smartphone conectado via WebSocket local (`/smartphone`) e converte o movimento 3D da mão na câmera em dados de acelerômetro 3D (`JD_PhoneScoringData`) e comandos de menu para músicas que só suportam controle de mão. |
 | **DualShock 4 [EXPERIMENTAL]** | ✅ Totalmente Implementado | `sensor/ds4_controller.py` / `ui/gui_qt.py` | Driver nativo Bluetooth HID (500+ Hz) com handshake 0x11, leitura do acelerômetro 3D, feedback de botões, rumble háptico, telemetria em tempo real e ponte para o Just Dance via Virtual Phone. |
+| **Benchmark de Telemetria & Calibração Adaptativa** | ✅ Totalmente Implementado | `sensor/telemetry_benchmark.py` / `sensor/virtual_phone.py` / `ui/gui_qt.py` | Auto-gravação sincronizada de telemetria por música (`mapName`), comparação temporal e de picos G entre Câmera e DualShock 4 com cálculo de latência e ganho sugerido, e calibração adaptativa em tempo real baseada em feedbacks (*PERFECT*, *GOOD*, *OK*). |
 | **Modo Headless (Sem Janela)** | ⏳ Planejado | `tracking_session.py` | Rastrear em background sem gastar GPU com janela gráfica. |
 
 ---
@@ -309,6 +310,28 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
   - Proteção automática para músicas solo (1 coach) evitando envio de índices inválidos.
 - **Proteção Anti-Missclick no DualShock 4:**
   - Botões frontais (Cross/X, Circle, Triangle, Square) desmapeados no controle físico para impedir que a pegada firme durante passos rápidos de dança envie comandos indevidos e derrube a conexão. Confirmações de menu permanecem no teclado (`Enter` / `Space`).
+
+### 25. Benchmark de Telemetria Comparativa (Câmera vs DS4) & Calibração Adaptativa
+- **Detecção Automática da Música e Ciclo de Pontuação:**
+  - O Celular Virtual extrai dinamicamente o identificador da música (`mapName` ou `songName`, ex: *Levitating*, *SaveYourTears*, *Believer*) enviado pelo Just Dance 2022 no pacote `JD_PhoneUiSetupData`.
+  - Monitora os eventos de início (`enable: true`) e término (`enable: false`) da dança através de `JD_EnableScoringPhoneData` e `JD_SmartphoneEvent_ScoringActivationChanged`.
+- **Auto-Gravação Sincronizada (Auto-Record):**
+  - Opção na interface para iniciar a gravação de telemetria no exato milissegundo em que a música começa e salvar/fechar automaticamente o log CSV quando a música termina.
+  - Nomeação automática padronizada: `logs/[mapName]_[source]_[timestamp].csv`, marcando a origem dos dados (`source: camera` ou `source: ds4`).
+- **Motor de Benchmark e Comparador de Curvas (`sensor/telemetry_benchmark.py`):**
+  - Carrega e correlaciona dois arquivos de log da mesma música (um dançado com a Câmera e outro com o DualShock 4).
+  - Alinhamento temporal automático via correlação cruzada (*cross-correlation*), compensando eventuais atrasos de início da dança.
+  - Cálculo de métricas analíticas: correlação de Pearson (%), atraso/latência temporal média (ms), pico de aceleração G máximo (Câmera vs DS4) e percentil 95 (P95).
+  - Cálculo da sensibilidade recomendada para calibrar o ganho da câmera perfeitamente à intensidade física do controle:
+    $$\text{Sensibilidade Sugerida} = \text{Sensibilidade Atual} \times \left( \frac{\text{Pico Dinâmico DS4}}{\text{Pico Dinâmico Câmera}} \right)$$
+- **Diálogo Gráfico de Benchmark (`TelemetryBenchmarkDialog` & `TelemetryBenchmarkChart`):**
+  - Janela integrada no estilo PlayStation com listagem automática de sessões prontas para comparação ou busca manual de arquivos CSV.
+  - Gráfico 2D renderizado com `QPainter` (antialiasing e suporte a High-DPI), plotando sobrepostas a curva de verdade terrestre do DualShock 4 (PlayStation Blue) e a curva de rastreamento da Câmera (Laranja/Âmbar).
+  - Botão com 1 clique para aplicar a sensibilidade sugerida diretamente nas configurações ativas.
+- **Calibração Adaptativa em Tempo Real (`AdaptiveCalibrationTuner`):**
+  - Ingestão contínua dos feedbacks de pontuação do Just Dance (*PERFECT*, *SUPER*, *GOOD*, *OK*, *MISS*, *YEAH*).
+  - Ajuste suave e dinâmico da sensibilidade durante a coreografia caso o jogador esteja se movendo velozmente mas recebendo notas *OK* ou *GOOD*.
+- **10 Suítes de Testes Automatizados:** Suíte 10 integrada em `test_suite.py` cobrindo parsing de CSV, auto-gravação, ciclo de vida de músicas, correlação de benchmark e adaptação de sensibilidade (`10/10 PASSED`).
 
 ---
 

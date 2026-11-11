@@ -16,12 +16,13 @@ import json
 import math
 import os
 import queue
+import re
 import socket
 import ssl
 import struct
 import threading
 import time
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 
 # UbiArt Smartphone Scoring WebSocket constants
@@ -502,6 +503,100 @@ class _MinimalWebSocketClient:
                 pass
 
 
+class AdaptiveCalibrationTuner:
+    """
+    Dynamically adjusts the hand acceleration sensitivity based on in-game scoring feedback
+    (PERFECT, SUPER, GOOD, OK, MISS, YEAH) received from Just Dance 2022 via WebSocket.
+    """
+
+    def __init__(self, base_sensitivity: float = 1.2) -> None:
+        self.base_sensitivity: float = float(base_sensitivity)
+        self.multiplier: float = 1.0  # Dynamic scaling range: 0.75 - 2.00
+        self.enabled: bool = False
+        self.history: List[str] = []
+        self.counts: Dict[str, int] = {
+            "PERFECT": 0,
+            "SUPER": 0,
+            "GOOD": 0,
+            "OK": 0,
+            "MISS": 0,
+            "YEAH": 0,
+        }
+        self.total_moves: int = 0
+        self._last_adjust_ts: float = 0.0
+
+    @property
+    def current_sensitivity(self) -> float:
+        return round(self.base_sensitivity * self.multiplier, 2)
+
+    def reset_song(self, song_name: str = "") -> None:
+        self.history.clear()
+        self.counts = {
+            "PERFECT": 0,
+            "SUPER": 0,
+            "GOOD": 0,
+            "OK": 0,
+            "MISS": 0,
+            "YEAH": 0,
+        }
+        self.total_moves = 0
+        self._last_adjust_ts = time.perf_counter()
+
+    def on_feedback(
+        self,
+        rating: str,
+        current_speed: float = 0.0,
+        current_accel: Tuple[float, float, float] = (0.0, -1.0, 0.0),
+    ) -> float:
+        rating_up = rating.strip().upper()
+        if rating_up not in self.counts:
+            # Map synonyms if game uses alternative tags
+            synonyms = {
+                "GOLD": "YEAH",
+                "PERFECT+": "PERFECT",
+                "SUPER+": "SUPER",
+                "POOR": "OK",
+                "BAD": "MISS",
+            }
+            rating_up = synonyms.get(rating_up, "")
+            if not rating_up or rating_up not in self.counts:
+                return self.multiplier
+
+        self.counts[rating_up] += 1
+        self.total_moves += 1
+        self.history.append(rating_up)
+        now = time.perf_counter()
+
+        if not self.enabled:
+            return self.multiplier
+
+        # Throttle adjustments to at most once per 1.5 seconds
+        if now - self._last_adjust_ts < 1.5:
+            return self.multiplier
+
+        mag = math.sqrt(sum(a * a for a in current_accel))
+
+        # If getting OK or GOOD during fast vigorous moves, boost gain (+3%)
+        if rating_up in ("OK", "GOOD") and (current_speed > 0.8 or mag > 2.0):
+            self.multiplier = min(2.0, self.multiplier + 0.03)
+            self._last_adjust_ts = now
+        # If getting MISS while hand was actively shaking/moving hard (>3.5G), slight decrease (-2%)
+        elif rating_up == "MISS" and mag > 3.5:
+            self.multiplier = max(0.75, self.multiplier - 0.02)
+            self._last_adjust_ts = now
+
+        return self.multiplier
+
+    def get_summary(self) -> Dict[str, Any]:
+        return {
+            "total_moves": self.total_moves,
+            "counts": dict(self.counts),
+            "base_sensitivity": round(self.base_sensitivity, 2),
+            "multiplier": round(self.multiplier, 3),
+            "current_sensitivity": self.current_sensitivity,
+        }
+
+
 class VirtualPhoneController:
     """
     Manages the background WebSocket connection to Just Dance (UbiArt Smartphone Manager),
@@ -553,6 +648,17 @@ class VirtualPhoneController:
         self._log_path = ""
         self._log_lock = threading.Lock()
 
+        # Song and scoring telemetry state
+        self.current_map_name: str = ""
+        self.current_song_name: str = ""
+        self.is_dancing: bool = False
+        self.auto_record_enabled: bool = False
+        self.adaptive_tuner = AdaptiveCalibrationTuner(base_sensitivity=self.accelerometer.sensitivity)
+        self._last_source: str = "camera"
+        self._last_feedback: str = ""
+        self.on_song_change: Optional[Callable[[str], None]] = None
+        self.on_dance_state_change: Optional[Callable[[bool, str], None]] = None
+
         self._cmd_queue: "queue.Queue[str]" = queue.Queue()
         self._stop_event = threading.Event()
         self._reconnect_event = threading.Event()
@@ -590,7 +696,31 @@ class VirtualPhoneController:
     def log_path(self) -> str:
         return self._log_path
 
-    def set_logging(self, enabled: bool, custom_path: Optional[str] = None) -> str:
+    @property
+    def current_song(self) -> str:
+        return self.current_map_name or self.current_song_name
+
+    @property
+    def auto_record(self) -> bool:
+        return self.auto_record_enabled
+
+    @property
+    def adaptive_enabled(self) -> bool:
+        return self.adaptive_tuner.enabled
+
+    def set_auto_record(self, enabled: bool) -> None:
+        self.auto_record_enabled = bool(enabled)
+
+    def set_adaptive_calibration(self, enabled: bool) -> None:
+        self.adaptive_tuner.enabled = bool(enabled)
+
+    def set_logging(
+        self,
+        enabled: bool,
+        custom_path: Optional[str] = None,
+        source: Optional[str] = None,
+        map_name: Optional[str] = None,
+    ) -> str:
         """
         Starts or stops CSV logging of accelerometer telemetry.
         Returns the active log file path when starting, or empty string when stopping.
@@ -606,20 +736,30 @@ class VirtualPhoneController:
 
             self._logging_enabled = bool(enabled)
             if self._logging_enabled:
+                src = (source or self._last_source or "camera").lower()
+                song = map_name or self.current_map_name or "DanceSession"
+                clean_song = re.sub(r"[^a-zA-Z0-9_\-]", "", song) or "DanceSession"
+
                 if custom_path:
                     path = custom_path
                 else:
                     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
                     logs_dir = os.path.join(base_dir, "logs")
                     os.makedirs(logs_dir, exist_ok=True)
-                    path = os.path.join(logs_dir, f"vphone_accel_{int(time.time())}.csv")
+                    path = os.path.join(logs_dir, f"{clean_song}_{src}_{int(time.time())}.csv")
 
                 self._log_path = path
                 self._log_file = open(path, "w", encoding="utf-8")
-                self._log_file.write("timestamp_ms,ax,ay,az,speed_mps,alpha,hand_x,hand_y,hand_z,is_tracked\n")
+                self._log_file.write(
+                    "timestamp_ms,ax,ay,az,speed_mps,alpha,hand_x,hand_y,hand_z,is_tracked,source,map_name,feedback\n"
+                )
+                print(f"[VPHONE] Telemetry recording started: {path}")
                 return path
             else:
+                old_path = self._log_path
                 self._log_path = ""
+                if old_path:
+                    print(f"[VPHONE] Telemetry recording finished: {old_path}")
                 return ""
 
     def configure(
@@ -629,6 +769,8 @@ class VirtualPhoneController:
         hand: Optional[str] = None,
         sensitivity: Optional[float] = None,
         phone_name: Optional[str] = None,
+        auto_record: Optional[bool] = None,
+        adaptive: Optional[bool] = None,
     ) -> None:
         reconnect_needed = False
         with self._lock:
@@ -641,9 +783,15 @@ class VirtualPhoneController:
             if hand is not None:
                 self.accelerometer.hand = hand.lower() if hand.lower() in ("left", "right") else "right"
             if sensitivity is not None:
-                self.accelerometer.sensitivity = max(0.2, min(4.0, float(sensitivity)))
+                sens_val = max(0.2, min(4.0, float(sensitivity)))
+                self.accelerometer.sensitivity = sens_val
+                self.adaptive_tuner.base_sensitivity = sens_val
             if phone_name is not None and phone_name.strip():
                 self.phone_name = phone_name.strip()
+            if auto_record is not None:
+                self.auto_record_enabled = bool(auto_record)
+            if adaptive is not None:
+                self.adaptive_tuner.enabled = bool(adaptive)
 
         if reconnect_needed and self._enabled:
             self.request_reconnect()
@@ -698,6 +846,12 @@ class VirtualPhoneController:
         Called by TrackingSession every camera frame to update the 3D hand accelerometer.
         """
         now = time.perf_counter()
+        self._last_source = "camera"
+
+        # Apply real-time adaptive sensitivity multiplier if active
+        if self.adaptive_tuner.enabled:
+            self.accelerometer.sensitivity = self.adaptive_tuner.current_sensitivity
+
         accel = self.accelerometer.update(kinect_joints, is_tracked, now=now)
         self._latest_accel = accel
         self._last_joint_update_ts = now
@@ -715,8 +869,10 @@ class VirtualPhoneController:
                         ax, ay, az = accel
                         spd = self.accelerometer.latest_speed
                         alp = self.accelerometer.latest_alpha
+                        fb = self._last_feedback
+                        self._last_feedback = ""
                         self._log_file.write(
-                            f"{ts_ms},{ax:.4f},{ay:.4f},{az:.4f},{spd:.3f},{alp:.2f},{hx:.3f},{hy:.3f},{hz:.3f},{int(is_tracked)}\n"
+                            f"{ts_ms},{ax:.4f},{ay:.4f},{az:.4f},{spd:.3f},{alp:.2f},{hx:.3f},{hy:.3f},{hz:.3f},{int(is_tracked)},camera,{self.current_map_name},{fb}\n"
                         )
                     except OSError:
                         pass
@@ -726,9 +882,10 @@ class VirtualPhoneController:
     def update_from_hardware_accel(self, ax: float, ay: float, az: float) -> Tuple[float, float, float]:
         """
         Updates the 3D accelerometer readings directly from a physical hardware IMU
-        (e.g. Sony DualShock 4 connected via Bluetooth).
+        (e.g. Sony DualShock 4 connected via Bluetooth or USB).
         """
         now = time.perf_counter()
+        self._last_source = "ds4"
         accel = (float(ax), float(ay), float(az))
         self._latest_accel = accel
         self._last_joint_update_ts = now
@@ -739,8 +896,10 @@ class VirtualPhoneController:
                 if self._log_file is not None:
                     try:
                         ts_ms = int(now * 1000)
+                        fb = self._last_feedback
+                        self._last_feedback = ""
                         self._log_file.write(
-                            f"{ts_ms},{ax:.4f},{ay:.4f},{az:.4f},0.000,1.00,0.000,0.000,0.000,1\n"
+                            f"{ts_ms},{ax:.4f},{ay:.4f},{az:.4f},0.000,1.00,0.000,0.000,0.000,1,ds4,{self.current_map_name},{fb}\n"
                         )
                     except OSError:
                         pass
@@ -1161,8 +1320,29 @@ class VirtualPhoneController:
             self._status_text = self._format_connected_status()
 
         elif cls_name in ("JD_EnableScoringPhoneData", "JD_SmartphoneEvent_ScoringActivationChanged"):
-            self._scoring_enabled = bool(msg.get("enable", msg.get("enabled", True)))
+            new_scoring = bool(msg.get("enable", msg.get("enabled", True)))
+            scoring_changed = (new_scoring != self.is_dancing)
+            self._scoring_enabled = new_scoring
+            self.is_dancing = new_scoring
             self._status_text = self._format_connected_status()
+
+            if scoring_changed:
+                if new_scoring:
+                    print(f"[VPHONE] Dance scoring STARTED for song: '{self.current_map_name or 'Unknown'}'")
+                    if self.adaptive_tuner.enabled:
+                        self.adaptive_tuner.reset_song(self.current_map_name)
+                    if self.auto_record_enabled and not self.is_logging:
+                        self.set_logging(True, source=self._last_source, map_name=self.current_map_name)
+                else:
+                    print(f"[VPHONE] Dance scoring ENDED for song: '{self.current_map_name or 'Unknown'}'")
+                    if self.auto_record_enabled and self.is_logging:
+                        self.set_logging(False)
+
+                if self.on_dance_state_change:
+                    try:
+                        self.on_dance_state_change(new_scoring, self.current_map_name)
+                    except Exception:
+                        pass
 
         elif cls_name in (
             "JD_PhoneUiData",
@@ -1173,6 +1353,51 @@ class VirtualPhoneController:
         ):
             if not self._handshake_complete:
                 self._handshake_complete = True
+
+            # Extract song map name across Just Dance versions
+            detected_song = ""
+            if "setupData" in msg and isinstance(msg["setupData"], dict):
+                sdata = msg["setupData"]
+                detected_song = str(sdata.get("mapName", "") or sdata.get("songName", ""))
+            elif "mapName" in msg:
+                detected_song = str(msg["mapName"])
+            elif "songName" in msg:
+                detected_song = str(msg["songName"])
+
+            if detected_song and detected_song.strip():
+                clean_name = detected_song.strip()
+                if clean_name != self.current_map_name:
+                    with self._lock:
+                        self.current_map_name = clean_name
+                        self.current_song_name = clean_name
+                    print(f"[VPHONE] Detected active song map: '{self.current_map_name}'")
+                    if self.on_song_change:
+                        try:
+                            self.on_song_change(self.current_map_name)
+                        except Exception:
+                            pass
+
+            # Extract move scoring feedback (PERFECT, SUPER, GOOD, OK, MISS, YEAH)
+            fb_val = ""
+            for key in ("feedback", "rating", "feedbackText", "action", "moveFeedback"):
+                if key in msg and isinstance(msg[key], str) and msg[key].strip():
+                    fb_val = msg[key].strip().upper()
+                    break
+            if not fb_val and "setupData" in msg and isinstance(msg["setupData"], dict):
+                for key in ("feedback", "rating", "moveFeedback"):
+                    v = msg["setupData"].get(key)
+                    if isinstance(v, str) and v.strip():
+                        fb_val = v.strip().upper()
+                        break
+
+            if fb_val in ("PERFECT", "SUPER", "GOOD", "OK", "MISS", "YEAH", "GOLD"):
+                self._last_feedback = fb_val
+                if self.is_dancing and self.adaptive_tuner.enabled:
+                    self.adaptive_tuner.on_feedback(
+                        fb_val,
+                        current_speed=self.accelerometer.latest_speed,
+                        current_accel=self._latest_accel,
+                    )
 
             # Extract song coaches/NPCs across all Just Dance versions:
             # - Just Dance 2017/2018 Legacy: sends JD_PhoneUiLobby with "coaches" directly

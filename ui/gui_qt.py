@@ -39,10 +39,11 @@ from PySide6.QtCore import (
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QComboBox, QCheckBox, QStackedWidget,
-    QFrame, QSlider, QMessageBox, QScrollArea, QLineEdit, QGridLayout
+    QFrame, QSlider, QMessageBox, QScrollArea, QLineEdit, QGridLayout,
+    QDialog, QFileDialog
 )
 from PySide6.QtGui import (
-    QPixmap, QIcon, QImage
+    QPixmap, QIcon, QImage, QPainter, QPen, QColor, QPainterPath
 )
 
 from ui.theme import (
@@ -70,6 +71,7 @@ from sensor.camera_manager import CameraManager
 from sensor.kinect_shared_memory import KinectBridge
 from sensor.virtual_phone import get_virtual_phone
 from sensor.ds4_controller import get_ds4_controller, find_ds4_devices
+from sensor.telemetry_benchmark import parse_telemetry_csv, compare_telemetries, find_available_benchmarks
 from sensor import tracking_session
 
 
@@ -388,6 +390,348 @@ class CalibPresetCard(QFrame):
         super().mousePressEvent(event)
 
 
+class TelemetryBenchmarkChart(QWidget):
+    """
+    Renders an aligned 2D comparison plot of acceleration magnitude over time (Camera vs DS4).
+    Uses pure QPainter for lightweight, high-DPI rendering without external plotting dependencies.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.chart_t: List[float] = []
+        self.chart_cam: List[float] = []
+        self.chart_ds4: List[float] = []
+        self.setMinimumHeight(180)
+
+    def set_data(self, t: List[float], cam: List[float], ds4: List[float]):
+        self.chart_t = t
+        self.chart_cam = cam
+        self.chart_ds4 = ds4
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        w = self.width()
+        h = self.height()
+        margin_left = 44
+        margin_right = 20
+        margin_top = 26
+        margin_bottom = 26
+
+        # Background
+        painter.fillRect(0, 0, w, h, QColor("#F8FAFC"))
+        painter.setPen(QPen(QColor("#E2E8F0"), 1))
+        painter.drawRect(0, 0, w - 1, h - 1)
+
+        plot_w = w - margin_left - margin_right
+        plot_h = h - margin_top - margin_bottom
+
+        if plot_w <= 10 or plot_h <= 10 or not self.chart_t:
+            painter.setPen(QPen(QColor("#94A3B8")))
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "No telemetry curves available to display.")
+            return
+
+        max_g = max(5.0, max(self.chart_cam + self.chart_ds4, default=5.0)) * 1.05
+        max_t = max(self.chart_t, default=1.0)
+        if max_t <= 0:
+            max_t = 1.0
+
+        # Draw grid lines for G-forces
+        font = painter.font()
+        font.setPointSize(8)
+        painter.setFont(font)
+
+        for g_level in [1.0, 2.0, 3.5, 5.0]:
+            if g_level <= max_g:
+                y = int(margin_top + plot_h - (g_level / max_g) * plot_h)
+                painter.setPen(QPen(QColor("#E2E8F0"), 1, Qt.PenStyle.DashLine))
+                painter.drawLine(margin_left, y, margin_left + plot_w, y)
+                painter.setPen(QPen(QColor("#94A3B8")))
+                painter.drawText(6, y + 4, f"{g_level:.1f}G")
+
+        # Time markers (start, mid, end)
+        painter.setPen(QPen(QColor("#94A3B8")))
+        painter.drawText(margin_left, h - 8, "0.0s")
+        painter.drawText(margin_left + plot_w // 2 - 15, h - 8, f"{max_t / 2:.1f}s")
+        painter.drawText(margin_left + plot_w - 30, h - 8, f"{max_t:.1f}s")
+
+        def pt(t_val, g_val):
+            px = margin_left + (t_val / max_t) * plot_w
+            py = margin_top + plot_h - (g_val / max_g) * plot_h
+            return QPoint(int(px), int(py))
+
+        # Draw DS4 curve (PlayStation Blue #00439C)
+        if self.chart_ds4:
+            path_ds4 = QPainterPath()
+            path_ds4.moveTo(pt(self.chart_t[0], self.chart_ds4[0]))
+            for t_val, g_val in zip(self.chart_t[1:], self.chart_ds4[1:]):
+                path_ds4.lineTo(pt(t_val, g_val))
+            painter.setPen(QPen(QColor("#00439C"), 2))
+            painter.drawPath(path_ds4)
+
+        # Draw Camera curve (Amber #EA580C)
+        if self.chart_cam:
+            path_cam = QPainterPath()
+            path_cam.moveTo(pt(self.chart_t[0], self.chart_cam[0]))
+            for t_val, g_val in zip(self.chart_t[1:], self.chart_cam[1:]):
+                path_cam.lineTo(pt(t_val, g_val))
+            painter.setPen(QPen(QColor("#EA580C"), 2))
+            painter.drawPath(path_cam)
+
+        # Legend at top
+        painter.setPen(QPen(QColor("#00439C"), 2))
+        painter.drawLine(margin_left + 10, 14, margin_left + 30, 14)
+        painter.setPen(QPen(QColor("#00439C")))
+        painter.drawText(margin_left + 35, 18, "DualShock 4 IMU (Physical Ground Truth)")
+
+        painter.setPen(QPen(QColor("#EA580C"), 2))
+        painter.drawLine(margin_left + 260, 14, margin_left + 280, 14)
+        painter.setPen(QPen(QColor("#EA580C")))
+        painter.drawText(margin_left + 285, 18, "Camera Hand Tracking (Virtual Phone)")
+
+
+class TelemetryBenchmarkDialog(QDialog):
+    """
+    Dialog for benchmarking and comparing dance telemetry between Camera and DualShock 4.
+    """
+
+    applied_sensitivity = Signal(float)
+
+    def __init__(self, parent=None, logs_dir: Optional[str] = None, current_sens: float = 1.2):
+        super().__init__(parent)
+        self.setWindowTitle("Telemetry Benchmark & Calibration Comparator")
+        self.resize(760, 560)
+        self.setMinimumSize(700, 500)
+        self.current_sens = float(current_sens)
+        base_dir = Path(__file__).resolve().parent.parent
+        self.logs_dir = Path(logs_dir) if logs_dir else base_dir / "logs"
+        self._last_result: Optional[Dict[str, Any]] = None
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setSpacing(12)
+
+        # Header Title
+        lbl_head = QLabel("TELEMETRY COMPARATIVE BENCHMARK (CAMERA vs DUALSHOCK® 4)")
+        lbl_head.setStyleSheet(
+            f"font-size: 13px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent;"
+        )
+        layout.addWidget(lbl_head)
+
+        lbl_sub = QLabel(
+            "Select a song that was danced twice (once with the Camera and once with the DualShock 4). "
+            "The comparator aligns both curves to calculate time latency, peak G-forces, and suggests optimal camera sensitivity."
+        )
+        lbl_sub.setWordWrap(True)
+        lbl_sub.setStyleSheet(f"font-size: 11px; color: {PALETTE['text_muted']};")
+        layout.addWidget(lbl_sub)
+
+        # Session Selector Card
+        sel_card = QFrame()
+        sel_card.setStyleSheet(f"""
+            QFrame {{
+                background-color: {PALETTE['bg_card']};
+                border: 1px solid {PALETTE['border_subtle']};
+                border-radius: 8px;
+            }}
+        """)
+        sel_layout = QHBoxLayout(sel_card)
+        sel_layout.setContentsMargins(12, 10, 12, 10)
+        sel_layout.setSpacing(10)
+
+        lbl_sess = QLabel("Available Song Runs:")
+        lbl_sess.setStyleSheet(f"font-weight: bold; font-size: 11px; color: {PALETTE['text_main']}; border: none;")
+        self.cb_sessions = QComboBox()
+        self.cb_sessions.setStyleSheet(f"""
+            QComboBox {{
+                background: #FFFFFF;
+                border: 1px solid {PALETTE['tab_gray_border']};
+                border-radius: 6px;
+                padding: 6px 12px;
+                font-size: 11px;
+                min-width: 280px;
+            }}
+        """)
+        self.cb_sessions.currentIndexChanged.connect(self._on_session_selected)
+
+        self.btn_refresh = QPushButton("Refresh Logs")
+        self.btn_refresh.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_refresh.setStyleSheet(f"""
+            QPushButton {{
+                background: #FFFFFF;
+                border: 1px solid {PALETTE['tab_gray_border']};
+                border-radius: 6px;
+                padding: 6px 12px;
+                font-size: 11px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                border-color: {PALETTE['ps_blue']};
+                color: {PALETTE['ps_blue']};
+            }}
+        """)
+        self.btn_refresh.clicked.connect(self._populate_sessions)
+
+        self.btn_browse = QPushButton("Browse Files...")
+        self.btn_browse.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_browse.setStyleSheet(self.btn_refresh.styleSheet())
+        self.btn_browse.clicked.connect(self._on_manual_browse)
+
+        sel_layout.addWidget(lbl_sess)
+        sel_layout.addWidget(self.cb_sessions, stretch=1)
+        sel_layout.addWidget(self.btn_refresh)
+        sel_layout.addWidget(self.btn_browse)
+        layout.addWidget(sel_card)
+
+        # Metrics Card Grid (4 metrics)
+        metrics_card = QFrame()
+        metrics_card.setStyleSheet(f"""
+            QFrame {{
+                background-color: {PALETTE['input_bg']};
+                border: 1px solid {PALETTE['border_subtle']};
+                border-radius: 8px;
+            }}
+        """)
+        m_layout = QGridLayout(metrics_card)
+        m_layout.setContentsMargins(14, 12, 14, 12)
+        m_layout.setHorizontalSpacing(16)
+        m_layout.setVerticalSpacing(8)
+
+        self.lbl_metric_corr = QLabel("Correlation: --%")
+        self.lbl_metric_lag = QLabel("Time Latency: -- ms")
+        self.lbl_metric_peaks = QLabel("Peak G (Cam / DS4): --G / --G")
+        self.lbl_metric_sens = QLabel(f"Suggested Sensitivity: --x (Current: {self.current_sens:.2f}x)")
+
+        for lbl in (self.lbl_metric_corr, self.lbl_metric_lag, self.lbl_metric_peaks, self.lbl_metric_sens):
+            lbl.setStyleSheet("font-weight: bold; font-size: 11px; border: none; background: transparent;")
+
+        m_layout.addWidget(self.lbl_metric_corr, 0, 0)
+        m_layout.addWidget(self.lbl_metric_lag, 0, 1)
+        m_layout.addWidget(self.lbl_metric_peaks, 1, 0)
+        m_layout.addWidget(self.lbl_metric_sens, 1, 1)
+        layout.addWidget(metrics_card)
+
+        # Comparison Plot
+        self.chart = TelemetryBenchmarkChart()
+        layout.addWidget(self.chart, stretch=1)
+
+        # Bottom Actions Row
+        bot_row = QHBoxLayout()
+        bot_row.setSpacing(10)
+
+        self.btn_apply_sens = QPushButton("Apply Suggested Sensitivity")
+        self.btn_apply_sens.setEnabled(False)
+        self.btn_apply_sens.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_apply_sens.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {PALETTE['ps_blue']};
+                color: #FFFFFF;
+                border: none;
+                border-radius: 6px;
+                padding: 8px 18px;
+                font-weight: bold;
+                font-size: 11px;
+            }}
+            QPushButton:hover {{
+                background-color: {PALETTE['blue_dark']};
+            }}
+            QPushButton:disabled {{
+                background-color: #CBD5E1;
+                color: #94A3B8;
+            }}
+        """)
+        self.btn_apply_sens.clicked.connect(self._on_apply_sens_clicked)
+
+        self.btn_close = QPushButton("Close")
+        self.btn_close.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_close.setStyleSheet(self.btn_refresh.styleSheet())
+        self.btn_close.clicked.connect(self.accept)
+
+        bot_row.addWidget(self.btn_apply_sens)
+        bot_row.addStretch()
+        bot_row.addWidget(self.btn_close)
+        layout.addLayout(bot_row)
+
+        self._populate_sessions()
+
+    def _populate_sessions(self):
+        self.cb_sessions.clear()
+        benchmarks = find_available_benchmarks(self.logs_dir)
+        ready_count = 0
+        for b in benchmarks:
+            status = " [READY (Cam + DS4)]" if b["is_ready"] else " [Incomplete]"
+            self.cb_sessions.addItem(f"{b['map_name']}{status}", b)
+            if b["is_ready"]:
+                ready_count += 1
+
+        if not benchmarks:
+            self.cb_sessions.addItem("No dance telemetry logs found in logs/ directory", None)
+            self._clear_results()
+        elif ready_count == 0:
+            self.cb_sessions.addItem("No matching Camera + DS4 log pairs found", None)
+            self._clear_results()
+
+    def _on_session_selected(self, index: int):
+        data = self.cb_sessions.currentData()
+        if not data or not data.get("is_ready"):
+            self._clear_results()
+            return
+        self._run_comparison(data["camera_path"], data["ds4_path"])
+
+    def _on_manual_browse(self):
+        cam_file, _ = QFileDialog.getOpenFileName(
+            self, "Select Camera Telemetry CSV", str(self.logs_dir), "CSV Files (*.csv)"
+        )
+        if not cam_file:
+            return
+        ds4_file, _ = QFileDialog.getOpenFileName(
+            self, "Select DualShock 4 Telemetry CSV", str(self.logs_dir), "CSV Files (*.csv)"
+        )
+        if not ds4_file:
+            return
+        self._run_comparison(cam_file, ds4_file)
+
+    def _run_comparison(self, cam_path: str, ds4_path: str):
+        try:
+            res = compare_telemetries(cam_path, ds4_path, current_sensitivity=self.current_sens)
+            self._last_result = res
+            self.lbl_metric_corr.setText(f"Correlation: {res['correlation_pct']:.1f}%")
+            self.lbl_metric_lag.setText(f"Time Latency: {res['lag_ms']:+.1f} ms")
+            self.lbl_metric_peaks.setText(f"Peak G (Cam / DS4): {res['cam_max_g']:.2f}G / {res['ds4_max_g']:.2f}G")
+            self.lbl_metric_sens.setText(
+                f"Suggested Sensitivity: {res['suggested_sensitivity']:.2f}x (Current: {res['current_sensitivity']:.2f}x)"
+            )
+            self.chart.set_data(res["chart_t"], res["chart_cam"], res["chart_ds4"])
+            self.btn_apply_sens.setEnabled(True)
+            self.btn_apply_sens.setText(f"Apply Suggested Sensitivity ({res['suggested_sensitivity']:.2f}x)")
+        except Exception as e:
+            QMessageBox.warning(self, "Benchmark Comparison Error", f"Failed to compare logs:\n{e}")
+            self._clear_results()
+
+    def _clear_results(self):
+        self._last_result = None
+        self.lbl_metric_corr.setText("Correlation: --%")
+        self.lbl_metric_lag.setText("Time Latency: -- ms")
+        self.lbl_metric_peaks.setText("Peak G (Cam / DS4): --G / --G")
+        self.lbl_metric_sens.setText(f"Suggested Sensitivity: --x (Current: {self.current_sens:.2f}x)")
+        self.chart.set_data([], [], [])
+        self.btn_apply_sens.setEnabled(False)
+        self.btn_apply_sens.setText("Apply Suggested Sensitivity")
+
+    def _on_apply_sens_clicked(self):
+        if self._last_result:
+            sugg = self._last_result["suggested_sensitivity"]
+            self.applied_sensitivity.emit(sugg)
+            QMessageBox.information(
+                self,
+                "Sensitivity Applied",
+                f"Camera Virtual Phone sensitivity updated to {sugg:.2f}x!",
+            )
+            self.accept()
+
+
 class LegacySensorQtGUI(QMainWindow):
     """Modern Crisp-White & PlayStation Blue primary window in Qt 6."""
     cameras_refreshed_signal = Signal(list)
@@ -435,6 +779,8 @@ class LegacySensorQtGUI(QMainWindow):
             hand=str(self.cfg.get("virtual_phone_hand", "right")),
             sensitivity=float(self.cfg.get("virtual_phone_sensitivity", 1.2)),
             phone_name=str(self.cfg.get("virtual_phone_name", "Legacy PSCam Phone")),
+            auto_record=bool(self.cfg.get("virtual_phone_auto_record", False)),
+            adaptive=bool(self.cfg.get("virtual_phone_adaptive", False)),
         )
         if self.cfg.get("virtual_phone_enabled", False):
             self.vphone.set_enabled(True)
@@ -1622,6 +1968,13 @@ class LegacySensorQtGUI(QMainWindow):
         )
         vp_det_layout.addWidget(self.lbl_vphone_status)
 
+        # Song readout
+        self.lbl_vphone_song = QLabel("🎵 Active Song: None (Awaiting Just Dance Selection)", self.vphone_details_frame)
+        self.lbl_vphone_song.setStyleSheet(
+            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['text_muted']}; background: transparent; border: none;"
+        )
+        vp_det_layout.addWidget(self.lbl_vphone_song)
+
         # Live Accel readout (only visible while tracking is active)
         self.lbl_vphone_accel = QLabel("3D Accelerometer: X: +0.00G | Y: -1.00G | Z: +0.00G (0.0 m/s)", self.vphone_details_frame)
         self.lbl_vphone_accel.setStyleSheet(
@@ -1689,10 +2042,17 @@ class LegacySensorQtGUI(QMainWindow):
         self.btn_vphone_log.setToolTip("Records accelerometer telemetry (CSV) for analysis and comparison with real phones")
         self.btn_vphone_log.clicked.connect(self._toggle_vphone_logging)
 
+        self.btn_vphone_benchmark = QPushButton("📊 Benchmark & Compare", self.vphone_details_frame)
+        self.btn_vphone_benchmark.setStyleSheet(btn_outline_style)
+        self.btn_vphone_benchmark.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_vphone_benchmark.setToolTip("Compare acceleration telemetry between Camera and DualShock 4 for this song")
+        self.btn_vphone_benchmark.clicked.connect(self._open_telemetry_benchmark_dialog)
+
         btn_row.addWidget(self.btn_vphone_reconnect)
         btn_row.addWidget(self.btn_vphone_discover)
         btn_row.addWidget(self.btn_vphone_ftue)
         btn_row.addWidget(self.btn_vphone_log)
+        btn_row.addWidget(self.btn_vphone_benchmark)
         btn_row.addStretch()
         vp_det_layout.addLayout(btn_row)
 
@@ -1750,6 +2110,25 @@ class LegacySensorQtGUI(QMainWindow):
         settings_row.addLayout(hand_box, stretch=0)
         settings_row.addLayout(sens_box, stretch=1)
         vp_det_layout.addLayout(settings_row)
+
+        # Automation & Calibration Options row
+        opts_row = QHBoxLayout()
+        opts_row.setSpacing(14)
+
+        self.chk_vphone_auto_record = QCheckBox("Auto-record telemetry during song dance", self.vphone_details_frame)
+        self.chk_vphone_auto_record.setChecked(bool(self.cfg.get("virtual_phone_auto_record", False)))
+        self.chk_vphone_auto_record.stateChanged.connect(self._on_vphone_auto_record_changed)
+        self.chk_vphone_auto_record.setStyleSheet(f"font-size: 11px; font-weight: 500; color: {PALETTE['text_main']};")
+
+        self.chk_vphone_adaptive = QCheckBox("Real-time adaptive calibration (auto-adjust sensitivity)", self.vphone_details_frame)
+        self.chk_vphone_adaptive.setChecked(bool(self.cfg.get("virtual_phone_adaptive", False)))
+        self.chk_vphone_adaptive.stateChanged.connect(self._on_vphone_adaptive_changed)
+        self.chk_vphone_adaptive.setStyleSheet(f"font-size: 11px; font-weight: 500; color: {PALETTE['text_main']};")
+
+        opts_row.addWidget(self.chk_vphone_auto_record)
+        opts_row.addWidget(self.chk_vphone_adaptive)
+        opts_row.addStretch()
+        vp_det_layout.addLayout(opts_row)
 
         vp_layout.addWidget(self.vphone_details_frame)
         self.vphone_details_frame.setVisible(self.chk_vphone_enabled.isChecked())
@@ -2699,6 +3078,33 @@ class LegacySensorQtGUI(QMainWindow):
                     "File ready for analysis and comparison with real smartphone data."
                 )
 
+    def _on_vphone_auto_record_changed(self, state):
+        enabled = (state == Qt.CheckState.Checked.value or state == 2)
+        self.cfg["virtual_phone_auto_record"] = enabled
+        self.cfg_mgr.save()
+        self.vphone.set_auto_record(enabled)
+
+    def _on_vphone_adaptive_changed(self, state):
+        enabled = (state == Qt.CheckState.Checked.value or state == 2)
+        self.cfg["virtual_phone_adaptive"] = enabled
+        self.cfg_mgr.save()
+        self.vphone.set_adaptive_calibration(enabled)
+
+    def _open_telemetry_benchmark_dialog(self):
+        diag = TelemetryBenchmarkDialog(
+            parent=self,
+            current_sens=self.vphone.accelerometer.sensitivity,
+        )
+        diag.applied_sensitivity.connect(self._on_benchmark_sensitivity_applied)
+        diag.exec()
+
+    def _on_benchmark_sensitivity_applied(self, new_sens: float):
+        sens_val = round(float(new_sens), 2)
+        self.slider_vphone_sens.setValue(int(round(sens_val * 100)))
+        self.vphone.configure(sensitivity=sens_val)
+        self.cfg["virtual_phone_sensitivity"] = sens_val
+        self.cfg_mgr.save()
+
     def _update_vphone_ui_readout(self):
         if not hasattr(self, "lbl_vphone_status") or not hasattr(self, "lbl_vphone_accel"):
             return
@@ -2713,6 +3119,42 @@ class LegacySensorQtGUI(QMainWindow):
         self.lbl_vphone_status.setStyleSheet(
             f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {color}; background: transparent; border: none;"
         )
+
+        # Update active song readout
+        if hasattr(self, "lbl_vphone_song"):
+            song_name = self.vphone.current_song
+            if song_name:
+                dancing_tag = " • Scoring Active 💃" if self.vphone.is_dancing else " • Lobby / Paused"
+                self.lbl_vphone_song.setText(f"🎵 Active Song: {song_name}{dancing_tag}")
+                self.lbl_vphone_song.setStyleSheet(
+                    f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent; border: none;"
+                )
+            else:
+                self.lbl_vphone_song.setText("🎵 Active Song: None (Awaiting Just Dance Selection)")
+                self.lbl_vphone_song.setStyleSheet(
+                    f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['text_muted']}; background: transparent; border: none;"
+                )
+
+        # Update Record button state if auto-recording or manually recording
+        if hasattr(self, "btn_vphone_log"):
+            if self.vphone.is_logging:
+                self.btn_vphone_log.setText("⏹ Stop Log (REC)")
+                self.btn_vphone_log.setStyleSheet(f"""
+                    QPushButton {{
+                        background-color: {PALETTE["blue_pastel"]};
+                        color: {PALETTE["blue_dark"]};
+                        font-family: '{self.font_heading}', sans-serif;
+                        font-size: 11px;
+                        font-weight: bold;
+                        border: 1px solid {PALETTE["ps_blue"]};
+                        border-radius: 6px;
+                        padding: 6px 14px;
+                    }}
+                """)
+            else:
+                self.btn_vphone_log.setText("Record Log")
+                self.btn_vphone_log.setStyleSheet(getattr(self, "_btn_vphone_outline_style", ""))
+
         should_show_accel = getattr(self, "is_tracking_active", False)
         if self.lbl_vphone_accel.isVisible() != should_show_accel:
             self.lbl_vphone_accel.setVisible(should_show_accel)
