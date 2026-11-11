@@ -1967,13 +1967,6 @@ class LegacySensorQtGUI(QMainWindow):
         )
         vp_det_layout.addWidget(self.lbl_vphone_status)
 
-        # Song readout
-        self.lbl_vphone_song = QLabel("🎵 Active Song: None (Awaiting Just Dance Selection)", self.vphone_details_frame)
-        self.lbl_vphone_song.setStyleSheet(
-            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['text_muted']}; background: transparent; border: none;"
-        )
-        vp_det_layout.addWidget(self.lbl_vphone_song)
-
         # Live Accel readout (only visible while tracking is active)
         self.lbl_vphone_accel = QLabel("3D Accelerometer: X: +0.00G | Y: -1.00G | Z: +0.00G (0.0 m/s)", self.vphone_details_frame)
         self.lbl_vphone_accel.setStyleSheet(
@@ -2041,17 +2034,10 @@ class LegacySensorQtGUI(QMainWindow):
         self.btn_vphone_log.setToolTip("Records accelerometer telemetry (CSV) for analysis and comparison with real phones")
         self.btn_vphone_log.clicked.connect(self._toggle_vphone_logging)
 
-        self.btn_vphone_benchmark = QPushButton("📊 Benchmark & Compare", self.vphone_details_frame)
-        self.btn_vphone_benchmark.setStyleSheet(btn_outline_style)
-        self.btn_vphone_benchmark.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_vphone_benchmark.setToolTip("Compare acceleration telemetry between Camera and DualShock 4 for this song")
-        self.btn_vphone_benchmark.clicked.connect(self._open_telemetry_benchmark_dialog)
-
         btn_row.addWidget(self.btn_vphone_reconnect)
         btn_row.addWidget(self.btn_vphone_discover)
         btn_row.addWidget(self.btn_vphone_ftue)
         btn_row.addWidget(self.btn_vphone_log)
-        btn_row.addWidget(self.btn_vphone_benchmark)
         btn_row.addStretch()
         vp_det_layout.addLayout(btn_row)
 
@@ -2110,29 +2096,121 @@ class LegacySensorQtGUI(QMainWindow):
         settings_row.addLayout(sens_box, stretch=1)
         vp_det_layout.addLayout(settings_row)
 
-        # Automation & Calibration Options row
-        opts_row = QHBoxLayout()
-        opts_row.setSpacing(14)
-
-        self.chk_vphone_auto_record = QCheckBox("Auto-record telemetry during song dance", self.vphone_details_frame)
-        self.chk_vphone_auto_record.setChecked(bool(self.cfg.get("virtual_phone_auto_record", False)))
-        self.chk_vphone_auto_record.stateChanged.connect(self._on_vphone_auto_record_changed)
-        self.chk_vphone_auto_record.setStyleSheet(f"font-size: 11px; font-weight: 500; color: {PALETTE['text_main']};")
-
-        self.chk_vphone_adaptive = QCheckBox("Real-time adaptive calibration (auto-adjust sensitivity)", self.vphone_details_frame)
-        self.chk_vphone_adaptive.setChecked(bool(self.cfg.get("virtual_phone_adaptive", False)))
-        self.chk_vphone_adaptive.stateChanged.connect(self._on_vphone_adaptive_changed)
-        self.chk_vphone_adaptive.setStyleSheet(f"font-size: 11px; font-weight: 500; color: {PALETTE['text_main']};")
-
-        opts_row.addWidget(self.chk_vphone_auto_record)
-        opts_row.addWidget(self.chk_vphone_adaptive)
-        opts_row.addStretch()
-        vp_det_layout.addLayout(opts_row)
-
         vp_layout.addWidget(self.vphone_details_frame)
         self.vphone_details_frame.setVisible(self.chk_vphone_enabled.isChecked())
-
         exp_layout.addWidget(vphone_box)
+
+        # =====================================================================
+        # Dedicated Telemetry Benchmark Feature Box
+        # =====================================================================
+        self.benchmark_box = QFrame(exp_card)
+        self.benchmark_box.setStyleSheet(f"""
+            QFrame {{
+                background-color: {PALETTE["input_bg"]};
+                border: 1px solid {PALETTE["border_subtle"]};
+                border-radius: 8px;
+            }}
+        """)
+        bm_layout = QVBoxLayout(self.benchmark_box)
+        bm_layout.setContentsMargins(14, 12, 14, 12)
+        bm_layout.setSpacing(8)
+
+        self.chk_benchmark_enabled = QCheckBox("Telemetry Benchmark (Auto-Capture & Compare)", self.benchmark_box)
+        self.chk_benchmark_enabled.setStyleSheet(
+            f"font-family: '{self.font_heading}'; font-size: 13px; font-weight: bold; color: {PALETTE['text_main']};"
+        )
+        is_bm_enabled = bool(self.cfg.get("benchmark_auto_record", self.cfg.get("virtual_phone_auto_record", False)))
+        self.chk_benchmark_enabled.setChecked(is_bm_enabled)
+        self.chk_benchmark_enabled.stateChanged.connect(self._on_benchmark_toggle_changed)
+        bm_layout.addWidget(self.chk_benchmark_enabled)
+
+        lbl_bm_desc = QLabel(
+            "Monitors Just Dance 2020-2022 dance sessions in real-time. When enabled, it continuously watches "
+            "for song starts and automatically records 3D accelerometer telemetry to benchmark and compare "
+            "Camera tracking against physical DualShock 4 hardware IMU data.",
+            self.benchmark_box
+        )
+        lbl_bm_desc.setWordWrap(True)
+        lbl_bm_desc.setStyleSheet(
+            f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
+        )
+        bm_layout.addWidget(lbl_bm_desc)
+
+        # Benchmark Details & Controls Container
+        self.benchmark_details_frame = QFrame(self.benchmark_box)
+        self.benchmark_details_frame.setObjectName("benchmark_details_frame")
+        self.benchmark_details_frame.setStyleSheet(f"""
+            QFrame#benchmark_details_frame {{
+                background-color: {PALETTE["bg_card"]};
+                border: 1px solid {PALETTE["border_subtle"]};
+                border-radius: 8px;
+            }}
+        """)
+        bm_det_layout = QVBoxLayout(self.benchmark_details_frame)
+        bm_det_layout.setContentsMargins(14, 12, 14, 12)
+        bm_det_layout.setSpacing(10)
+
+        # Active Song status readout (clean text without emojis)
+        self.lbl_benchmark_song = QLabel("Active Song: None (Watching for Just Dance song start...)", self.benchmark_details_frame)
+        self.lbl_benchmark_song.setStyleSheet(
+            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['text_muted']}; background: transparent; border: none;"
+        )
+        bm_det_layout.addWidget(self.lbl_benchmark_song)
+
+        # Action Buttons Row
+        bm_btn_row = QHBoxLayout()
+        bm_btn_row.setSpacing(8)
+
+        self.btn_open_benchmark = QPushButton("Benchmark & Compare Telemetry", self.benchmark_details_frame)
+        self.btn_open_benchmark.setStyleSheet(f"""
+            QPushButton {{
+                background-color: #FFFFFF;
+                color: {PALETTE["ps_blue"]};
+                font-family: '{self.font_heading}', sans-serif;
+                font-size: 11px;
+                font-weight: bold;
+                border: 1px solid {PALETTE["ps_blue"]};
+                border-radius: 6px;
+                padding: 6px 14px;
+            }}
+            QPushButton:hover {{
+                background-color: {PALETTE["tab_gray_hover"]};
+            }}
+            QPushButton:pressed {{
+                background-color: {PALETTE["tab_gray_act"]};
+            }}
+        """)
+        self.btn_open_benchmark.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_open_benchmark.setToolTip("Compare acceleration telemetry between Camera and DualShock 4 for this song")
+        self.btn_open_benchmark.clicked.connect(self._open_telemetry_benchmark_dialog)
+        bm_btn_row.addWidget(self.btn_open_benchmark)
+
+        self.btn_open_logs_dir = QPushButton("Open Logs Folder", self.benchmark_details_frame)
+        self.btn_open_logs_dir.setStyleSheet(btn_outline_style)
+        self.btn_open_logs_dir.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_open_logs_dir.setToolTip("Open folder containing recorded CSV telemetry logs")
+        self.btn_open_logs_dir.clicked.connect(self._open_logs_folder)
+        bm_btn_row.addWidget(self.btn_open_logs_dir)
+
+        bm_btn_row.addStretch()
+        bm_det_layout.addLayout(bm_btn_row)
+
+        # Real-time adaptive calibration checkbox
+        self.chk_benchmark_adaptive = QCheckBox("Real-time adaptive calibration (auto-adjust sensitivity from in-game scoring)", self.benchmark_details_frame)
+        self.chk_benchmark_adaptive.setChecked(bool(self.cfg.get("virtual_phone_adaptive", False)))
+        self.chk_benchmark_adaptive.stateChanged.connect(self._on_benchmark_adaptive_changed)
+        self.chk_benchmark_adaptive.setStyleSheet(f"font-size: 11px; font-weight: 500; color: {PALETTE['text_main']};")
+        bm_det_layout.addWidget(self.chk_benchmark_adaptive)
+
+        bm_layout.addWidget(self.benchmark_details_frame)
+        self.benchmark_details_frame.setVisible(self.chk_benchmark_enabled.isChecked())
+        exp_layout.addWidget(self.benchmark_box)
+
+        # Compatibility aliases
+        self.lbl_vphone_song = self.lbl_benchmark_song
+        self.btn_vphone_benchmark = self.btn_open_benchmark
+        self.chk_vphone_auto_record = self.chk_benchmark_enabled
+        self.chk_vphone_adaptive = self.chk_benchmark_adaptive
         layout.addWidget(exp_card)
         layout.addStretch()
 
@@ -3143,7 +3221,7 @@ class LegacySensorQtGUI(QMainWindow):
             mode = self.cfg.get("camera_mode", "pscam")
             src = "ds4" if mode == "ds4" else "camera"
             path = self.vphone.set_logging(True, source=src)
-            self.btn_vphone_log.setText("⏹ Stop Log")
+            self.btn_vphone_log.setText("Stop Log")
             self.btn_vphone_log.setStyleSheet(f"""
                 QPushButton {{
                     background-color: {PALETTE["blue_pastel"]};
@@ -3169,17 +3247,38 @@ class LegacySensorQtGUI(QMainWindow):
                     "File ready for analysis and comparison with real smartphone data."
                 )
 
-    def _on_vphone_auto_record_changed(self, state):
+    def _on_benchmark_toggle_changed(self, state):
         enabled = (state == Qt.CheckState.Checked.value or state == 2)
+        self.cfg["benchmark_auto_record"] = enabled
         self.cfg["virtual_phone_auto_record"] = enabled
-        self.cfg_mgr.save()
+        if hasattr(self, "benchmark_details_frame"):
+            self.benchmark_details_frame.setVisible(enabled)
         self.vphone.set_auto_record(enabled)
+        if enabled and not self.vphone.enabled:
+            self.vphone.set_enabled(True)
+        self.cfg_mgr.save()
+        self._update_vphone_ui_readout()
 
-    def _on_vphone_adaptive_changed(self, state):
+    def _on_benchmark_adaptive_changed(self, state):
         enabled = (state == Qt.CheckState.Checked.value or state == 2)
         self.cfg["virtual_phone_adaptive"] = enabled
         self.cfg_mgr.save()
         self.vphone.set_adaptive_calibration(enabled)
+
+    def _open_logs_folder(self):
+        logs_dir = Path("logs").resolve()
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        if sys.platform == "win32":
+            os.startfile(str(logs_dir))
+        else:
+            import subprocess
+            subprocess.Popen(["xdg-open", str(logs_dir)])
+
+    def _on_vphone_auto_record_changed(self, state):
+        self._on_benchmark_toggle_changed(state)
+
+    def _on_vphone_adaptive_changed(self, state):
+        self._on_benchmark_adaptive_changed(state)
 
     def _open_telemetry_benchmark_dialog(self):
         diag = TelemetryBenchmarkDialog(
@@ -3211,25 +3310,36 @@ class LegacySensorQtGUI(QMainWindow):
             f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {color}; background: transparent; border: none;"
         )
 
-        # Update active song readout
-        if hasattr(self, "lbl_vphone_song"):
+        # Update active song readout in dedicated benchmark section
+        lbl_song = getattr(self, "lbl_benchmark_song", getattr(self, "lbl_vphone_song", None))
+        if lbl_song is not None:
             song_name = self.vphone.current_song
+            is_watching = getattr(self, "chk_benchmark_enabled", None) and self.chk_benchmark_enabled.isChecked()
             if song_name:
-                dancing_tag = " • Scoring Active 💃" if self.vphone.is_dancing else " • Lobby / Paused"
-                self.lbl_vphone_song.setText(f"🎵 Active Song: {song_name}{dancing_tag}")
-                self.lbl_vphone_song.setStyleSheet(
-                    f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent; border: none;"
+                if self.vphone.is_dancing:
+                    status_tag = " [Scoring Active - Capturing Telemetry]" if is_watching else " [Scoring Active]"
+                    color = PALETTE["ps_blue"]
+                else:
+                    status_tag = " [Lobby / Paused - Ready]" if is_watching else " [Lobby / Paused]"
+                    color = PALETTE["blue_dark"]
+                lbl_song.setText(f"Active Song: {song_name}{status_tag}")
+                lbl_song.setStyleSheet(
+                    f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {color}; background: transparent; border: none;"
                 )
             else:
-                self.lbl_vphone_song.setText("🎵 Active Song: None (Awaiting Just Dance Selection)")
-                self.lbl_vphone_song.setStyleSheet(
+                if is_watching:
+                    msg = "Active Song: None (Watching for Just Dance song start...)"
+                else:
+                    msg = "Active Song: None (Awaiting Just Dance Selection)"
+                lbl_song.setText(msg)
+                lbl_song.setStyleSheet(
                     f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['text_muted']}; background: transparent; border: none;"
                 )
 
         # Update Record button state if auto-recording or manually recording
         if hasattr(self, "btn_vphone_log"):
             if self.vphone.is_logging:
-                self.btn_vphone_log.setText("⏹ Stop Log (REC)")
+                self.btn_vphone_log.setText("Stop Log (REC)")
                 self.btn_vphone_log.setStyleSheet(f"""
                     QPushButton {{
                         background-color: {PALETTE["blue_pastel"]};

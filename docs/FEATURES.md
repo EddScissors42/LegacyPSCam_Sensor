@@ -335,6 +335,10 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
   - A aba **Experimental** agora é exibida também no modo de controle DualShock 4, posicionada de forma limpa ao lado de `Controller Settings`.
   - No modo DualShock 4, o checkbox do **Celular Virtual** permanece ativado e desabilitado (cinza/bloqueado), indicando visualmente que o controle físico utiliza a ponte de pontuação do celular virtual por padrão sem permitir desmarcação acidental.
   - Disponibiliza todos os controles de telemetria, detecção de música ativa, botão de Benchmark e opções de auto-gravação diretamente no fluxo de uso do DualShock 4.
+- **Seção Dedicada de Benchmark na Interface Experimental:**
+  - O utilitário de benchmark agora possui um bloco próprio e independente (`Telemetry Benchmark (Auto-Capture & Compare)`), desacoplado da caixa do Celular Virtual.
+  - **Watcher Automático de Dança:** Ao marcar a opção, o sensor fica em prontidão ativa e inicia a gravação de telemetria no instante em que a música começa no Just Dance (`enable: true`), sem necessidade de gravação manual.
+  - Exibe o HUD de status da música ativa (`Active Song: ... [Scoring Active]`) e botões dedicados de Benchmark e Acesso à Pasta de Logs com tipografia sóbria e limpa (sem emojis).
 - **10 Suítes de Testes Automatizados:** Suíte 10 integrada em `test_suite.py` cobrindo parsing de CSV, auto-gravação, ciclo de vida de músicas, correlação de benchmark e adaptação de sensibilidade (`10/10 PASSED`).
 
 ---
