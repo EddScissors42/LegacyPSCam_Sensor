@@ -1247,13 +1247,12 @@ class LegacySensorQtGUI(QMainWindow):
         self.btn_tab_controller.clicked.connect(lambda: self._switch_tab("controller"))
         self.btn_tab_controller.setVisible(False)
 
+        top_nav_layout.setSpacing(10)
         top_nav_layout.addStretch()
         top_nav_layout.addWidget(self.btn_tab_video)
-        top_nav_layout.addSpacing(10)
         top_nav_layout.addWidget(self.btn_tab_calib)
-        top_nav_layout.addSpacing(10)
-        top_nav_layout.addWidget(self.btn_tab_exp)
         top_nav_layout.addWidget(self.btn_tab_controller)
+        top_nav_layout.addWidget(self.btn_tab_exp)
         top_nav_layout.addStretch()
         content_layout.addLayout(top_nav_layout)
         self._apply_tab_styles("video")
@@ -1885,19 +1884,19 @@ class LegacySensorQtGUI(QMainWindow):
         exp_layout.addWidget(warn_box)
 
         # Auto-Frame Feature Box
-        auto_frame_box = QFrame(exp_card)
-        auto_frame_box.setStyleSheet(f"""
+        self.auto_frame_box = QFrame(exp_card)
+        self.auto_frame_box.setStyleSheet(f"""
             QFrame {{
                 background-color: {PALETTE["input_bg"]};
                 border: 1px solid {PALETTE["border_subtle"]};
                 border-radius: 8px;
             }}
         """)
-        af_layout = QVBoxLayout(auto_frame_box)
+        af_layout = QVBoxLayout(self.auto_frame_box)
         af_layout.setContentsMargins(14, 12, 14, 12)
         af_layout.setSpacing(6)
 
-        self.chk_face = QCheckBox("Auto-Frame player's face in Just Dance (Digital PTZ)", auto_frame_box)
+        self.chk_face = QCheckBox("Auto-Frame player's face in Just Dance (Digital PTZ)", self.auto_frame_box)
         self.chk_face.setChecked(self.cfg.get("face_follow_enabled", True))
         self.chk_face.stateChanged.connect(self._on_display_options_changed)
         af_layout.addWidget(self.chk_face)
@@ -1905,7 +1904,7 @@ class LegacySensorQtGUI(QMainWindow):
         lbl_desc = QLabel(
             "Dynamically tracks and frames the dancer's face and upper torso using real-time landmark tracking. "
             "Smoothly pans and crops the game video stream sent to Just Dance PC while keeping 3D skeletal tracking unaffected.",
-            auto_frame_box
+            self.auto_frame_box
         )
         lbl_desc.setWordWrap(True)
         lbl_desc.setStyleSheet(
@@ -1913,7 +1912,7 @@ class LegacySensorQtGUI(QMainWindow):
         )
         af_layout.addWidget(lbl_desc)
 
-        exp_layout.addWidget(auto_frame_box)
+        exp_layout.addWidget(self.auto_frame_box)
 
         # Virtual Phone Controller Feature Box (Single Block)
         vphone_box = QFrame(exp_card)
@@ -1936,16 +1935,16 @@ class LegacySensorQtGUI(QMainWindow):
         self.chk_vphone_enabled.stateChanged.connect(self._on_vphone_toggle_changed)
         vp_layout.addWidget(self.chk_vphone_enabled)
 
-        lbl_vp_desc = QLabel(
+        self.lbl_vp_desc = QLabel(
             "Emulates a smartphone connected to Just Dance via WebSocket/TLS (/smartphone) and converts your hand motion "
             "in the camera into 3D accelerometer commands for songs that only support hand controllers.",
             vphone_box
         )
-        lbl_vp_desc.setWordWrap(True)
-        lbl_vp_desc.setStyleSheet(
+        self.lbl_vp_desc.setWordWrap(True)
+        self.lbl_vp_desc.setStyleSheet(
             f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
         )
-        vp_layout.addWidget(lbl_vp_desc)
+        vp_layout.addWidget(self.lbl_vp_desc)
 
         # Status & Controls Container (Hidden when Virtual Phone is disabled)
         self.vphone_details_frame = QFrame(vphone_box)
@@ -2139,7 +2138,93 @@ class LegacySensorQtGUI(QMainWindow):
 
         self.scroll_exp = self._create_scroll_page(self.page_exp)
         self.stacked_view.addWidget(self.scroll_exp)
+        self._update_exp_view_for_mode(self.cfg.get("camera_mode", "pscam"))
         self._update_vphone_ui_readout()
+
+    def _update_exp_view_for_mode(self, mode: str):
+        """Adapts the Experimental tab layout and Virtual Phone toggle according to the active controller mode."""
+        if not hasattr(self, "chk_vphone_enabled"):
+            return
+
+        is_ds4 = (mode == "ds4")
+        if hasattr(self, "auto_frame_box"):
+            self.auto_frame_box.setVisible(not is_ds4)
+
+        if is_ds4:
+            if hasattr(self, "cb_ds4_hand") and hasattr(self, "cb_vphone_hand"):
+                self.cb_vphone_hand.blockSignals(True)
+                self.cb_vphone_hand.setCurrentIndex(self.cb_ds4_hand.currentIndex())
+                self.cb_vphone_hand.blockSignals(False)
+
+            self.chk_vphone_enabled.blockSignals(True)
+            self.chk_vphone_enabled.setChecked(True)
+            self.chk_vphone_enabled.setEnabled(False)
+            self.chk_vphone_enabled.setText("Virtual Phone Controller (DualShock® 4 Scoring Bridge)")
+            self.chk_vphone_enabled.setStyleSheet(f"""
+                QCheckBox {{
+                    font-family: '{self.font_heading}';
+                    font-size: 13px;
+                    font-weight: bold;
+                    color: #94A3B8;
+                    background: transparent;
+                }}
+                QCheckBox::indicator {{
+                    width: 18px;
+                    height: 18px;
+                    border-radius: 4px;
+                    border: 1px solid #CBD5E1;
+                    background-color: #E2E8F0;
+                }}
+                QCheckBox::indicator:checked {{
+                    background-color: #94A3B8;
+                    border-color: #94A3B8;
+                }}
+            """)
+            self.chk_vphone_enabled.blockSignals(False)
+
+            if hasattr(self, "lbl_vp_desc"):
+                self.lbl_vp_desc.setText(
+                    "Streams physical 3D accelerometer commands from your DualShock 4 directly to Just Dance via the /smartphone WebSocket protocol for seamless dance scoring."
+                )
+            if hasattr(self, "vphone_details_frame"):
+                self.vphone_details_frame.setVisible(True)
+        else:
+            self.chk_vphone_enabled.blockSignals(True)
+            self.chk_vphone_enabled.setEnabled(True)
+            self.chk_vphone_enabled.setText("Virtual Phone Controller (JD Controller via Camera)")
+            self.chk_vphone_enabled.setStyleSheet(f"""
+                QCheckBox {{
+                    font-family: '{self.font_heading}';
+                    font-size: 13px;
+                    font-weight: bold;
+                    color: {PALETTE['text_main']};
+                    background: transparent;
+                }}
+                QCheckBox::indicator {{
+                    width: 18px;
+                    height: 18px;
+                    border-radius: 4px;
+                    border: 1px solid {PALETTE["input_border"]};
+                    background-color: #FFFFFF;
+                }}
+                QCheckBox::indicator:hover {{
+                    border-color: {PALETTE["ps_blue"]};
+                }}
+                QCheckBox::indicator:checked {{
+                    background-color: {PALETTE["ps_blue"]};
+                    border-color: {PALETTE["ps_blue"]};
+                }}
+            """)
+            saved_state = bool(self.cfg.get("virtual_phone_enabled", False))
+            self.chk_vphone_enabled.setChecked(saved_state)
+            self.chk_vphone_enabled.blockSignals(False)
+
+            if hasattr(self, "lbl_vp_desc"):
+                self.lbl_vp_desc.setText(
+                    "Emulates a smartphone connected to Just Dance via WebSocket/TLS (/smartphone) and converts your hand motion in the camera into 3D accelerometer commands for songs that only support hand controllers."
+                )
+            if hasattr(self, "vphone_details_frame"):
+                self.vphone_details_frame.setVisible(saved_state)
 
     def _build_ds4_view(self):
         """Constructs Page 3: DualShock 4 [EXPERIMENTAL] Controller Settings."""
@@ -2465,7 +2550,8 @@ class LegacySensorQtGUI(QMainWindow):
                 self.btn_tab_exp.setEnabled(False)
                 self.btn_tab_exp.setCursor(Qt.CursorShape.ForbiddenCursor)
             if self.active_tab in ("calib", "exp"):
-                self._switch_tab("video")
+                fallback = "controller" if self.cfg.get("camera_mode") == "ds4" else "video"
+                self._switch_tab(fallback)
             else:
                 self.btn_tab_calib.setStyleSheet(self._disabled_tab_css())
                 self.btn_tab_calib.setIcon(QIcon(self.pix_slid_disabled))
@@ -2586,7 +2672,7 @@ class LegacySensorQtGUI(QMainWindow):
             if hasattr(self, "btn_tab_calib"):
                 self.btn_tab_calib.setVisible(False)
             if hasattr(self, "btn_tab_exp"):
-                self.btn_tab_exp.setVisible(False)
+                self.btn_tab_exp.setVisible(True)
             if hasattr(self, "btn_tab_controller"):
                 self.btn_tab_controller.setVisible(True)
             self._switch_tab("controller")
@@ -2613,6 +2699,7 @@ class LegacySensorQtGUI(QMainWindow):
             self._switch_tab("video")
             if hasattr(self, "btn_start"):
                 self.btn_start.setText("START TRACKING")
+        self._update_exp_view_for_mode(mode)
         self._save_settings()
 
     def _update_sidebar_buttons(self):
@@ -2951,6 +3038,8 @@ class LegacySensorQtGUI(QMainWindow):
     # VIRTUAL PHONE CONTROLLER (CELULAR VIRTUAL) HANDLERS
     # =========================================================================
     def _on_vphone_toggle_changed(self):
+        if self.cfg.get("camera_mode") == "ds4":
+            return
         enabled = self.chk_vphone_enabled.isChecked()
         self.cfg["virtual_phone_enabled"] = enabled
         if hasattr(self, "vphone_details_frame"):
@@ -3051,7 +3140,9 @@ class LegacySensorQtGUI(QMainWindow):
 
     def _toggle_vphone_logging(self):
         if not self.vphone.is_logging:
-            path = self.vphone.set_logging(True)
+            mode = self.cfg.get("camera_mode", "pscam")
+            src = "ds4" if mode == "ds4" else "camera"
+            path = self.vphone.set_logging(True, source=src)
             self.btn_vphone_log.setText("⏹ Stop Log")
             self.btn_vphone_log.setStyleSheet(f"""
                 QPushButton {{

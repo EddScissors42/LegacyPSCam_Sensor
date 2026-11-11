@@ -620,7 +620,14 @@ def test_project_structure():
         win._set_mode("ds4")
         assert win.active_tab == "controller", "Should switch to controller settings tab on ds4 mode"
         assert not win.btn_tab_controller.isHidden(), "Controller settings tab must be visible in ds4 mode"
-        assert win.btn_tab_video.isHidden(), "Video settings tab must be hidden in ds4 mode"
+        assert not win.btn_tab_exp.isHidden(), "Experimental tab must be visible in ds4 mode"
+        assert win.chk_vphone_enabled.isChecked(), "Virtual phone must be checked in ds4 mode"
+        assert not win.chk_vphone_enabled.isEnabled(), "Virtual phone checkbox must be disabled/locked in ds4 mode"
+        assert not win.vphone_details_frame.isHidden(), "Virtual phone telemetry details must not be hidden in ds4 mode"
+        assert win.auto_frame_box.isHidden(), "Auto-frame box must be hidden in ds4 mode"
+        win._switch_tab("exp")
+        assert win.active_tab == "exp", "Should be able to switch to experimental tab in ds4 mode"
+        assert win.btn_tab_exp.isEnabled(), "Experimental tab must be enabled in ds4 mode"
         win._set_mode("webcam")
 
         # Calibration & Experimental tab gating when camera is not connected

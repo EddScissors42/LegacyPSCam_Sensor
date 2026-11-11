@@ -331,6 +331,10 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
 - **Calibração Adaptativa em Tempo Real (`AdaptiveCalibrationTuner`):**
   - Ingestão contínua dos feedbacks de pontuação do Just Dance (*PERFECT*, *SUPER*, *GOOD*, *OK*, *MISS*, *YEAH*).
   - Ajuste suave e dinâmico da sensibilidade durante a coreografia caso o jogador esteja se movendo velozmente mas recebendo notas *OK* ou *GOOD*.
+- **Integração Completa na Interface do Modo DualShock 4:**
+  - A aba **Experimental** agora é exibida também no modo de controle DualShock 4, posicionada de forma limpa ao lado de `Controller Settings`.
+  - No modo DualShock 4, o checkbox do **Celular Virtual** permanece ativado e desabilitado (cinza/bloqueado), indicando visualmente que o controle físico utiliza a ponte de pontuação do celular virtual por padrão sem permitir desmarcação acidental.
+  - Disponibiliza todos os controles de telemetria, detecção de música ativa, botão de Benchmark e opções de auto-gravação diretamente no fluxo de uso do DualShock 4.
 - **10 Suítes de Testes Automatizados:** Suíte 10 integrada em `test_suite.py` cobrindo parsing de CSV, auto-gravação, ciclo de vida de músicas, correlação de benchmark e adaptação de sensibilidade (`10/10 PASSED`).
 
 ---

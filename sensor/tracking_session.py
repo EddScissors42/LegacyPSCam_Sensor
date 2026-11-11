@@ -122,6 +122,8 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
         hand=str(config.get("virtual_phone_hand", "right")),
         sensitivity=float(config.get("virtual_phone_sensitivity", 1.2)),
         phone_name=str(config.get("virtual_phone_name", "Legacy PSCam Phone")),
+        auto_record=bool(config.get("virtual_phone_auto_record", False)),
+        adaptive=bool(config.get("virtual_phone_adaptive", False)),
     )
     if config.get("virtual_phone_enabled", False) and not vphone.enabled:
         vphone.set_enabled(True)
@@ -296,6 +298,8 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
         hand=hand,
         sensitivity=sens,
         phone_name=str(config.get("virtual_phone_name", "Legacy PSCam DS4")),
+        auto_record=bool(config.get("virtual_phone_auto_record", False)),
+        adaptive=bool(config.get("virtual_phone_adaptive", False)),
     )
     if not vphone.enabled:
         vphone.set_enabled(True)
