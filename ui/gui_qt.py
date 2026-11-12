@@ -2139,71 +2139,6 @@ class LegacySensorQtGUI(QMainWindow):
         target_row.addStretch()
         vp_det_layout.addLayout(target_row)
 
-        # JDNext Room Code input row (only visible when JDNext is selected)
-        self.jdnext_code_container = QWidget(self.vphone_details_frame)
-        jd_code_layout = QHBoxLayout(self.jdnext_code_container)
-        jd_code_layout.setContentsMargins(0, 0, 0, 0)
-        jd_code_layout.setSpacing(8)
-
-        lbl_code = QLabel("ROOM CODE:", self.jdnext_code_container)
-        lbl_code.setStyleSheet(
-            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['text_main']}; background: transparent; border: none;"
-        )
-        self.txt_jdnext_code = QLineEdit(str(self.cfg.get("virtual_phone_jdnext_code", "")), self.jdnext_code_container)
-        self.txt_jdnext_code.setPlaceholderText("ex: Z8-ZF-83")
-        self.txt_jdnext_code.setMaxLength(10)
-        self.txt_jdnext_code.setStyleSheet(f"""
-            QLineEdit {{
-                background-color: #FFFFFF;
-                color: {PALETTE['text_main']};
-                font-family: '{self.font_heading}', sans-serif;
-                font-weight: bold;
-                font-size: 11px;
-                letter-spacing: 1px;
-                border: 1px solid {PALETTE['tab_gray_border']};
-                border-radius: 6px;
-                padding: 5px 10px;
-                min-width: 120px;
-                max-width: 150px;
-            }}
-            QLineEdit:focus {{
-                border-color: {PALETTE['ps_blue']};
-            }}
-        """)
-        self.txt_jdnext_code.textChanged.connect(self._on_jdnext_code_changed)
-
-        self.btn_jdnext_detect = QPushButton("Detect Code", self.jdnext_code_container)
-        self.btn_jdnext_detect.setStyleSheet(f"""
-            QPushButton {{
-                background-color: #FFFFFF;
-                color: {PALETTE["text_main"]};
-                font-family: '{self.font_heading}', sans-serif;
-                font-size: 11px;
-                font-weight: bold;
-                border: 1px solid {PALETTE["tab_gray_border"]};
-                border-radius: 6px;
-                padding: 5px 12px;
-            }}
-            QPushButton:hover {{
-                background-color: {PALETTE["tab_gray_hover"]};
-                border-color: {PALETTE["ps_blue"]};
-                color: {PALETTE["ps_blue"]};
-            }}
-            QPushButton:disabled {{
-                background-color: #F8FAFC;
-                color: {PALETTE["text_muted"]};
-            }}
-        """)
-        self.btn_jdnext_detect.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_jdnext_detect.setToolTip("Auto-detects room pairing code from running Just Dance Next PC game")
-        self.btn_jdnext_detect.clicked.connect(self._on_vphone_discover_clicked)
-
-        jd_code_layout.addWidget(lbl_code)
-        jd_code_layout.addWidget(self.txt_jdnext_code)
-        jd_code_layout.addWidget(self.btn_jdnext_detect)
-        jd_code_layout.addStretch()
-        vp_det_layout.addWidget(self.jdnext_code_container)
-        self.jdnext_code_container.setVisible(is_jdnext)
 
         # Action buttons row (Reconnect, Auto-Find, Skip Finish, Record Log)
         btn_row = QHBoxLayout()
@@ -3363,23 +3298,12 @@ class LegacySensorQtGUI(QMainWindow):
 
     def _on_vphone_target_changed(self, idx: int):
         is_jdnext = (idx == 1)
-        if hasattr(self, "jdnext_code_container"):
-            self.jdnext_code_container.setVisible(is_jdnext)
         if hasattr(self, "btn_vphone_ftue"):
             self.btn_vphone_ftue.setVisible(not is_jdnext)
         if hasattr(self, "btn_vphone_discover"):
             self.btn_vphone_discover.setVisible(True)
         if hasattr(self, "btn_vphone_reconnect"):
             self.btn_vphone_reconnect.setText("Join Room" if is_jdnext else "Reconnect")
-        self._apply_vphone_settings_to_controller()
-        self._save_settings()
-
-    def _on_jdnext_code_changed(self, text: str):
-        clean = text.upper()
-        if clean != text:
-            cursor_pos = self.txt_jdnext_code.cursorPosition()
-            self.txt_jdnext_code.setText(clean)
-            self.txt_jdnext_code.setCursorPosition(cursor_pos)
         self._apply_vphone_settings_to_controller()
         self._save_settings()
 
@@ -3397,14 +3321,13 @@ class LegacySensorQtGUI(QMainWindow):
         hand = "left" if self.cb_vphone_hand.currentIndex() == 1 else "right"
         sens = round(self.slider_vphone_sens.value() / 100.0, 2)
         target_game = "next" if (hasattr(self, "cb_vphone_target") and self.cb_vphone_target.currentIndex() == 1) else "legacy"
-        jdnext_code = self.txt_jdnext_code.text().strip() if hasattr(self, "txt_jdnext_code") else ""
+        jdnext_code = str(self.cfg.get("virtual_phone_jdnext_code", ""))
 
         self.cfg["virtual_phone_host"] = host
         self.cfg["virtual_phone_port"] = port
         self.cfg["virtual_phone_hand"] = hand
         self.cfg["virtual_phone_sensitivity"] = sens
         self.cfg["virtual_phone_target"] = target_game
-        self.cfg["virtual_phone_jdnext_code"] = jdnext_code
 
         self.vphone.configure(
             host=host,
@@ -3430,9 +3353,6 @@ class LegacySensorQtGUI(QMainWindow):
         if hasattr(self, "btn_vphone_discover"):
             self.btn_vphone_discover.setEnabled(False)
             self.btn_vphone_discover.setText("Searching...")
-        if hasattr(self, "btn_jdnext_detect"):
-            self.btn_jdnext_detect.setEnabled(False)
-            self.btn_jdnext_detect.setText("Searching...")
 
         is_next = (getattr(self.vphone, "target_game", "legacy") == "next")
 
@@ -3472,15 +3392,11 @@ class LegacySensorQtGUI(QMainWindow):
         if hasattr(self, "btn_vphone_discover"):
             self.btn_vphone_discover.setEnabled(True)
             self.btn_vphone_discover.setText("Auto-Find")
-        if hasattr(self, "btn_jdnext_detect"):
-            self.btn_jdnext_detect.setEnabled(True)
-            self.btn_jdnext_detect.setText("Detect Code")
 
         is_next = (getattr(self.vphone, "target_game", "legacy") == "next")
         if is_next:
             if code:
-                if hasattr(self, "txt_jdnext_code"):
-                    self.txt_jdnext_code.setText(code)
+                self.cfg["virtual_phone_jdnext_code"] = code
                 if ip:
                     self.txt_vphone_host.setText(ip)
                 if port > 0:
