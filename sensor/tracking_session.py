@@ -124,11 +124,6 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
         phone_name=str(config.get("virtual_phone_name", "Legacy PSCam Phone")),
         auto_record=bool(config.get("virtual_phone_auto_record", False)),
         adaptive=bool(config.get("virtual_phone_adaptive", False)),
-        target_game=str(config.get("virtual_phone_target", "legacy")),
-        jdnext_code=str(config.get("virtual_phone_jdnext_code", "")),
-        jdnext_token=str(config.get("virtual_phone_jdnext_token", "")),
-        jdnext_port=int(config.get("virtual_phone_jdnext_port", 8080)),
-        jdnext_mode=str(config.get("virtual_phone_mode", "accel")),
     )
     if config.get("virtual_phone_enabled", False) and not vphone.enabled:
         vphone.set_enabled(True)
@@ -305,11 +300,6 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
         phone_name=str(config.get("virtual_phone_name", "Legacy PSCam DS4")),
         auto_record=bool(config.get("virtual_phone_auto_record", False)),
         adaptive=bool(config.get("virtual_phone_adaptive", False)),
-        target_game=str(config.get("virtual_phone_target", "legacy")),
-        jdnext_code=str(config.get("virtual_phone_jdnext_code", "")),
-        jdnext_token=str(config.get("virtual_phone_jdnext_token", "")),
-        jdnext_port=int(config.get("virtual_phone_jdnext_port", 8080)),
-        jdnext_mode=str(config.get("virtual_phone_mode", "accel")),
     )
     if not vphone.enabled:
         vphone.set_enabled(True)

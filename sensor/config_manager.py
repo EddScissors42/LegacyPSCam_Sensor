@@ -39,12 +39,8 @@ DEFAULT_CONFIG = {
     "face_follow_smoothing": 0.20,
     "face_follow_y_bias": 0.06,
     "virtual_phone_enabled": False,
-    "virtual_phone_target": "legacy",  # "legacy" (JD 2017-2022) or "next" (JD Next)
     "virtual_phone_host": "127.0.0.1",
     "virtual_phone_port": 8080,
-    "virtual_phone_jdnext_code": "",
-    "virtual_phone_jdnext_token": "",
-    "virtual_phone_jdnext_port": 8080,
     "virtual_phone_hand": "right",
     "virtual_phone_sensitivity": 1.2,
     "virtual_phone_name": "Legacy PSCam Phone"

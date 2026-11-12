@@ -29,8 +29,7 @@ from .tracking_session import run_tracking_session
 from .tracking_overlay import TrackingOverlay
 from .config_manager import ConfigManager, parse_preset, PRESETS_PSCAM, PRESETS_WEBCAM
 from .virtual_phone import (
-    VirtualPhoneController, HandAccelerometer, AdaptiveCalibrationTuner, get_virtual_phone,
-    pack_jdnext_pose, JDNEXT_DEFAULT_PORT, JDNEXT_WS_PATH
+    VirtualPhoneController, HandAccelerometer, AdaptiveCalibrationTuner, get_virtual_phone
 )
 from .ds4_controller import DS4Controller, DS4State, find_ds4_devices, get_ds4_controller
 from .telemetry_benchmark import parse_telemetry_csv, compare_telemetries, find_available_benchmarks
@@ -73,8 +72,6 @@ __all__ = [
     "HandAccelerometer",
     "AdaptiveCalibrationTuner",
     "get_virtual_phone",
-    "pack_jdnext_pose",
-    "JDNEXT_DEFAULT_PORT",
     "DS4Controller",
     "DS4State",
     "find_ds4_devices",

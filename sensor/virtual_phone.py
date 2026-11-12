@@ -37,49 +37,6 @@ UDP_DISCOVERY_PORT_TX = 6000
 UDP_DISCOVERY_PORT_RX = 7000
 UDP_DISCOVERY_MAGIC = b"phonescoring.jd.ubisoft.com"
 
-# Just Dance Next PC WebSocket Protocol constants (PhoneProtocol.cs / jdn-link.js)
-JDNEXT_DEFAULT_PORT = 8080
-JDNEXT_WS_PATH = "/ws"
-JDNEXT_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-JDNEXT_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
-JDNEXT_POSE_SIZE = 812
-
-
-def pack_jdnext_pose(
-    seq: int,
-    cap_ms: float,
-    aspect: float,
-    infer_ms: float,
-    world_landmarks: Optional[List[Tuple[float, float, float, float]]],
-    image_landmarks: Optional[List[Tuple[float, float]]],
-    hands_bits: int = 0,
-) -> bytes:
-    """
-    Packs one MediaPipe binary pose packet (812 bytes, little-endian) per JDNext PhoneProtocol.cs.
-    Layout:
-      u8 version (1)
-      u8 flags (bit 0: no_body, bits 1-4: hands/fist, bit 5: mask present = 0)
-      u16 seq
-      f64 cap_ms
-      f32 aspect
-      f32 infer_ms
-      f32[132] world landmarks (33 * 4: x, y, z, vis)
-      f32[66] image landmarks (33 * 2: x, y)
-    """
-    buf = bytearray(JDNEXT_POSE_SIZE)
-    has_body = bool(world_landmarks and len(world_landmarks) >= 33)
-    flags = (0 if has_body else 1) | ((hands_bits & 15) << 1)
-    struct.pack_into("<BBHdf f", buf, 0, 1, flags, seq & 0xFFFF, float(cap_ms), float(aspect), float(infer_ms))
-
-    if has_body and world_landmarks is not None:
-        for k in range(min(33, len(world_landmarks))):
-            wx, wy, wz, vis = world_landmarks[k]
-            struct.pack_into("<ffff", buf, 20 + k * 16, float(wx), float(wy), float(wz), float(vis))
-            if image_landmarks is not None and k < len(image_landmarks):
-                ix, iy = image_landmarks[k]
-                struct.pack_into("<ff", buf, 548 + k * 8, float(ix), float(iy))
-    return bytes(buf)
-
 # UbiArt StringID hashes for JD_Input_PhoneCommandData (verified from jd2022.exe)
 PHONE_INPUT_HASHES: Dict[str, int] = {
     "VALID": 1084313942,  # 0x40A15156 (OK / Confirm)
@@ -672,162 +629,6 @@ class AdaptiveCalibrationTuner:
         }
 
 
-def find_jdnext_pids() -> List[int]:
-    """Finds PIDs of running Just Dance Next PC processes (JDNext.exe)."""
-    pids: List[int] = []
-    if sys.platform != "win32":
-        return pids
-    try:
-        import ctypes
-        from ctypes import wintypes
-
-        kernel32 = ctypes.windll.kernel32
-        TH32CS_SNAPPROCESS = 0x00000002
-
-        class PROCESSENTRY32(ctypes.Structure):
-            _fields_ = [
-                ("dwSize", wintypes.DWORD),
-                ("cntUsage", wintypes.DWORD),
-                ("th32ProcessID", wintypes.DWORD),
-                ("th32DefaultHeapID", ctypes.POINTER(ctypes.c_ulong)),
-                ("th32ModuleID", wintypes.DWORD),
-                ("cntThreads", wintypes.DWORD),
-                ("th32ParentProcessID", wintypes.DWORD),
-                ("pcPriClassBase", ctypes.c_long),
-                ("dwFlags", wintypes.DWORD),
-                ("szExeFile", ctypes.c_char * 260),
-            ]
-
-        hSnapshot = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
-        if not hSnapshot or hSnapshot == wintypes.HANDLE(-1).value:
-            return pids
-
-        pe = PROCESSENTRY32()
-        pe.dwSize = ctypes.sizeof(PROCESSENTRY32)
-        if kernel32.Process32First(hSnapshot, ctypes.byref(pe)):
-            while True:
-                exe_name = pe.szExeFile.decode("latin1", errors="ignore").lower()
-                if exe_name in ("jdnext.exe", "jdnext"):
-                    pids.append(pe.th32ProcessID)
-                if not kernel32.Process32Next(hSnapshot, ctypes.byref(pe)):
-                    break
-        kernel32.CloseHandle(hSnapshot)
-    except Exception:
-        pass
-    return pids
-
-
-def extract_jdnext_room_code_from_process(pid: int) -> Optional[Dict[str, Any]]:
-    """
-    Scans committed private memory regions of the running JDNext.exe process
-    to locate the active room pairing code ('XX-XX-XX') adjacent to the
-    'PairingCodeContainer' UI element or session state.
-    """
-    if sys.platform != "win32":
-        return None
-
-    try:
-        import ctypes
-        from ctypes import wintypes
-
-        PROCESS_VM_READ = 0x0010
-        PROCESS_QUERY_INFORMATION = 0x0400
-        kernel32 = ctypes.windll.kernel32
-
-        if ctypes.sizeof(ctypes.c_void_p) == 8:
-            class MEMORY_BASIC_INFORMATION(ctypes.Structure):
-                _fields_ = [
-                    ("BaseAddress", ctypes.c_uint64),
-                    ("AllocationBase", ctypes.c_uint64),
-                    ("AllocationProtect", wintypes.DWORD),
-                    ("Alignment1", wintypes.DWORD),
-                    ("RegionSize", ctypes.c_uint64),
-                    ("State", wintypes.DWORD),
-                    ("Protect", wintypes.DWORD),
-                    ("Type", wintypes.DWORD),
-                    ("Alignment2", wintypes.DWORD),
-                ]
-        else:
-            class MEMORY_BASIC_INFORMATION(ctypes.Structure):
-                _fields_ = [
-                    ("BaseAddress", ctypes.c_void_p),
-                    ("AllocationBase", ctypes.c_void_p),
-                    ("AllocationProtect", wintypes.DWORD),
-                    ("RegionSize", ctypes.c_size_t),
-                    ("State", wintypes.DWORD),
-                    ("Protect", wintypes.DWORD),
-                    ("Type", wintypes.DWORD),
-                ]
-
-        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
-        kernel32.OpenProcess.restype = wintypes.HANDLE
-        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
-        kernel32.CloseHandle.restype = wintypes.BOOL
-        kernel32.VirtualQueryEx.argtypes = [wintypes.HANDLE, ctypes.c_void_p, ctypes.POINTER(MEMORY_BASIC_INFORMATION), ctypes.c_size_t]
-        kernel32.VirtualQueryEx.restype = ctypes.c_size_t
-        kernel32.ReadProcessMemory.argtypes = [wintypes.HANDLE, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t, ctypes.POINTER(ctypes.c_size_t)]
-        kernel32.ReadProcessMemory.restype = wintypes.BOOL
-
-        hProcess = kernel32.OpenProcess(PROCESS_VM_READ | PROCESS_QUERY_INFORMATION, False, pid)
-        if not hProcess:
-            return None
-
-        MEM_COMMIT = 0x1000
-        PAGE_READWRITE = 0x04
-        MEM_PRIVATE = 0x20000
-
-        mbi = MEMORY_BASIC_INFORMATION()
-        addr = 0
-        needle_ui = "PairingCodeContainer".encode("utf-16-le")
-        re_formatted = re.compile(r"([A-HJ-NP-Z2-9]{2}-[A-HJ-NP-Z2-9]{2}-[A-HJ-NP-Z2-9]{2})")
-
-        found_code: Optional[str] = None
-
-        try:
-            while kernel32.VirtualQueryEx(hProcess, ctypes.c_void_p(addr), ctypes.byref(mbi), ctypes.sizeof(mbi)):
-                if mbi.State == MEM_COMMIT and (mbi.Protect & PAGE_READWRITE) and (mbi.Type == MEM_PRIVATE):
-                    reg_size = int(mbi.RegionSize)
-                    if reg_size <= 64 * 1024 * 1024:
-                        chunk_size = min(reg_size, 4 * 1024 * 1024)
-                        buf = ctypes.create_string_buffer(chunk_size)
-                        bytesRead = ctypes.c_size_t(0)
-                        for offset in range(0, reg_size, chunk_size):
-                            read_len = min(chunk_size, reg_size - offset)
-                            if kernel32.ReadProcessMemory(
-                                hProcess,
-                                ctypes.c_void_p(mbi.BaseAddress + offset),
-                                buf,
-                                read_len,
-                                ctypes.byref(bytesRead),
-                            ):
-                                raw = buf.raw[:bytesRead.value]
-                                pos = 0
-                                while True:
-                                    p = raw.find(needle_ui, pos)
-                                    if p == -1:
-                                        break
-                                    window = raw[max(0, p - 350):p + 150].decode("utf-16-le", errors="ignore")
-                                    m = re_formatted.findall(window)
-                                    if m:
-                                        found_code = m[-1]
-                                        break
-                                    pos = p + len(needle_ui)
-                                if found_code:
-                                    break
-                        if found_code:
-                            break
-                addr += mbi.RegionSize
-        finally:
-            kernel32.CloseHandle(hProcess)
-
-        if found_code:
-            norm = re.sub(r"[^A-HJ-NP-Z2-9]", "", found_code.upper())
-            return {"code": found_code, "normalized": norm}
-    except Exception:
-        pass
-    return None
-
-
 class VirtualPhoneController:
     """
     Manages the background WebSocket connection to Just Dance (UbiArt Smartphone Manager),
@@ -889,20 +690,6 @@ class VirtualPhoneController:
         self._last_feedback: str = ""
         self.on_song_change: Optional[Callable[[str], None]] = None
         self.on_dance_state_change: Optional[Callable[[bool, str], None]] = None
-        self.on_token_received: Optional[Callable[[str], None]] = None
-
-        # Just Dance Next PC integration attributes
-        self.target_game: str = "legacy"  # "legacy" or "next"
-        self.jdnext_code: str = ""
-        self.jdnext_token: str = ""
-        self.jdnext_port: int = JDNEXT_DEFAULT_PORT
-        self.jdnext_mode: str = "accel"  # "accel" or "camera"
-        self.jdnext_profile_id: str = os.urandom(6).hex()
-        self.jdnext_batch_seq: int = 0
-        self.jdnext_dropped: int = 0
-        self.jdnext_color: Optional[str] = None
-        self.jdnext_rtt: float = 0.0
-        self.jdnext_pc_name: str = ""
 
         self._cmd_queue: "queue.Queue[str]" = queue.Queue()
         self._stop_event = threading.Event()
@@ -1016,32 +803,9 @@ class VirtualPhoneController:
         phone_name: Optional[str] = None,
         auto_record: Optional[bool] = None,
         adaptive: Optional[bool] = None,
-        target_game: Optional[str] = None,
-        jdnext_code: Optional[str] = None,
-        jdnext_token: Optional[str] = None,
-        jdnext_port: Optional[int] = None,
-        jdnext_mode: Optional[str] = None,
     ) -> None:
         reconnect_needed = False
         with self._lock:
-            if target_game is not None:
-                new_tgt = "next" if target_game.lower() in ("next", "jdnext", "just_dance_next") else "legacy"
-                if new_tgt != self.target_game:
-                    self.target_game = new_tgt
-                    reconnect_needed = True
-            if jdnext_code is not None:
-                clean_c = re.sub(r"[^A-Za-z0-9]", "", jdnext_code).upper()
-                if clean_c != self.jdnext_code:
-                    self.jdnext_code = clean_c
-                    self.jdnext_token = ""
-                    reconnect_needed = True
-            if jdnext_token is not None and jdnext_token.strip() != self.jdnext_token:
-                self.jdnext_token = jdnext_token.strip()
-            if jdnext_port is not None and int(jdnext_port) != self.jdnext_port:
-                self.jdnext_port = int(jdnext_port)
-                reconnect_needed = True
-            if jdnext_mode is not None:
-                self.jdnext_mode = "camera" if jdnext_mode.lower() == "camera" else "accel"
             if host is not None and host.strip() and host.strip() != self.host:
                 self.host = host.strip()
                 reconnect_needed = True
@@ -1299,7 +1063,7 @@ class VirtualPhoneController:
                 pass
 
     # ------------------------------------------------------------------
-    # Game Auto-Discovery (UDP Broadcast for Legacy, Memory/HTTP for JDNext)
+    # Game Auto-Discovery (UDP Broadcast for Just Dance)
     # ------------------------------------------------------------------
     @staticmethod
     def discover_server_info(timeout: float = 1.2) -> Optional[Dict[str, Any]]:
@@ -1357,84 +1121,13 @@ class VirtualPhoneController:
                 except OSError:
                     pass
 
-    @staticmethod
-    def discover_jdnext_info(
-        host: str = "127.0.0.1",
-        port: int = 8080,
-        timeout: float = 1.5,
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Discovers Just Dance Next PC on local network or localhost:
-        1. Probes http://{host}:{port}/discover.json to retrieve PC name, port, and TLS state.
-        2. If running locally, scans committed memory regions of the JDNext.exe process
-           to extract the active room pairing code ('XX-XX-XX').
-        Returns dict with ip, port, pc, pairing_code, normalized_code, protocol, or None.
-        """
-        import urllib.request
-        pc_name: str = ""
-        http_port = port
-        found_server = False
-
-        # 1. Probe HTTP /discover.json
-        try:
-            url = f"http://{host}:{port}/discover.json"
-            req = urllib.request.Request(url, headers={"User-Agent": "LegacyPSCam/1.0"})
-            with urllib.request.urlopen(req, timeout=min(timeout, 0.8)) as resp:
-                data = json.loads(resp.read().decode("utf-8", errors="replace"))
-                if isinstance(data, dict) and data.get("t") == "jdnext":
-                    found_server = True
-                    pc_name = str(data.get("pc", ""))
-                    http_port = int(data.get("http", port))
-        except Exception:
-            pass
-
-        # 2. Extract room code if process is running locally
-        pairing_code = ""
-        normalized_code = ""
-        is_local = host in ("127.0.0.1", "localhost", "::1", "")
-        if is_local:
-            pids = find_jdnext_pids()
-            for pid in pids:
-                code_data = extract_jdnext_room_code_from_process(pid)
-                if code_data:
-                    pairing_code = code_data["code"]
-                    normalized_code = code_data["normalized"]
-                    found_server = True
-                    break
-
-        if not found_server and not pairing_code:
-            return None
-
-        return {
-            "ip": host if host else "127.0.0.1",
-            "port": http_port,
-            "pc": pc_name or "Just Dance Next PC",
-            "pairing_code": pairing_code,
-            "normalized_code": normalized_code,
-            "protocol": "jdnext",
-        }
-
     @classmethod
-    def discover_server(
-        cls,
-        timeout: float = 1.2,
-        target_game: Optional[str] = None,
-    ) -> Optional[Tuple[str, int, str]]:
+    def discover_server(cls, timeout: float = 1.2) -> Optional[Tuple[str, int, str]]:
         """
         Discovers the running Just Dance server.
-        - For JDNext: probes HTTP discover.json and extracts room code from process memory.
-        - For Legacy: broadcasts "phonescoring.jd.ubisoft.com" on UDP port 6000 and listens on UDP 7000.
+        Broadcasts "phonescoring.jd.ubisoft.com" on UDP port 6000 and listens on UDP 7000.
         Returns (ip, ws_port, pairing_code) if found, or None.
-        Maintains backward compatibility with UI and external callers.
         """
-        tg = (target_game or "").lower()
-        if tg in ("next", "jdnext", "just_dance_next"):
-            info = cls.discover_jdnext_info(timeout=timeout)
-            if info is None:
-                return None
-            code = info.get("pairing_code") or info.get("normalized_code") or ""
-            return (info["ip"], info["port"], code)
-
         info = cls.discover_server_info(timeout=timeout)
         if info is None:
             return None
@@ -1444,220 +1137,6 @@ class VirtualPhoneController:
     # Background WebSocket Worker & Handshake State Machine
     # ------------------------------------------------------------------
     def _worker_loop(self) -> None:
-        if self.target_game == "next":
-            self._worker_loop_jdnext()
-        else:
-            self._worker_loop_legacy()
-
-    def _worker_loop_jdnext(self) -> None:
-        """
-        Background WebSocket worker managing connection to Just Dance Next PC (port 8080/ws).
-        Handles hello handshake with room code / token, immediate pong replies to pings,
-        nav commands, 60Hz IMU streaming, and real-time state tracking.
-        """
-        while not self._stop_event.is_set() and self._enabled:
-            self._reconnect_event.clear()
-
-            dest_port = self.jdnext_port or JDNEXT_DEFAULT_PORT
-            ws: Optional[_MinimalWebSocketClient] = None
-
-            # Attempt plain WS first, then WSS/TLS if needed
-            for prefer_tls in (False, True):
-                candidate_ws = _MinimalWebSocketClient(self.host, dest_port, path=JDNEXT_WS_PATH, subprotocol=None)
-                try:
-                    candidate_ws.connect(timeout=1.5, prefer_tls=prefer_tls)
-                    ws = candidate_ws
-                    break
-                except Exception:
-                    candidate_ws.close()
-                    continue
-
-            if ws is None or not ws.connected:
-                self._connected = False
-                self._handshake_complete = False
-                code_tag = f" • Code: {self.jdnext_code}" if self.jdnext_code else ""
-                self._status_text = f"Searching JDNext on {self.host}:{dest_port}{code_tag}..."
-                if self._enabled and not self._stop_event.is_set() and not self._reconnect_event.is_set():
-                    self._reconnect_event.wait(timeout=1.0)
-                continue
-
-            try:
-                self._connected = True
-                self._handshake_complete = False
-                proto_tag = "WSS" if ws.is_tls else "WS"
-                self._status_text = f"Connected ({proto_tag}) — Authenticating with JDNext..."
-
-                hello_pkt = {
-                    "t": "hello",
-                    "v": 1,
-                    "id": self.jdnext_profile_id,
-                    "name": self.phone_name,
-                    "mode": self.jdnext_mode,
-                    "ua": "LegacyPSCam/1.0 (Windows NT 10.0; Win64; x64)",
-                    "ios": False,
-                }
-                if self.jdnext_token and JDNEXT_TOKEN_RE.match(self.jdnext_token):
-                    hello_pkt["token"] = self.jdnext_token
-                elif self.jdnext_code:
-                    hello_pkt["code"] = self.jdnext_code
-                else:
-                    # Attempt automatic extraction if code and token are not yet configured
-                    auto_info = self.discover_jdnext_info(host=self.host, port=dest_port, timeout=1.0)
-                    if auto_info and (auto_info.get("normalized_code") or auto_info.get("pairing_code")):
-                        detected_code = auto_info.get("normalized_code") or auto_info.get("pairing_code") or ""
-                        self.jdnext_code = detected_code
-                        hello_pkt["code"] = self.jdnext_code
-
-                ws.send_text(json.dumps(hello_pkt))
-
-                last_accel_sent_ts = 0.0
-                accel_interval = 1.0 / 60.0  # 60 Hz stream
-
-                while not self._stop_event.is_set() and self._enabled and not self._reconnect_event.is_set():
-                    # 1. Process incoming messages from JDNext
-                    for raw_msg in ws.recv_messages():
-                        try:
-                            m = json.loads(raw_msg)
-                        except Exception:
-                            continue
-                        if not isinstance(m, dict):
-                            continue
-
-                        msg_type = m.get("t")
-
-                        if msg_type == "ping":
-                            # Immediate clock sync pong
-                            p_id = int(m.get("id", 0))
-                            now_ms = round(time.perf_counter() * 1000.0, 3)
-                            pong_pkt = {"t": "pong", "id": p_id, "r": now_ms, "x": now_ms}
-                            ws.send_text(json.dumps(pong_pkt))
-
-                        elif msg_type == "welcome":
-                            self._handshake_complete = True
-                            self._phone_id = int(m.get("index", 1))
-                            self.jdnext_pc_name = str(m.get("pc", "JDNext"))
-                            tok = str(m.get("token", "")).strip()
-                            if tok and JDNEXT_TOKEN_RE.match(tok):
-                                self.jdnext_token = tok
-                                if self.on_token_received is not None:
-                                    try:
-                                        self.on_token_received(tok)
-                                    except Exception:
-                                        pass
-                            self._status_text = self._format_connected_status()
-
-                        elif msg_type == "denied":
-                            reason = str(m.get("reason", "auth"))
-                            if reason == "auth":
-                                self.jdnext_token = ""
-                                self._status_text = "JDNext: Invalid or Expired Room Code"
-                            else:
-                                self._status_text = f"JDNext: Denied ({reason})"
-                            self._connected = False
-                            self._handshake_complete = False
-                            raise ConnectionError(f"JDNext denied connection: {reason}")
-
-                        elif msg_type == "state":
-                            phase = str(m.get("phase", "idle"))
-                            slot = m.get("slot")
-                            if isinstance(slot, int) and slot >= 0:
-                                self._player_id = slot
-                            if "color" in m:
-                                self.jdnext_color = m["color"]
-                            song = str(m.get("song", "")).strip()
-                            artist = str(m.get("artist", "")).strip()
-                            song_display = f"{song} - {artist}" if song and artist else (song or artist)
-                            if song_display:
-                                self.current_song_name = song_display
-                                self.current_map_name = song or song_display
-                                if self.on_song_change:
-                                    try:
-                                        self.on_song_change(song_display)
-                                    except Exception:
-                                        pass
-
-                            new_dancing = (phase == "dance")
-                            scoring_changed = (new_dancing != self.is_dancing)
-                            self.is_dancing = new_dancing
-                            self._scoring_enabled = new_dancing
-
-                            if scoring_changed:
-                                if new_dancing:
-                                    print(f"[VPHONE] JDNext dance started: '{self.current_song_name or 'Unknown'}'")
-                                    if self.adaptive_tuner.enabled:
-                                        self.adaptive_tuner.reset_song(self.current_song_name)
-                                    if self.auto_record_enabled and not self.is_logging:
-                                        self.set_logging(True, source=self._last_source, map_name=self.current_song_name)
-                                else:
-                                    print(f"[VPHONE] JDNext dance ended: '{self.current_song_name or 'Unknown'}'")
-                                    if self.auto_record_enabled and self.is_logging:
-                                        self.set_logging(False)
-
-                                if self.on_dance_state_change:
-                                    try:
-                                        self.on_dance_state_change(new_dancing, self.current_song_name)
-                                    except Exception:
-                                        pass
-
-                            self._status_text = self._format_connected_status()
-
-                        elif msg_type == "fb":
-                            w = str(m.get("w", ""))
-                            if w:
-                                self._last_feedback = w
-
-                        elif msg_type == "net":
-                            self.jdnext_rtt = float(m.get("rtt", 0.0))
-
-                    now = time.perf_counter()
-
-                    if not self._handshake_complete:
-                        time.sleep(0.005)
-                        continue
-
-                    # 2. Flush queued menu navigation commands
-                    while not self._cmd_queue.empty():
-                        try:
-                            cmd_json = self._cmd_queue.get_nowait()
-                            ws.send_text(cmd_json)
-                        except queue.Empty:
-                            break
-
-                    # 3. Stream accelerometer scoring data at 60 Hz
-                    if (now - last_accel_sent_ts) >= accel_interval:
-                        last_accel_sent_ts = now
-                        sample = self._compute_current_sample(now)
-                        # 1G = 9.80665 m/s²
-                        ax_ms2 = round(sample[0] * 9.80665, 4)
-                        ay_ms2 = round(sample[1] * 9.80665, 4)
-                        az_ms2 = round(sample[2] * 9.80665, 4)
-                        ms_now = round(now * 1000.0, 2)
-                        imu_pkt = {
-                            "t": "imu",
-                            "s": [[ms_now, ax_ms2, ay_ms2, az_ms2, 0.0, 0.0, 0.0]],
-                            "i": round(accel_interval * 1000.0, 4),
-                            "q": self.jdnext_batch_seq,
-                            "d": self.jdnext_dropped,
-                        }
-                        self.jdnext_batch_seq += 1
-                        ws.send_text(json.dumps(imu_pkt))
-
-                    time.sleep(0.0015)
-
-            except Exception as exc:
-                self._connected = False
-                self._handshake_complete = False
-                self._last_error = str(exc)
-                if self._enabled and not self._stop_event.is_set():
-                    code_tag = f" • Code: {self.jdnext_code}" if self.jdnext_code else ""
-                    self._status_text = f"Searching JDNext on {self.host}:{dest_port}{code_tag}..."
-                    if not self._reconnect_event.is_set():
-                        self._reconnect_event.wait(timeout=1.0)
-            finally:
-                if ws is not None:
-                    ws.close()
-
-    def _worker_loop_legacy(self) -> None:
         last_failed_protocol: str = ""
         while not self._stop_event.is_set() and self._enabled:
             self._reconnect_event.clear()
@@ -1827,13 +1306,6 @@ class VirtualPhoneController:
         return self._latest_accel
 
     def _format_connected_status(self) -> str:
-        if self.target_game == "next":
-            pc_part = f" ({self.jdnext_pc_name})" if self.jdnext_pc_name else ""
-            player_slot = f"Player {self._player_id + 1}"
-            mode_part = "Scoring Active" if self._scoring_enabled else "In Room"
-            song_part = f" • '{self.current_song_name}'" if self.current_song_name and self.is_dancing else ""
-            return f"JDNext{pc_part} • {player_slot} • {mode_part}{song_part}"
-
         player_slot = f"Player {self._player_id + 1}"
         player_part = f" • {self._player_name} ({player_slot})" if self._player_name else f" • {player_slot}"
         mode_part = "Scoring Active" if self._scoring_enabled else "Connected to Game"
