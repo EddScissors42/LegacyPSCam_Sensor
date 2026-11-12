@@ -35,7 +35,8 @@ from sensor.pose_tracker import (
 from sensor.camera_manager import CameraManager, FrameBusReader
 from sensor.tracking_overlay import TrackingOverlay
 from sensor.virtual_phone import (
-    VirtualPhoneController, HandAccelerometer, get_virtual_phone, PHONE_INPUT_HASHES
+    VirtualPhoneController, HandAccelerometer, get_virtual_phone, PHONE_INPUT_HASHES,
+    pack_jdnext_pose, JDNEXT_POSE_SIZE, JDNEXT_CODE_ALPHABET, JDNEXT_DEFAULT_PORT
 )
 
 def test_config():
@@ -770,6 +771,90 @@ def test_telemetry_and_adaptive_benchmark():
 
     print("  -> Telemetry Benchmark & Adaptive Calibration PASSED")
 
+def test_jdnext_virtual_phone_protocol():
+    print("[TEST] Just Dance Next PC Virtual Phone Protocol...")
+    # 1. Test binary pose packing (PhoneProtocol.cs layout: 812 bytes)
+    dummy_world = [(float(i) * 0.01, float(i) * 0.02, float(i) * 0.03, 0.95) for i in range(33)]
+    dummy_img = [(float(i) * 0.015, float(i) * 0.025) for i in range(33)]
+
+    # Packed with body
+    buf = pack_jdnext_pose(
+        seq=42,
+        cap_ms=123456.78,
+        aspect=1.3333,
+        infer_ms=8.5,
+        world_landmarks=dummy_world,
+        image_landmarks=dummy_img,
+        hands_bits=5,
+    )
+    assert len(buf) == JDNEXT_POSE_SIZE, f"Expected {JDNEXT_POSE_SIZE} bytes, got {len(buf)}"
+    version, flags, seq, cap_ms, aspect, infer_ms = struct.unpack_from("<BBHdf f", buf, 0)
+    assert version == 1
+    assert (flags & 1) == 0  # body present
+    assert ((flags >> 1) & 15) == 5  # hands_bits = 5
+    assert seq == 42
+    assert abs(cap_ms - 123456.78) < 1e-3
+    assert abs(aspect - 1.3333) < 1e-4
+    assert abs(infer_ms - 8.5) < 1e-4
+
+    # Verify first landmark
+    w0_x, w0_y, w0_z, w0_vis = struct.unpack_from("<ffff", buf, 20)
+    assert abs(w0_x - 0.0) < 1e-5
+    assert abs(w0_vis - 0.95) < 1e-5
+
+    # Verify first image landmark
+    i0_x, i0_y = struct.unpack_from("<ff", buf, 548)
+    assert abs(i0_x - 0.0) < 1e-5
+
+    # Verify packed empty body
+    empty_buf = pack_jdnext_pose(
+        seq=1,
+        cap_ms=100.0,
+        aspect=1.7777,
+        infer_ms=5.0,
+        world_landmarks=None,
+        image_landmarks=None,
+    )
+    assert len(empty_buf) == JDNEXT_POSE_SIZE
+    assert (empty_buf[1] & 1) == 1  # no body bit set
+
+    # 2. Test VirtualPhoneController configuration with JDNext
+    controller = VirtualPhoneController()
+    controller.configure(
+        target_game="next",
+        jdnext_code="z8-zf-83",
+        jdnext_port=JDNEXT_DEFAULT_PORT,
+        jdnext_mode="accel",
+    )
+    assert controller.target_game == "next"
+    assert controller.jdnext_code == "Z8ZF83"
+    assert controller.jdnext_port == 8080
+    assert controller.jdnext_mode == "accel"
+
+    # Navigation input mapping
+    controller.send_input("VALID")
+    assert not controller._cmd_queue.empty()
+    queued_cmd = controller._cmd_queue.get_nowait()
+    assert '"t": "nav"' in queued_cmd and '"a": "ok"' in queued_cmd
+
+    controller.send_input("BACK")
+    queued_cmd = controller._cmd_queue.get_nowait()
+    assert '"t": "nav"' in queued_cmd and '"a": "back"' in queued_cmd
+
+    # Format status
+    controller._player_id = 0
+    controller.jdnext_pc_name = "EDDIONICO"
+    controller._scoring_enabled = True
+    controller.current_song_name = "Levitating - Dua Lipa"
+    controller.is_dancing = True
+    status = controller._format_connected_status()
+    assert "JDNext (EDDIONICO)" in status
+    assert "Player 1" in status
+    assert "Scoring Active" in status
+    assert "Levitating - Dua Lipa" in status
+
+    print("  -> Just Dance Next PC Virtual Phone Protocol PASSED")
+
 def run_all_tests():
     print("==========================================")
     print("   RUNNING LEGACY PSCAM SENSOR TEST SUITE ")
@@ -784,8 +869,9 @@ def run_all_tests():
     test_overlay()
     test_camera_manager()
     test_telemetry_and_adaptive_benchmark()
+    test_jdnext_virtual_phone_protocol()
     print("==========================================")
-    print("   ALL TESTS PASSED SUCCESSFULLY (10/10)  ")
+    print("   ALL TESTS PASSED SUCCESSFULLY (11/11)  ")
     print("==========================================")
 
 if __name__ == "__main__":

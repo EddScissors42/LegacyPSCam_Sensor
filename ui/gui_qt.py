@@ -899,6 +899,11 @@ class LegacySensorQtGUI(QMainWindow):
             phone_name=str(self.cfg.get("virtual_phone_name", "Legacy PSCam Phone")),
             auto_record=bool(self.cfg.get("virtual_phone_auto_record", False)),
             adaptive=bool(self.cfg.get("virtual_phone_adaptive", False)),
+            target_game=str(self.cfg.get("virtual_phone_target", "legacy")),
+            jdnext_code=str(self.cfg.get("virtual_phone_jdnext_code", "")),
+            jdnext_token=str(self.cfg.get("virtual_phone_jdnext_token", "")),
+            jdnext_port=int(self.cfg.get("virtual_phone_jdnext_port", 8080)),
+            jdnext_mode=str(self.cfg.get("virtual_phone_mode", "accel")),
         )
         if self.cfg.get("virtual_phone_enabled", False):
             self.vphone.set_enabled(True)
@@ -1865,7 +1870,7 @@ class LegacySensorQtGUI(QMainWindow):
         ah_layout = QHBoxLayout(auto_h)
         ah_layout.setContentsMargins(12, 8, 12, 8)
         ah_layout.setSpacing(10)
-        lbl_ruler = QLabel("📏", auto_h)
+        lbl_ruler = QLabel("", auto_h)
         lbl_ruler.setStyleSheet("font-size: 16px; background: transparent; border: none;")
         ah_layout.addWidget(lbl_ruler)
         ah_text = QVBoxLayout()
@@ -1985,8 +1990,8 @@ class LegacySensorQtGUI(QMainWindow):
         warn_layout.setContentsMargins(12, 10, 12, 10)
         warn_layout.setSpacing(10)
 
-        lbl_warn_icon = QLabel("⚠️", warn_box)
-        lbl_warn_icon.setStyleSheet("font-size: 16px; background: transparent; border: none;")
+        lbl_warn_icon = QLabel("[!]", warn_box)
+        lbl_warn_icon.setStyleSheet("font-family: monospace; font-size: 14px; font-weight: bold; color: #92400E; background: transparent; border: none;")
         warn_layout.addWidget(lbl_warn_icon, alignment=Qt.AlignmentFlag.AlignTop)
 
         lbl_warn_text = QLabel(
@@ -2099,6 +2104,79 @@ class LegacySensorQtGUI(QMainWindow):
         self.txt_vphone_port = QLineEdit(str(self.cfg.get("virtual_phone_port", 8080)), self)
         self.txt_vphone_port.setVisible(False)
 
+        # Target Game Selector row
+        target_row = QHBoxLayout()
+        target_row.setSpacing(12)
+        lbl_target_hdr = QLabel("TARGET GAME:", self.vphone_details_frame)
+        lbl_target_hdr.setStyleSheet(
+            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['text_main']}; background: transparent; border: none;"
+        )
+        self.cb_vphone_target = QComboBox(self.vphone_details_frame)
+        self.cb_vphone_target.addItems(["Just Dance Legacy (2017 - 2022)", "Just Dance Next (PC)"])
+        saved_target = str(self.cfg.get("virtual_phone_target", "legacy")).lower()
+        is_jdnext = (saved_target in ("next", "jdnext"))
+        self.cb_vphone_target.setCurrentIndex(1 if is_jdnext else 0)
+        self.cb_vphone_target.setStyleSheet(f"""
+            QComboBox {{
+                background-color: #FFFFFF;
+                color: {PALETTE['text_main']};
+                font-family: '{self.font_body}', sans-serif;
+                border: 1px solid {PALETTE['tab_gray_border']};
+                border-radius: 6px;
+                padding: 6px 12px;
+                font-size: 11px;
+                font-weight: 500;
+                min-width: 220px;
+            }}
+            QComboBox:hover {{
+                border-color: {PALETTE['ps_blue']};
+            }}
+        """)
+        self.cb_vphone_target.currentIndexChanged.connect(self._on_vphone_target_changed)
+        target_row.addWidget(lbl_target_hdr)
+        target_row.addWidget(self.cb_vphone_target)
+        target_row.addStretch()
+        vp_det_layout.addLayout(target_row)
+
+        # JDNext Room Code input row (only visible when JDNext is selected)
+        self.jdnext_code_container = QWidget(self.vphone_details_frame)
+        jd_code_layout = QHBoxLayout(self.jdnext_code_container)
+        jd_code_layout.setContentsMargins(0, 0, 0, 0)
+        jd_code_layout.setSpacing(8)
+
+        lbl_code = QLabel("ROOM CODE:", self.jdnext_code_container)
+        lbl_code.setStyleSheet(
+            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['text_main']}; background: transparent; border: none;"
+        )
+        self.txt_jdnext_code = QLineEdit(str(self.cfg.get("virtual_phone_jdnext_code", "")), self.jdnext_code_container)
+        self.txt_jdnext_code.setPlaceholderText("ex: Z8-ZF-83")
+        self.txt_jdnext_code.setMaxLength(10)
+        self.txt_jdnext_code.setStyleSheet(f"""
+            QLineEdit {{
+                background-color: #FFFFFF;
+                color: {PALETTE['text_main']};
+                font-family: '{self.font_heading}', sans-serif;
+                font-weight: bold;
+                font-size: 11px;
+                letter-spacing: 1px;
+                border: 1px solid {PALETTE['tab_gray_border']};
+                border-radius: 6px;
+                padding: 5px 10px;
+                min-width: 120px;
+                max-width: 150px;
+            }}
+            QLineEdit:focus {{
+                border-color: {PALETTE['ps_blue']};
+            }}
+        """)
+        self.txt_jdnext_code.textChanged.connect(self._on_jdnext_code_changed)
+
+        jd_code_layout.addWidget(lbl_code)
+        jd_code_layout.addWidget(self.txt_jdnext_code)
+        jd_code_layout.addStretch()
+        vp_det_layout.addWidget(self.jdnext_code_container)
+        self.jdnext_code_container.setVisible(is_jdnext)
+
         # Action buttons row (Reconnect, Auto-Find, Skip Finish, Record Log)
         btn_row = QHBoxLayout()
         btn_row.setSpacing(8)
@@ -2130,7 +2208,8 @@ class LegacySensorQtGUI(QMainWindow):
         """
         self._btn_vphone_outline_style = btn_outline_style
 
-        self.btn_vphone_reconnect = QPushButton("Reconnect", self.vphone_details_frame)
+        reconnect_btn_text = "Join Room" if is_jdnext else "Reconnect"
+        self.btn_vphone_reconnect = QPushButton(reconnect_btn_text, self.vphone_details_frame)
         self.btn_vphone_reconnect.setStyleSheet(btn_outline_style)
         self.btn_vphone_reconnect.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_vphone_reconnect.clicked.connect(self._on_vphone_reconnect_clicked)
@@ -2139,12 +2218,14 @@ class LegacySensorQtGUI(QMainWindow):
         self.btn_vphone_discover.setStyleSheet(btn_outline_style)
         self.btn_vphone_discover.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_vphone_discover.clicked.connect(self._on_vphone_discover_clicked)
+        self.btn_vphone_discover.setVisible(not is_jdnext)
 
         self.btn_vphone_ftue = QPushButton("Skip Finish", self.vphone_details_frame)
         self.btn_vphone_ftue.setStyleSheet(btn_outline_style)
         self.btn_vphone_ftue.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_vphone_ftue.setToolTip("for Just Dance 2022 phone tutorial")
         self.btn_vphone_ftue.clicked.connect(self._on_skip_finish_clicked)
+        self.btn_vphone_ftue.setVisible(not is_jdnext)
 
         self.btn_vphone_log = QPushButton("Record Log", self.vphone_details_frame)
         self.btn_vphone_log.setStyleSheet(btn_outline_style)
@@ -2454,8 +2535,8 @@ class LegacySensorQtGUI(QMainWindow):
         warn_layout.setContentsMargins(14, 12, 14, 12)
         warn_layout.setSpacing(12)
 
-        lbl_warn_icon = QLabel("⚠️", warn_box)
-        lbl_warn_icon.setStyleSheet("font-size: 20px; background: transparent; border: none;")
+        lbl_warn_icon = QLabel("[!]", warn_box)
+        lbl_warn_icon.setStyleSheet("font-family: monospace; font-size: 14px; font-weight: bold; color: #92400E; background: transparent; border: none;")
         warn_layout.addWidget(lbl_warn_icon, alignment=Qt.AlignmentFlag.AlignTop)
 
         lbl_warn_text = QLabel(
@@ -3252,6 +3333,28 @@ class LegacySensorQtGUI(QMainWindow):
         self.vphone.configure(sensitivity=sens)
         self._save_settings()
 
+    def _on_vphone_target_changed(self, idx: int):
+        is_jdnext = (idx == 1)
+        if hasattr(self, "jdnext_code_container"):
+            self.jdnext_code_container.setVisible(is_jdnext)
+        if hasattr(self, "btn_vphone_ftue"):
+            self.btn_vphone_ftue.setVisible(not is_jdnext)
+        if hasattr(self, "btn_vphone_discover"):
+            self.btn_vphone_discover.setVisible(not is_jdnext)
+        if hasattr(self, "btn_vphone_reconnect"):
+            self.btn_vphone_reconnect.setText("Join Room" if is_jdnext else "Reconnect")
+        self._apply_vphone_settings_to_controller()
+        self._save_settings()
+
+    def _on_jdnext_code_changed(self, text: str):
+        clean = text.upper()
+        if clean != text:
+            cursor_pos = self.txt_jdnext_code.cursorPosition()
+            self.txt_jdnext_code.setText(clean)
+            self.txt_jdnext_code.setCursorPosition(cursor_pos)
+        self._apply_vphone_settings_to_controller()
+        self._save_settings()
+
     def _on_vphone_config_changed(self):
         self._apply_vphone_settings_to_controller()
         self._save_settings()
@@ -3265,13 +3368,26 @@ class LegacySensorQtGUI(QMainWindow):
             self.txt_vphone_port.setText("8080")
         hand = "left" if self.cb_vphone_hand.currentIndex() == 1 else "right"
         sens = round(self.slider_vphone_sens.value() / 100.0, 2)
+        target_game = "next" if (hasattr(self, "cb_vphone_target") and self.cb_vphone_target.currentIndex() == 1) else "legacy"
+        jdnext_code = self.txt_jdnext_code.text().strip() if hasattr(self, "txt_jdnext_code") else ""
 
         self.cfg["virtual_phone_host"] = host
         self.cfg["virtual_phone_port"] = port
         self.cfg["virtual_phone_hand"] = hand
         self.cfg["virtual_phone_sensitivity"] = sens
+        self.cfg["virtual_phone_target"] = target_game
+        self.cfg["virtual_phone_jdnext_code"] = jdnext_code
 
-        self.vphone.configure(host=host, port=port, hand=hand, sensitivity=sens)
+        self.vphone.configure(
+            host=host,
+            port=port,
+            hand=hand,
+            sensitivity=sens,
+            target_game=target_game,
+            jdnext_code=jdnext_code,
+            jdnext_token=str(self.cfg.get("virtual_phone_jdnext_token", "")),
+            jdnext_port=int(self.cfg.get("virtual_phone_jdnext_port", 8080)),
+        )
 
     def _on_vphone_reconnect_clicked(self):
         self._apply_vphone_settings_to_controller()
@@ -3418,6 +3534,10 @@ class LegacySensorQtGUI(QMainWindow):
             return
         status = self.vphone.status_text
         self.lbl_vphone_status.setText(f"Status: {status}")
+        if self.vphone.target_game == "next" and self.vphone.jdnext_token:
+            if self.cfg.get("virtual_phone_jdnext_token") != self.vphone.jdnext_token:
+                self.cfg["virtual_phone_jdnext_token"] = self.vphone.jdnext_token
+                self.cfg_mgr.save()
         if self.vphone.connected:
             color = PALETTE["status_ok"]
         elif self.vphone.enabled:
@@ -3495,7 +3615,7 @@ class LegacySensorQtGUI(QMainWindow):
             if hasattr(self, "ds4_info_frame"):
                 self.ds4_info_frame.setVisible(True)
             st = ds4.state
-            charging_str = " ⚡ [Charging]" if st.is_charging else ""
+            charging_str = " [Charging]" if st.is_charging else ""
             conn_type = "Connected on USB" if ds4.is_usb else "Connected via Bluetooth"
             self.lbl_ds4_status.setText(
                 f"Status: {conn_type} ({st.sample_rate_hz:.0f} Hz • Battery: {st.battery_pct}%{charging_str})"
