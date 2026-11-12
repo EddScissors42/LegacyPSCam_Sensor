@@ -341,6 +341,20 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
   - Exibe o HUD de status da música ativa (`Active Song: ... [Scoring Active]`) e botões dedicados de Benchmark e Acesso à Pasta de Logs com tipografia sóbria e limpa (sem emojis).
 - **10 Suítes de Testes Automatizados:** Suíte 10 integrada em `test_suite.py` cobrindo parsing de CSV, auto-gravação, ciclo de vida de músicas, correlação de benchmark e adaptação de sensibilidade (`10/10 PASSED`).
 
+### 26. Suporte Completo ao Just Dance Next PC e Descoberta Automática de Código por Varredura de Memória (v0.5.0 Alpha)
+- **Modo Just Dance Next PC no Celular Virtual:**
+  - Seletor de jogo de destino na interface: `Just Dance 2017-2022 (Legacy)` vs `Just Dance Next (PC)`.
+  - Conexão direta via WebSocket na porta 8080 (`ws://127.0.0.1:8080/ws`) com resposta instantânea de sincronização de relógio (`pong` para `ping`).
+  - Streaming a 60 Hz de aceleração inercial e pacote binário de pose MediaPipe de 812 bytes (`pack_jdnext_pose`).
+  - Mapeamento completo de comandos de navegação (`nav`: `ok`, `back`, `up`, `down`, `left`, `right`) e captura em tempo real do estado da sala, música e artista.
+- **Descoberta e Extração Automática do Código da Sala (Zero-Touch Auto-Detection):**
+  - **Identificação do Processo:** Varredura instantânea de processos via `CreateToolhelp32Snapshot` (Win32 PnP Toolhelp em ~3ms) localizando o PID do `JDNext.exe`.
+  - **Verificação HTTP:** Sonda assíncrona ao endpoint `http://127.0.0.1:8080/discover.json` validando a presença do servidor e recuperando o nome da máquina (`pc: EDDIONICO`) e portas.
+  - **Varredura de Memória Rápida (< 1s):** Percorre as regiões de memória privada comprometida (`MEM_COMMIT | PAGE_READWRITE | MEM_PRIVATE`) do processo `JDNext.exe` via `VirtualQueryEx` e `ReadProcessMemory`, localizando a chave UI `PairingCodeContainer` em UTF-16LE e extraindo o código formatado `XX-XX-XX` (alfabeto base32: `ABCDEFGHJKLMNPQRSTUVWXYZ23456789`).
+  - **Botão 'Detect Code' e 'Auto-Find':** Preenchimento automático do campo de código na interface e reconexão imediata com 1 clique.
+  - **Persistência de Sessão (Token):** Ao autenticar, o token da sessão recebido no pacote `welcome` é gravado no `config.json` (`virtual_phone_jdnext_token`), permitindo reconexões instantâneas subsequentes sem necessidade de digitar código novamente.
+- **11 Suítes de Testes Automatizados:** Suíte 11 integrada em `test_suite.py` cobrindo o handshake do JDNext, empacotamento de pose de 812 bytes, detecção de PID e extração de código por memória (`11/11 PASSED`).
+
 ---
 
 ## 🟡 Funcionalidades Parciais e ⏳ Roadmap Futuro

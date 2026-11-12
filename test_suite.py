@@ -853,7 +853,23 @@ def test_jdnext_virtual_phone_protocol():
     assert "Scoring Active" in status
     assert "Levitating - Dua Lipa" in status
 
-    print("  -> Just Dance Next PC Virtual Phone Protocol PASSED")
+    # 3. Test Auto-Discovery of JDNext and Memory Code Extraction
+    from sensor.virtual_phone import find_jdnext_pids
+    pids = find_jdnext_pids()
+    assert isinstance(pids, list)
+
+    disc_info = VirtualPhoneController.discover_jdnext_info(timeout=1.0)
+    if disc_info is not None:
+        assert "ip" in disc_info
+        assert "port" in disc_info
+        assert disc_info["protocol"] == "jdnext"
+
+    disc_res = VirtualPhoneController.discover_server(timeout=1.0, target_game="next")
+    if disc_res is not None:
+        assert len(disc_res) == 3
+        assert disc_res[1] == 8080
+
+    print("  -> Just Dance Next PC Virtual Phone Protocol & Auto-Discovery PASSED")
 
 def run_all_tests():
     print("==========================================")

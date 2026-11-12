@@ -905,6 +905,7 @@ class LegacySensorQtGUI(QMainWindow):
             jdnext_port=int(self.cfg.get("virtual_phone_jdnext_port", 8080)),
             jdnext_mode=str(self.cfg.get("virtual_phone_mode", "accel")),
         )
+        self.vphone.on_token_received = self._on_vphone_token_received
         if self.cfg.get("virtual_phone_enabled", False):
             self.vphone.set_enabled(True)
 
@@ -2171,8 +2172,35 @@ class LegacySensorQtGUI(QMainWindow):
         """)
         self.txt_jdnext_code.textChanged.connect(self._on_jdnext_code_changed)
 
+        self.btn_jdnext_detect = QPushButton("Detect Code", self.jdnext_code_container)
+        self.btn_jdnext_detect.setStyleSheet(f"""
+            QPushButton {{
+                background-color: #FFFFFF;
+                color: {PALETTE["text_main"]};
+                font-family: '{self.font_heading}', sans-serif;
+                font-size: 11px;
+                font-weight: bold;
+                border: 1px solid {PALETTE["tab_gray_border"]};
+                border-radius: 6px;
+                padding: 5px 12px;
+            }}
+            QPushButton:hover {{
+                background-color: {PALETTE["tab_gray_hover"]};
+                border-color: {PALETTE["ps_blue"]};
+                color: {PALETTE["ps_blue"]};
+            }}
+            QPushButton:disabled {{
+                background-color: #F8FAFC;
+                color: {PALETTE["text_muted"]};
+            }}
+        """)
+        self.btn_jdnext_detect.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_jdnext_detect.setToolTip("Auto-detects room pairing code from running Just Dance Next PC game")
+        self.btn_jdnext_detect.clicked.connect(self._on_vphone_discover_clicked)
+
         jd_code_layout.addWidget(lbl_code)
         jd_code_layout.addWidget(self.txt_jdnext_code)
+        jd_code_layout.addWidget(self.btn_jdnext_detect)
         jd_code_layout.addStretch()
         vp_det_layout.addWidget(self.jdnext_code_container)
         self.jdnext_code_container.setVisible(is_jdnext)
@@ -2218,7 +2246,7 @@ class LegacySensorQtGUI(QMainWindow):
         self.btn_vphone_discover.setStyleSheet(btn_outline_style)
         self.btn_vphone_discover.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_vphone_discover.clicked.connect(self._on_vphone_discover_clicked)
-        self.btn_vphone_discover.setVisible(not is_jdnext)
+        self.btn_vphone_discover.setVisible(True)
 
         self.btn_vphone_ftue = QPushButton("Skip Finish", self.vphone_details_frame)
         self.btn_vphone_ftue.setStyleSheet(btn_outline_style)
@@ -3340,7 +3368,7 @@ class LegacySensorQtGUI(QMainWindow):
         if hasattr(self, "btn_vphone_ftue"):
             self.btn_vphone_ftue.setVisible(not is_jdnext)
         if hasattr(self, "btn_vphone_discover"):
-            self.btn_vphone_discover.setVisible(not is_jdnext)
+            self.btn_vphone_discover.setVisible(True)
         if hasattr(self, "btn_vphone_reconnect"):
             self.btn_vphone_reconnect.setText("Join Room" if is_jdnext else "Reconnect")
         self._apply_vphone_settings_to_controller()
@@ -3399,47 +3427,120 @@ class LegacySensorQtGUI(QMainWindow):
         self._update_vphone_ui_readout()
 
     def _on_vphone_discover_clicked(self):
-        self.btn_vphone_discover.setEnabled(False)
-        self.btn_vphone_discover.setText("Searching...")
+        if hasattr(self, "btn_vphone_discover"):
+            self.btn_vphone_discover.setEnabled(False)
+            self.btn_vphone_discover.setText("Searching...")
+        if hasattr(self, "btn_jdnext_detect"):
+            self.btn_jdnext_detect.setEnabled(False)
+            self.btn_jdnext_detect.setText("Searching...")
+
+        is_next = (getattr(self.vphone, "target_game", "legacy") == "next")
 
         def _discover_worker():
-            res = self.vphone.discover_server(timeout=1.2)
+            if is_next:
+                host_val = self.txt_vphone_host.text().strip() or "127.0.0.1"
+                try:
+                    port_val = int(self.txt_vphone_port.text().strip() or "8080")
+                except ValueError:
+                    port_val = 8080
+                res_dict = self.vphone.discover_jdnext_info(host=host_val, port=port_val, timeout=1.5)
+                ip = res_dict.get("ip", "") if res_dict else ""
+                port = res_dict.get("port", 8080) if res_dict else 0
+                code = res_dict.get("pairing_code", "") if res_dict else ""
+                pc_name = res_dict.get("pc", "") if res_dict else ""
+            else:
+                res = self.vphone.discover_server(timeout=1.2)
+                ip = res[0] if res else ""
+                port = res[1] if res else 0
+                code = res[2] if res else ""
+                pc_name = ""
+
             QtCore.QMetaObject.invokeMethod(
                 self,
                 "_on_vphone_discover_finished",
                 Qt.ConnectionType.QueuedConnection,
-                QtCore.Q_ARG(str, res[0] if res else ""),
-                QtCore.Q_ARG(int, res[1] if res else 0),
-                QtCore.Q_ARG(str, res[2] if res else ""),
+                QtCore.Q_ARG(str, ip),
+                QtCore.Q_ARG(int, port),
+                QtCore.Q_ARG(str, code),
+                QtCore.Q_ARG(str, pc_name),
             )
 
         threading.Thread(target=_discover_worker, daemon=True).start()
 
-    @Slot(str, int, str)
-    def _on_vphone_discover_finished(self, ip: str, port: int, code: str):
-        self.btn_vphone_discover.setEnabled(True)
-        self.btn_vphone_discover.setText("Auto-Find")
-        if ip:
-            self.txt_vphone_host.setText(ip)
-            if port > 0:
-                self.txt_vphone_port.setText(str(port))
-            self._apply_vphone_settings_to_controller()
-            self._save_settings()
-            if self.vphone.enabled:
-                self.vphone.request_reconnect()
-            info_code = f" (Pairing Code: {code})" if code else ""
-            QMessageBox.information(
-                self,
-                "Just Dance Server Found",
-                f"Game detected at {ip}:{port}{info_code}!"
-            )
+    @Slot(str, int, str, str)
+    def _on_vphone_discover_finished(self, ip: str, port: int, code: str, pc_name: str = ""):
+        if hasattr(self, "btn_vphone_discover"):
+            self.btn_vphone_discover.setEnabled(True)
+            self.btn_vphone_discover.setText("Auto-Find")
+        if hasattr(self, "btn_jdnext_detect"):
+            self.btn_jdnext_detect.setEnabled(True)
+            self.btn_jdnext_detect.setText("Detect Code")
+
+        is_next = (getattr(self.vphone, "target_game", "legacy") == "next")
+        if is_next:
+            if code:
+                if hasattr(self, "txt_jdnext_code"):
+                    self.txt_jdnext_code.setText(code)
+                if ip:
+                    self.txt_vphone_host.setText(ip)
+                if port > 0:
+                    self.txt_vphone_port.setText(str(port))
+                self._apply_vphone_settings_to_controller()
+                self._save_settings()
+                if self.vphone.enabled:
+                    self.vphone.request_reconnect()
+                QMessageBox.information(
+                    self,
+                    "Just Dance Next Found",
+                    f"Just Dance Next detected!\nRoom Code: {code}\nPC: {pc_name or 'Local PC'}",
+                )
+            elif ip:
+                if ip:
+                    self.txt_vphone_host.setText(ip)
+                if port > 0:
+                    self.txt_vphone_port.setText(str(port))
+                self._apply_vphone_settings_to_controller()
+                self._save_settings()
+                QMessageBox.information(
+                    self,
+                    "Just Dance Next Detected",
+                    f"Just Dance Next is running on {ip}:{port} (PC: {pc_name or 'Local PC'}).\n\n"
+                    "Room code was not found in memory yet. Please ensure the room/pairing screen is open in the game and try again.",
+                )
+            else:
+                QMessageBox.information(
+                    self,
+                    "Just Dance Next Not Found",
+                    "Just Dance Next was not detected running on localhost (port 8080).\n"
+                    "Please start Just Dance Next and try again.",
+                )
         else:
-            QMessageBox.information(
-                self,
-                "UDP Auto-Discovery",
-                "No UDP response on port 6000/7000.\n"
-                "If the game is running on the same PC, port 8080 works directly."
-            )
+            if ip:
+                self.txt_vphone_host.setText(ip)
+                if port > 0:
+                    self.txt_vphone_port.setText(str(port))
+                self._apply_vphone_settings_to_controller()
+                self._save_settings()
+                if self.vphone.enabled:
+                    self.vphone.request_reconnect()
+                info_code = f" (Pairing Code: {code})" if code else ""
+                QMessageBox.information(
+                    self,
+                    "Just Dance Server Found",
+                    f"Game detected at {ip}:{port}{info_code}!",
+                )
+            else:
+                QMessageBox.information(
+                    self,
+                    "UDP Auto-Discovery",
+                    "No UDP response on port 6000/7000.\n"
+                    "If the game is running on the same PC, port 8080 works directly.",
+                )
+
+    def _on_vphone_token_received(self, token: str):
+        if token and token != self.cfg.get("virtual_phone_jdnext_token"):
+            self.cfg["virtual_phone_jdnext_token"] = token
+            self._save_settings()
 
     def _on_skip_finish_clicked(self):
         """Sends the FTUE_FINISH shortcut packet for Just Dance 2022 phone tutorial."""
