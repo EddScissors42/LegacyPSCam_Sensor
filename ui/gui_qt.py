@@ -499,7 +499,7 @@ class TelemetryBenchmarkDialog(QDialog):
 
     applied_sensitivity = Signal(float)
 
-    def __init__(self, parent=None, logs_dir: Optional[str] = None, current_sens: float = 1.2):
+    def __init__(self, parent=None, logs_dir: Optional[str] = None, current_sens: float = 1.0):
         super().__init__(parent)
         self.setWindowTitle("Telemetry Benchmark & Calibration Comparator")
         self.resize(780, 580)
@@ -895,7 +895,7 @@ class LegacySensorQtGUI(QMainWindow):
             host=str(self.cfg.get("virtual_phone_host", "127.0.0.1")),
             port=int(self.cfg.get("virtual_phone_port", 8080)),
             hand=str(self.cfg.get("virtual_phone_hand", "right")),
-            sensitivity=float(self.cfg.get("virtual_phone_sensitivity", 1.2)),
+            sensitivity=float(self.cfg.get("virtual_phone_sensitivity", 1.0)),
             phone_name=str(self.cfg.get("virtual_phone_name", "Legacy PSCam Phone")),
             auto_record=bool(self.cfg.get("benchmark_auto_record", self.cfg.get("virtual_phone_auto_record", False))),
             adaptive=bool(self.cfg.get("virtual_phone_adaptive", False)),
@@ -2199,24 +2199,7 @@ class LegacySensorQtGUI(QMainWindow):
         hand_box.addWidget(lbl_hand)
         hand_box.addWidget(self.cb_vphone_hand)
 
-        # Sensitivity block
-        sens_box = QVBoxLayout()
-        sens_box.setSpacing(4)
-        sens_val = float(self.cfg.get("virtual_phone_sensitivity", 1.2))
-        self.lbl_vphone_sens = QLabel(f"SENSITIVITY: {sens_val:.2f}x (DEFAULT: 1.20x)", self.vphone_details_frame)
-        self.lbl_vphone_sens.setStyleSheet(
-            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['text_main']}; background: transparent; border: none;"
-        )
-
-        self.slider_vphone_sens = QSlider(Qt.Orientation.Horizontal, self.vphone_details_frame)
-        self.slider_vphone_sens.setRange(40, 250)
-        self.slider_vphone_sens.setValue(int(round(sens_val * 100)))
-        self.slider_vphone_sens.valueChanged.connect(self._on_vphone_sens_changed)
-        sens_box.addWidget(self.lbl_vphone_sens)
-        sens_box.addWidget(self.slider_vphone_sens)
-
-        settings_row.addLayout(hand_box, stretch=0)
-        settings_row.addLayout(sens_box, stretch=1)
+        settings_row.addLayout(hand_box, stretch=1)
         vp_det_layout.addLayout(settings_row)
 
         vp_layout.addWidget(self.vphone_details_frame)
@@ -3254,7 +3237,6 @@ class LegacySensorQtGUI(QMainWindow):
 
     def _on_vphone_sens_changed(self, val: int):
         sens = round(val / 100.0, 2)
-        self.lbl_vphone_sens.setText(f"SENSITIVITY: {sens:.2f}x (DEFAULT: 1.20x)")
         self.cfg["virtual_phone_sensitivity"] = sens
         self.vphone.configure(sensitivity=sens)
         self._save_settings()
@@ -3271,7 +3253,7 @@ class LegacySensorQtGUI(QMainWindow):
             port = 8080
             self.txt_vphone_port.setText("8080")
         hand = "left" if self.cb_vphone_hand.currentIndex() == 1 else "right"
-        sens = round(self.slider_vphone_sens.value() / 100.0, 2)
+        sens = float(self.cfg.get("virtual_phone_sensitivity", 1.0))
 
         self.cfg["virtual_phone_host"] = host
         self.cfg["virtual_phone_port"] = port
@@ -3427,7 +3409,6 @@ class LegacySensorQtGUI(QMainWindow):
 
     def _on_benchmark_sensitivity_applied(self, new_sens: float):
         sens_val = round(float(new_sens), 2)
-        self.slider_vphone_sens.setValue(int(round(sens_val * 100)))
         self.vphone.configure(sensitivity=sens_val)
         self.cfg["virtual_phone_sensitivity"] = sens_val
         self.cfg_mgr.save()

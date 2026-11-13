@@ -601,6 +601,9 @@ def test_project_structure():
         j_frame2[11] = (0.65, 0.75, 1.75, 0.95)
         acc2 = ha.update(j_frame2, True, now=1.016)
         assert abs(acc2[0]) > 0.5 or abs(acc2[1]) > 0.5, f"Expected dynamic G-force spike on fast hand whip, got {acc2}"
+        acc2_mag = math.sqrt(acc2[0]**2 + acc2[1]**2 + acc2[2]**2)
+        assert acc2_mag <= 7.0001, f"Expected vector magnitude clamped to MAX_G (7.0), got {acc2_mag}"
+        assert not hasattr(win, "slider_vphone_sens"), "Sensitivity slider must be removed from GUI per user specifications"
 
         score_pkt = json.loads(VirtualPhoneController.build_scoring_packet([acc2]))
         assert "root" in score_pkt and score_pkt["root"]["__class"] == "JD_PhoneScoringData"

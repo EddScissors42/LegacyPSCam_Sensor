@@ -62,33 +62,37 @@ class HandAccelerometer:
     """
     Converts 3D Kinect joint positions of the dancer's hand/forearm into
     simulated 3-axis smartphone accelerometer readings [ax, ay, az] in G-units
-    (where 1.0 G = 9.81 m/s², clamped to [-8.0, 8.0] G).
+    (where 1.0 G = 9.81 m/s², clamped to [-7.0, 7.0] G vector magnitude matching
+    physical DualShock 4 / smartphone IMU hardware).
 
     Features:
-      1. Dynamic Adaptive EMA filter:
-         - Fast gestures / snappy moves (> 0.85 m/s): alpha = 0.95 (zero lag, true peak G-force for "Perfect" score).
-         - Rest / stationary (< 0.20 m/s): alpha = 0.45 (solid anti-jitter, stable gravity orientation).
-      2. Centripetal / Rotational Acceleration (arm arc & windmill sweeps):
+      1. Pre-derivative Velocity Smoothing:
+         Exponential filter on 3D velocity suppresses second-derivative noise spikes.
+      2. Dynamic Adaptive EMA filter:
+         - Fast gestures / snappy moves (>= 0.85 m/s): alpha = 0.72 (crisp response without jitter).
+         - Rest / stationary (<= 0.20 m/s): alpha = 0.35 (solid anti-jitter, stable gravity baseline).
+      3. Centripetal / Rotational Acceleration (arm arc & windmill sweeps):
          Simulates outward centrifugal force (v_tang^2 / L) along the forearm axis.
-      3. Physical Linear G-Force scaling:
-         Calibrated to hit 3.5G - 5.5G peaks on fast rhythmic moves matching Just Dance's HighThreshold.
-      4. Hand-grip positioning:
-         Directly tracks the hand anchor where the smartphone is gripped.
+      4. Calibrated Physical G-Force scaling:
+         Calibrated against DualShock 4 dance telemetry (Smalltown Boy) to match ~4.2G P95 and 7.0G peak.
+      5. Screen-relative coordinate mapping:
+         Maps Kinect depth to Phone Z (+Z faces user/screen, matching smartphone conventions).
     """
 
-    MAX_G: float = 8.0
+    MAX_G: float = 7.0
     GRAVITY_MPS2: float = 9.81
 
-    def __init__(self, hand: str = "right", sensitivity: float = 1.2) -> None:
+    def __init__(self, hand: str = "right", sensitivity: float = 1.0) -> None:
         self.hand = hand.lower() if hand.lower() in ("left", "right") else "right"
         self.sensitivity = max(0.2, min(4.0, float(sensitivity)))
 
         self._prev_pos: Optional[Tuple[float, float, float]] = None
-        self._prev_vel: Tuple[float, float, float] = (0.0, 0.0, 0.0)
+        self._smoothed_vel: List[float] = [0.0, 0.0, 0.0]
+        self._prev_smoothed_vel: List[float] = [0.0, 0.0, 0.0]
         self._prev_time: Optional[float] = None
-        self._smoothed_accel: Tuple[float, float, float] = (0.0, -1.0, 0.0)
+        self._smoothed_accel: Tuple[float, float, float] = (0.08, 0.38, 0.75)
         self._latest_speed: float = 0.0
-        self._latest_alpha: float = 0.45
+        self._latest_alpha: float = 0.35
 
     @property
     def latest_speed(self) -> float:
@@ -101,11 +105,12 @@ class HandAccelerometer:
     def reset(self) -> None:
         """Resets velocity/position history."""
         self._prev_pos = None
-        self._prev_vel = (0.0, 0.0, 0.0)
+        self._smoothed_vel = [0.0, 0.0, 0.0]
+        self._prev_smoothed_vel = [0.0, 0.0, 0.0]
         self._prev_time = None
-        self._smoothed_accel = (0.0, -1.0, 0.0)
+        self._smoothed_accel = (0.08, 0.38, 0.75)
         self._latest_speed = 0.0
-        self._latest_alpha = 0.45
+        self._latest_alpha = 0.35
 
     def update(
         self,
@@ -116,10 +121,11 @@ class HandAccelerometer:
         """
         Computes [ax, ay, az] in G-units from the 20 Kinect joints.
         Combines:
-          1. Dynamic linear acceleration (second derivative of hand position).
+          1. Dynamic linear acceleration (smoothed derivative of hand velocity).
           2. Centripetal / centrifugal acceleration along forearm axis during swings/rotations.
           3. Forearm orientation gravity projection (1G downward reaction force).
-          4. Adaptive EMA filter matching dance velocity (alpha = 0.45 rest -> 0.95 fast move).
+          4. Adaptive EMA filter matching dance velocity (alpha = 0.35 rest -> 0.72 fast move).
+          5. 3D Euclidean magnitude clamping to MAX_G (7.0G).
         """
         if now is None:
             now = time.perf_counter()
@@ -157,13 +163,13 @@ class HandAccelerometer:
         if flen > 1e-4:
             ux, uy, uz = fx / flen, fy / flen, fz / flen
         else:
-            ux, uy, uz = 0.0, -1.0, 0.0
+            ux, uy, uz = 0.08, 0.38, -0.75
 
         # Project 1G static gravity onto phone local axes based on forearm orientation
-        # When hand is relaxed down (uy ~ -1), ay ~ -0.98G; raised up (uy ~ +1), ay ~ +0.98G
+        # In phone conventions: +Y points along arm to fingertips, +Z faces user (-Kinect Z)
         grav_x = ux * 0.98
         grav_y = uy * 0.98
-        grav_z = uz * 0.98
+        grav_z = (-uz) * 0.98
 
         # 2. Dynamic linear acceleration and centripetal force
         lin_gx, lin_gy, lin_gz = 0.0, 0.0, 0.0
@@ -173,39 +179,49 @@ class HandAccelerometer:
         if self._prev_pos is not None and self._prev_time is not None:
             dt = now - self._prev_time
             if 0.004 <= dt <= 0.25:
-                vx = (hx - self._prev_pos[0]) / dt
-                vy = (hy - self._prev_pos[1]) / dt
-                vz = (hz - self._prev_pos[2]) / dt
-                speed = math.sqrt(vx * vx + vy * vy + vz * vz)
+                raw_vx = (hx - self._prev_pos[0]) / dt
+                raw_vy = (hy - self._prev_pos[1]) / dt
+                raw_vz = (hz - self._prev_pos[2]) / dt
 
-                # Linear acceleration (m/s²)
-                ax_mps2 = (vx - self._prev_vel[0]) / dt
-                ay_mps2 = (vy - self._prev_vel[1]) / dt
-                az_mps2 = (vz - self._prev_vel[2]) / dt
+                # Velocity low-pass filter (tau = 45ms) to suppress second-derivative noise spikes
+                tau_v = 0.045
+                v_alpha = max(0.15, min(0.85, 1.0 - math.exp(-dt / tau_v)))
+                sm_vx = v_alpha * raw_vx + (1.0 - v_alpha) * self._smoothed_vel[0]
+                sm_vy = v_alpha * raw_vy + (1.0 - v_alpha) * self._smoothed_vel[1]
+                sm_vz = v_alpha * raw_vz + (1.0 - v_alpha) * self._smoothed_vel[2]
 
-                # Physical G-force scaling (sens=1.2 gives ~3.5G-5.5G on fast dance moves)
-                lin_scale = (self.sensitivity * 0.85) / self.GRAVITY_MPS2
+                # Acceleration derived from smoothed velocity
+                ax_mps2 = (sm_vx - self._prev_smoothed_vel[0]) / dt
+                ay_mps2 = (sm_vy - self._prev_smoothed_vel[1]) / dt
+                az_mps2 = (sm_vz - self._prev_smoothed_vel[2]) / dt
+
+                speed = math.sqrt(sm_vx * sm_vx + sm_vy * sm_vy + sm_vz * sm_vz)
+
+                # Physical G-force scaling calibrated against physical DS4 controller telemetry
+                lin_scale = (self.sensitivity * 0.48) / self.GRAVITY_MPS2
                 lin_gx = ax_mps2 * lin_scale
                 lin_gy = ay_mps2 * lin_scale
-                lin_gz = az_mps2 * lin_scale
+                lin_gz = -az_mps2 * lin_scale
 
                 # Centrifugal component (rotational arm swings, windmills, sweeps)
-                # Adds radial outward acceleration along forearm vector: a_c = v_tang^2 / L
-                v_rad = vx * ux + vy * uy + vz * uz
-                v_tang_x = vx - v_rad * ux
-                v_tang_y = vy - v_rad * uy
-                v_tang_z = vz - v_rad * uz
+                # Outward radial acceleration along forearm vector: a_c = v_tang^2 / L
+                v_rad = sm_vx * ux + sm_vy * uy + sm_vz * uz
+                v_tang_x = sm_vx - v_rad * ux
+                v_tang_y = sm_vy - v_rad * uy
+                v_tang_z = sm_vz - v_rad * uz
                 v_tang_sq = v_tang_x * v_tang_x + v_tang_y * v_tang_y + v_tang_z * v_tang_z
 
-                cent_mps2 = v_tang_sq / max(0.20, flen)
-                cent_scale = (self.sensitivity * 0.65) / self.GRAVITY_MPS2
+                cent_mps2 = v_tang_sq / max(0.25, flen)
+                cent_scale = (self.sensitivity * 0.16) / self.GRAVITY_MPS2
                 cent_gx = ux * cent_mps2 * cent_scale
                 cent_gy = uy * cent_mps2 * cent_scale
-                cent_gz = uz * cent_mps2 * cent_scale
+                cent_gz = (-uz) * cent_mps2 * cent_scale
 
-                self._prev_vel = (vx, vy, vz)
+                self._prev_smoothed_vel = [sm_vx, sm_vy, sm_vz]
+                self._smoothed_vel = [sm_vx, sm_vy, sm_vz]
             elif dt > 0.25:
-                self._prev_vel = (0.0, 0.0, 0.0)
+                self._smoothed_vel = [0.0, 0.0, 0.0]
+                self._prev_smoothed_vel = [0.0, 0.0, 0.0]
 
         self._prev_pos = (hx, hy, hz)
         self._prev_time = now
@@ -215,26 +231,34 @@ class HandAccelerometer:
         raw_gy = grav_y + lin_gy + cent_gy
         raw_gz = grav_z + lin_gz + cent_gz
 
-        # Clamp to [-MAX_G, +MAX_G]
-        clamped_x = max(-self.MAX_G, min(self.MAX_G, raw_gx))
-        clamped_y = max(-self.MAX_G, min(self.MAX_G, raw_gy))
-        clamped_z = max(-self.MAX_G, min(self.MAX_G, raw_gz))
-
         # Dynamic Adaptive EMA filter:
-        # Fast dance beats (speed >= 0.85 m/s): alpha = 0.95 (virtually zero lag, crisp peak)
-        # Slow / resting (speed <= 0.20 m/s): alpha = 0.45 (smooth anti-jitter)
+        # Fast dance beats (speed >= 0.85 m/s): alpha = 0.72 (crisp, zero excessive noise)
+        # Slow / resting (speed <= 0.20 m/s): alpha = 0.35 (solid anti-jitter, stable gravity baseline)
         if speed >= 0.85:
-            alpha = 0.95
+            alpha = 0.72
         elif speed <= 0.20:
-            alpha = 0.45
+            alpha = 0.35
         else:
             ratio = (speed - 0.20) / (0.85 - 0.20)
-            alpha = 0.45 + ratio * (0.95 - 0.45)
+            alpha = 0.35 + ratio * (0.72 - 0.35)
         self._latest_alpha = alpha
 
-        sx = alpha * clamped_x + (1.0 - alpha) * self._smoothed_accel[0]
-        sy = alpha * clamped_y + (1.0 - alpha) * self._smoothed_accel[1]
-        sz = alpha * clamped_z + (1.0 - alpha) * self._smoothed_accel[2]
+        sx = alpha * raw_gx + (1.0 - alpha) * self._smoothed_accel[0]
+        sy = alpha * raw_gy + (1.0 - alpha) * self._smoothed_accel[1]
+        sz = alpha * raw_gz + (1.0 - alpha) * self._smoothed_accel[2]
+
+        # Clamp 3D vector magnitude to MAX_G (7.0G) to prevent diagonal component overshoot
+        vmag = math.sqrt(sx * sx + sy * sy + sz * sz)
+        if vmag > self.MAX_G:
+            scale = self.MAX_G / vmag
+            sx *= scale
+            sy *= scale
+            sz *= scale
+
+        # Component clamp safeguard
+        sx = max(-self.MAX_G, min(self.MAX_G, sx))
+        sy = max(-self.MAX_G, min(self.MAX_G, sy))
+        sz = max(-self.MAX_G, min(self.MAX_G, sz))
 
         self._smoothed_accel = (round(sx, 4), round(sy, 4), round(sz, 4))
         return self._smoothed_accel
@@ -578,7 +602,7 @@ class AdaptiveCalibrationTuner:
         self,
         rating: str,
         current_speed: float = 0.0,
-        current_accel: Tuple[float, float, float] = (0.0, -1.0, 0.0),
+        current_accel: Tuple[float, float, float] = (0.08, 0.38, 0.75),
     ) -> float:
         rating_up = rating.strip().upper()
         if rating_up not in self.counts:
@@ -804,7 +828,7 @@ class VirtualPhoneController:
         # Dynamic command overrides supplied by JD_InputCollectionPhoneData
         self._available_inputs: Dict[str, str] = {}
 
-        self._latest_accel: Tuple[float, float, float] = (0.0, -1.0, 0.0)
+        self._latest_accel: Tuple[float, float, float] = (0.08, 0.38, 0.75)
         self._last_joint_update_ts: float = 0.0
         self._shake_until_ts: float = 0.0
         self._ftue_until_ts: float = 0.0
@@ -1426,19 +1450,19 @@ class VirtualPhoneController:
     def _compute_current_sample(self, now: float) -> Tuple[float, float, float]:
         """Returns the current accelerometer sample (from test shake, live camera, or idle gravity)."""
         if now < self._shake_until_ts:
-            # Generate a strong sinusoidal dance swing across X/Y/Z
+            # Generate a strong sinusoidal dance swing across X/Y/Z centered on resting posture
             phase = now * 28.0
-            sx = round(math.sin(phase) * 3.8, 4)
-            sy = round(math.cos(phase * 1.3) * 3.5 - 0.8, 4)
-            sz = round(math.sin(phase * 0.7) * 2.5, 4)
+            sx = round(math.sin(phase) * 2.8 + 0.08, 4)
+            sy = round(math.cos(phase * 1.3) * 2.5 + 0.38, 4)
+            sz = round(math.sin(phase * 0.7) * 2.0 + 0.75, 4)
             self._latest_accel = (sx, sy, sz)
             return self._latest_accel
 
         if (now - self._last_joint_update_ts) <= 0.25:
             return self._latest_accel
 
-        # Idle phone resting upright/tilted in hand
-        self._latest_accel = (0.0, -1.0, 0.0)
+        # Idle phone resting upright/tilted in hand (matching DS4 resting IMU baseline)
+        self._latest_accel = (0.08, 0.38, 0.75)
         return self._latest_accel
 
     def _format_connected_status(self) -> str:

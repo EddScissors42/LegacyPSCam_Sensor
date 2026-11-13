@@ -120,7 +120,7 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
         host=str(config.get("virtual_phone_host", "127.0.0.1")),
         port=int(config.get("virtual_phone_port", 8080)),
         hand=str(config.get("virtual_phone_hand", "right")),
-        sensitivity=float(config.get("virtual_phone_sensitivity", 1.2)),
+        sensitivity=float(config.get("virtual_phone_sensitivity", 1.0)),
         phone_name=str(config.get("virtual_phone_name", "Legacy PSCam Phone")),
         auto_record=bool(config.get("benchmark_auto_record", config.get("virtual_phone_auto_record", False))),
         adaptive=bool(config.get("virtual_phone_adaptive", False)),

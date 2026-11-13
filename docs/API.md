@@ -322,5 +322,9 @@ O módulo `sensor.virtual_phone` gerencia a comunicação com o Just Dance atrav
 - `detect_active_song_from_game_process() -> str`: Varre a memória virtual do processo Just Dance localizando a stream ativa `/map/<MapName>/...webm` (latência ~2.8ms). Converte o identificador do mapa (ex: `SmalltownBoy`) no título formatado da música (`Smalltown Boy`).
 - `VirtualPhoneController.current_song`: Propriedade que retorna o nome da música ativa, executando a busca em memória sob demanda caso o pacote WebSocket `setupData` não contenha o campo `mapName`.
 
-
-
+### `sensor.virtual_phone.HandAccelerometer`
+- `HandAccelerometer(hand="right", sensitivity=1.0)`: Converte as 20 articulacoes do Kinect em aceleracao 3D [ax, ay, az] compativel com o protocolo de pontuacao de smartphone do Just Dance.
+  - **Filtro de Velocidade Pre-Derivada:** Filtro exponencial com tau = 45ms para supressao de ruido de segunda ordem.
+  - **Escala de Forca G Calibrada:** Ganho calibrado contra ground truth de controle fisico DualShock 4 (Smalltown Boy).
+  - **Teto Vetorial 3D:** Clamping de magnitude Euclidiana a 7.0G maximo.
+  - **Convencao de Eixos:** Screen-relative (+Y ao longo do antebraco, +Z em direcao ao dancarino).

@@ -30,6 +30,7 @@ Thumbs.db
 
 # Temporary logs & memory dumps
 *.log
+logs/
 scratch/
 dump_*.py
 test_*.py

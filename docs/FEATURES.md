@@ -240,20 +240,24 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
     - Executa a máquina de estados oficial de 5 etapas (`JD_PhoneDataCmdHandshakeHello` -> `JD_PhoneDataCmdHandshakeContinue` -> `JD_PhoneDataCmdSync` -> `JD_PhoneDataCmdSyncStart` -> `JD_PhoneDataCmdSyncEnd`), sincronizando o perfil do dançarino (`JD_ProfilePhoneUiData`) e identificando o dançarino como Jogador 1.
     - **Verificação Constante e Resiliência a Janela sem Foco (AFK):** Mantém a verificação ativa a cada 1s com auto-descoberta UDP (`6000`/`7000`) e preserva o socket aberto pacientemente mesmo quando a janela do Just Dance está sem foco (loop principal pausado), completando o pareamento no exato instante em que o jogador foca na janela do jogo.
     - Suporte dinâmico a `JD_ProfilePhoneUiData` (exibindo o nome do perfil do jogador conectado) e `JD_InputCollectionPhoneData` (`availableInput` com booleanos `touchOn: true/false`).
-  - **Motor Físico `HandAccelerometer` Refinado (Cinemática Rotacional + EMA Adaptativo):**
-    - **Filtro EMA Dinâmico com Latência Zero em Picos:** Em repouso ou movimentos lentos ($\le 0,20\text{ m/s}$), aplica $\alpha = 0,45$ para anular tremores e garantir orientação gravitacional estável; em passos rápidos e gestos intensos ($\ge 0,85\text{ m/s}$), eleva $\alpha$ instantaneamente para **$0,95$**, eliminando o atraso de 60 ms e preservando a precisão no tempo da batida musical.
-    - **Aceleração Centrífuga / Rotacional ($\vec{a}_c = v_{\text{tang}}^2 / L$):** Simula a força centrífuga radial ao longo do antebraço durante giros e movimentos em arco (ex: estilo "Windmill" e sweeps de *Smalltown Boy*), gerando os vetores de força G esperados pelo classificador do jogo.
-    - **Escalação Física Real de Força G:** Escalonamento calibrado para atingir picos de $3,5\text{G}$ a $5,5\text{G}$ em golpes velozes, cruzando o `HighThreshold` do Just Dance para registrar **"Perfect"** e **"Super"**.
+  - **Motor Fisico `HandAccelerometer` Calibrado via Telemetria Real (Ground Truth DS4):**
+    - **Filtragem de Velocidade Pre-Derivada (Anti-Ruido de Segunda Ordem):** Aplica filtro exponencial de primeira ordem na velocidade 3D (tau = 45 ms) antes da derivacao da aceleracao linear, suprimindo picos de ruido numerico inerentes ao rastreamento optico.
+    - **Filtro EMA Dinamico Balanceado:** Em repouso ou movimentos lentos (<= 0.20 m/s), opera com alpha = 0.35 para anular tremores e manter orientacao estavel; em passos rapidos (>= 0.85 m/s), eleva alpha para 0.72, capturando o tempo exato das batidas sem amplificar ruidos.
+    - **Aceleracao Centrifuga / Rotacional:** Simula a forca centrifuga radial ao longo do antebraco durante giros e sweeps.
+    - **Escalamento Fisico Calibrado (DS4 Ground Truth):** Calibrado diretamente contra a telemetria do DualShock 4 durante sessao real de danca na musica Smalltown Boy, alinhando o P95 em ~4.0G a 4.3G e a mediana em ~1.15G.
+    - **Convencao de Eixos do Smartphone (Screen-Relative):** Mapeia a profundidade do Kinect para o eixo Z do smartphone (+Z apontado para o dancarino), corrigindo a orientacao da gravidade de repouso para (0.08, 0.38, 0.75) G.
+    - **Limitacao de Magnitude Vetorial 3D (Teto Fisico de 7.0G):** O vetor resultante e limitado a 7.0 G, reproduzindo com precisao o teto maximo registrado pelo controle fisico (6.93 G) e impedindo saturacoes diagonais irreais.
   - **Gravador de Telemetria CSV Embutido (`Record Log`):**
-    - Permite gravar em tempo real os dados de acelerômetro 3D, velocidade da mão, $\alpha$ do filtro e coordenadas em `logs/vphone_accel_<timestamp>.csv` para análise diagnóstica e comparação direta com logs de celulares reais.
-  - **Interface Unificada e Padronizada em Inglês (Design Consistente com Calibração):**
-    - Chave geral **ON / OFF** com recolhimento dinâmico: quando desativado, toda a seção de acelerômetro e controles fica oculta para manter a interface limpa e direta.
-    - Indicador de status em tempo real e leitura ao vivo do acelerômetro 3D em linha dedicada abaixo do status.
-    - **Visibilidade Condicional do 3D Acelerômetro:** O mostrador de acelerômetro 3D só é renderizado e visível durante o rastreamento ativo (`START TRACKING`), ficando oculto quando inativo para manter o layout limpo.
-    - IP e Porta ocultos da visão para evitar poluição visual (mantendo valores padrão `127.0.0.1:8080` de forma transparente).
-    - Botões com contorno elegante (`border: 1px solid #CBD5E1`) para **Reconnect**, **Auto-Find**, **Skip Finish** e **Record Log**.
-    - Atualização do cabeçalho da sidebar para `"ooomaga :O"` e dica de DLL clarificada para `"Copy Kinect10.dll to the game folder (only for Legacy Offline PC)"`.
-    - Tipografia de alto contraste com cores escuras explícitas (`#0F172A`) para "TRACKED HAND" e "SENSITIVITY", eliminando problemas de texto branco/invisível em temas escuros do Windows e seguindo rigorosamente o padrão visual da aba de Calibração.
+    - Permite gravar em tempo real os dados de acelerometro 3D, velocidade da mao, alpha do filtro e coordenadas em `logs/vphone_accel_<timestamp>.csv` para analise diagnostica e comparacao direta com logs de celulares reais.
+  - **Interface Unificada e Simplificada (Design Consistente com Calibracao):**
+    - Chave geral **ON / OFF** com recolhimento dinamico: quando desativado, toda a secao de acelerometro e controles fica oculta para manter a interface limpa e direta.
+    - Indicador de status em tempo real e leitura ao vivo do acelerometro 3D em linha dedicada abaixo do status.
+    - **Visibilidade Condicional do 3D Acelerometro:** O mostrador de acelerometro 3D so e renderizado e visivel durante o rastreamento ativo (`START TRACKING`), ficando oculto quando inativo para manter o layout limpo.
+    - IP e Porta ocultos da visao para evitar poluicao visual (mantendo valores padrao `127.0.0.1:8080` de forma transparente).
+    - **Remocao do Slider de Sensibilidade da GUI:** A sensibilidade foi removida da interface grafica para evitar ajustes redundantes e operacoes incorretas, permanecendo gerenciada internamente com a calibracao fisica ideal (1.00x).
+    - Botoes com contorno elegante (`border: 1px solid #CBD5E1`) para **Reconnect**, **Auto-Find**, **Skip Finish** e **Record Log**.
+    - Atualizacao do cabecalho da sidebar para `"ooomaga :O"` e dica de DLL clarificada para `"Copy Kinect10.dll to the game folder (only for Legacy Offline PC)"`.
+    - Tipografia de alto contraste com cores escuras explicitas (`#0F172A`) para "SCORING HAND", eliminando problemas de texto invisivel em temas escuros do Windows.
 
 ### 21. Modo DualShock 4 [EXPERIMENTAL] — Driver Bluetooth HID & Motion Scoring (v0.3.0 Alpha)
 - **Objetivo:** Permitir o uso direto do controle DualShock 4 como controle de mão sem fio para dançar no Just Dance PC, aproveitando o sensor IMU Sixaxis interno (acelerômetro de 3 eixos e giroscópio de 3 eixos).

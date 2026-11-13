@@ -42,7 +42,7 @@ DEFAULT_CONFIG = {
     "virtual_phone_host": "127.0.0.1",
     "virtual_phone_port": 8080,
     "virtual_phone_hand": "right",
-    "virtual_phone_sensitivity": 1.2,
+    "virtual_phone_sensitivity": 1.0,
     "virtual_phone_name": "Legacy PSCam Phone"
 }
 
