@@ -122,10 +122,15 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
         hand=str(config.get("virtual_phone_hand", "right")),
         sensitivity=float(config.get("virtual_phone_sensitivity", 1.2)),
         phone_name=str(config.get("virtual_phone_name", "Legacy PSCam Phone")),
-        auto_record=bool(config.get("virtual_phone_auto_record", False)),
+        auto_record=bool(config.get("benchmark_auto_record", config.get("virtual_phone_auto_record", False))),
         adaptive=bool(config.get("virtual_phone_adaptive", False)),
     )
-    if config.get("virtual_phone_enabled", False) and not vphone.enabled:
+    should_enable_vphone = (
+        config.get("virtual_phone_enabled", False)
+        or config.get("benchmark_auto_record", False)
+        or config.get("virtual_phone_auto_record", False)
+    )
+    if should_enable_vphone and not vphone.enabled:
         vphone.set_enabled(True)
 
     window_name = "Legacy PSCam Sensor"

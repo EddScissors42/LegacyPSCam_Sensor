@@ -768,6 +768,13 @@ def test_telemetry_and_adaptive_benchmark():
         assert benchmarks[0]["map_name"] == "Levitating"
         assert benchmarks[0]["is_ready"] is True
 
+        # Check Just Dance process and song discovery helpers
+        from sensor.virtual_phone import find_just_dance_pids, detect_active_song_from_game_process
+        pids = find_just_dance_pids()
+        assert isinstance(pids, list)
+        song_str = detect_active_song_from_game_process()
+        assert isinstance(song_str, str)
+
     print("  -> Telemetry Benchmark & Adaptive Calibration PASSED")
 
 def run_all_tests():

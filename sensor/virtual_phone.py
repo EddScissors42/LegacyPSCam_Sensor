@@ -629,6 +629,141 @@ class AdaptiveCalibrationTuner:
         }
 
 
+def find_just_dance_pids() -> List[int]:
+    """Finds PIDs of running Just Dance PC processes (jd2022.exe, jd2021.exe, etc.)."""
+    pids: List[int] = []
+    if sys.platform != "win32":
+        return pids
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.windll.kernel32
+        TH32CS_SNAPPROCESS = 0x00000002
+
+        class PROCESSENTRY32(ctypes.Structure):
+            _fields_ = [
+                ("dwSize", wintypes.DWORD),
+                ("cntUsage", wintypes.DWORD),
+                ("th32ProcessID", wintypes.DWORD),
+                ("th32DefaultHeapID", ctypes.POINTER(ctypes.c_ulong)),
+                ("th32ModuleID", wintypes.DWORD),
+                ("cntThreads", wintypes.DWORD),
+                ("th32ParentProcessID", wintypes.DWORD),
+                ("pcPriClassBase", ctypes.c_long),
+                ("dwFlags", wintypes.DWORD),
+                ("szExeFile", ctypes.c_char * 260),
+            ]
+
+        hSnapshot = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+        if not hSnapshot or hSnapshot == wintypes.HANDLE(-1).value:
+            return pids
+
+        pe = PROCESSENTRY32()
+        pe.dwSize = ctypes.sizeof(PROCESSENTRY32)
+        if kernel32.Process32First(hSnapshot, ctypes.byref(pe)):
+            while True:
+                name = pe.szExeFile.decode("latin1", errors="ignore").lower()
+                if any(k in name for k in ("jd20", "jd21", "jd22", "justdance", "just dance")):
+                    pids.append(pe.th32ProcessID)
+                if not kernel32.Process32Next(hSnapshot, ctypes.byref(pe)):
+                    break
+        kernel32.CloseHandle(hSnapshot)
+    except Exception:
+        pass
+    return pids
+
+
+def detect_active_song_from_game_process() -> str:
+    """
+    Scans committed memory regions of any running Just Dance process
+    to locate the actively loaded map video stream (/map/<MapName>/...webm).
+    Returns formatted human-friendly song title (e.g. 'Smalltown Boy') or empty string.
+    """
+    if sys.platform != "win32":
+        return ""
+    pids = find_just_dance_pids()
+    if not pids:
+        return ""
+
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.windll.kernel32
+        PROCESS_VM_READ = 0x0010
+        PROCESS_QUERY_INFORMATION = 0x0400
+
+        if ctypes.sizeof(ctypes.c_void_p) == 8:
+            class MBI(ctypes.Structure):
+                _fields_ = [
+                    ("BaseAddress", ctypes.c_uint64),
+                    ("AllocationBase", ctypes.c_uint64),
+                    ("AllocationProtect", wintypes.DWORD),
+                    ("Alignment1", wintypes.DWORD),
+                    ("RegionSize", ctypes.c_uint64),
+                    ("State", wintypes.DWORD),
+                    ("Protect", wintypes.DWORD),
+                    ("Type", wintypes.DWORD),
+                    ("Alignment2", wintypes.DWORD),
+                ]
+        else:
+            class MBI(ctypes.Structure):
+                _fields_ = [
+                    ("BaseAddress", ctypes.c_void_p),
+                    ("AllocationBase", ctypes.c_void_p),
+                    ("AllocationProtect", wintypes.DWORD),
+                    ("RegionSize", ctypes.c_size_t),
+                    ("State", wintypes.DWORD),
+                    ("Protect", wintypes.DWORD),
+                    ("Type", wintypes.DWORD),
+                ]
+
+        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.CloseHandle.restype = wintypes.BOOL
+        kernel32.VirtualQueryEx.argtypes = [wintypes.HANDLE, ctypes.c_void_p, ctypes.POINTER(MBI), ctypes.c_size_t]
+        kernel32.VirtualQueryEx.restype = ctypes.c_size_t
+        kernel32.ReadProcessMemory.argtypes = [wintypes.HANDLE, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t, ctypes.POINTER(ctypes.c_size_t)]
+        kernel32.ReadProcessMemory.restype = wintypes.BOOL
+
+        mbi = MBI()
+        # Active video pattern: /map/<MapName>/<MapName>_(ULTRA|HIGH|MID|LOW).webm
+        pattern_webm = re.compile(rb"/map/([A-Za-z0-9_\-]+)/\1(_(ULTRA|HIGH|MID|LOW))?\.webm")
+
+        for pid in pids:
+            h = kernel32.OpenProcess(PROCESS_VM_READ | PROCESS_QUERY_INFORMATION, False, pid)
+            if not h:
+                continue
+            addr = 0
+            found_map = ""
+            try:
+                while kernel32.VirtualQueryEx(h, ctypes.c_void_p(addr), ctypes.byref(mbi), ctypes.sizeof(mbi)):
+                    if mbi.State == 0x1000 and (mbi.Protect & 0x01 == 0):
+                        sz = int(mbi.RegionSize)
+                        if 4096 <= sz <= 8 * 1024 * 1024:
+                            buf = ctypes.create_string_buffer(sz)
+                            br = ctypes.c_size_t(0)
+                            if kernel32.ReadProcessMemory(h, ctypes.c_void_p(mbi.BaseAddress), buf, sz, ctypes.byref(br)):
+                                m = pattern_webm.search(buf.raw[:br.value])
+                                if m:
+                                    found_map = m.group(1).decode("latin1", errors="ignore")
+                                    break
+                    addr += mbi.RegionSize
+            finally:
+                kernel32.CloseHandle(h)
+
+            if found_map:
+                # Format into human-friendly song title
+                title = re.sub(r"([a-z])([A-Z])", r"\1 \2", found_map)
+                title = title.replace("ALT", " (Alternate)").replace("DLC", " (DLC)")
+                return title
+    except Exception:
+        pass
+    return ""
+
+
 class VirtualPhoneController:
     """
     Manages the background WebSocket connection to Just Dance (UbiArt Smartphone Manager),
@@ -690,6 +825,7 @@ class VirtualPhoneController:
         self._last_feedback: str = ""
         self.on_song_change: Optional[Callable[[str], None]] = None
         self.on_dance_state_change: Optional[Callable[[bool, str], None]] = None
+        self._last_song_query_ts: float = 0.0
 
         self._cmd_queue: "queue.Queue[str]" = queue.Queue()
         self._stop_event = threading.Event()
@@ -730,6 +866,20 @@ class VirtualPhoneController:
 
     @property
     def current_song(self) -> str:
+        if not self.current_map_name and self.connected:
+            now = time.perf_counter()
+            if (now - self._last_song_query_ts) >= 0.8:
+                self._last_song_query_ts = now
+                detected = detect_active_song_from_game_process()
+                if detected:
+                    with self._lock:
+                        self.current_map_name = detected
+                        self.current_song_name = detected
+                    if self.on_song_change:
+                        try:
+                            self.on_song_change(detected)
+                        except Exception:
+                            pass
         return self.current_map_name or self.current_song_name
 
     @property
@@ -992,20 +1142,6 @@ class VirtualPhoneController:
           - "FTUE_FINISH" (PHONE_FTUE_FINISH)
         """
         act = action.upper().strip()
-        if self.target_game == "next":
-            nav_map = {
-                "VALID": "ok",
-                "START_GAME": "ok",
-                "SHORTCUT_VALIDATE": "ok",
-                "BACK": "back",
-                "UP": "up",
-                "DOWN": "down",
-                "LEFT": "left",
-                "RIGHT": "right",
-            }
-            if act in nav_map:
-                self._cmd_queue.put(json.dumps({"t": "nav", "a": nav_map[act]}))
-            return
 
         if act == "VALID":
             if "VALID" in self._available_inputs:
@@ -1365,8 +1501,19 @@ class VirtualPhoneController:
                 self._handshake_complete = True
             self._status_text = self._format_connected_status()
 
-        elif cls_name in ("JD_EnableScoringPhoneData", "JD_SmartphoneEvent_ScoringActivationChanged"):
-            new_scoring = bool(msg.get("enable", msg.get("enabled", True)))
+        elif cls_name in (
+            "JD_EnableScoringPhoneData",
+            "JD_SmartphoneEvent_ScoringActivationChanged",
+            "JD_EnableAccelValuesSending_ConsoleCommandData",
+            "JD_DisableAccelValuesSending_ConsoleCommandData",
+        ):
+            if cls_name == "JD_DisableAccelValuesSending_ConsoleCommandData":
+                new_scoring = False
+            elif cls_name == "JD_EnableAccelValuesSending_ConsoleCommandData":
+                new_scoring = True
+            else:
+                new_scoring = bool(msg.get("enable", msg.get("enabled", True)))
+
             scoring_changed = (new_scoring != self.is_dancing)
             self._scoring_enabled = new_scoring
             self.is_dancing = new_scoring
@@ -1374,6 +1521,11 @@ class VirtualPhoneController:
 
             if scoring_changed:
                 if new_scoring:
+                    if not self.current_map_name:
+                        detected = detect_active_song_from_game_process()
+                        if detected:
+                            self.current_map_name = detected
+                            self.current_song_name = detected
                     print(f"[VPHONE] Dance scoring STARTED for song: '{self.current_map_name or 'Unknown'}'")
                     if self.adaptive_tuner.enabled:
                         self.adaptive_tuner.reset_song(self.current_map_name)
@@ -1400,15 +1552,52 @@ class VirtualPhoneController:
             if not self._handshake_complete:
                 self._handshake_complete = True
 
+            sdata = msg.get("setupData") if isinstance(msg.get("setupData"), dict) else {}
+
+            # Detect gameplay vs lobby state from PhoneUi
+            if "gameplaySetup" in sdata or "gameplaySetup" in msg:
+                if not self.is_dancing:
+                    self.is_dancing = True
+                    self._scoring_enabled = True
+                    if not self.current_map_name:
+                        detected = detect_active_song_from_game_process()
+                        if detected:
+                            self.current_map_name = detected
+                            self.current_song_name = detected
+                    if self.adaptive_tuner.enabled:
+                        self.adaptive_tuner.reset_song(self.current_map_name)
+                    if self.auto_record_enabled and not self.is_logging:
+                        self.set_logging(True, source=self._last_source, map_name=self.current_map_name)
+                    if self.on_dance_state_change:
+                        try:
+                            self.on_dance_state_change(True, self.current_map_name)
+                        except Exception:
+                            pass
+            elif "lobbySetup" in sdata or "lobbySetup" in msg or cls_name == "JD_PhoneUiLobby":
+                if self.is_dancing:
+                    self.is_dancing = False
+                    if self.auto_record_enabled and self.is_logging:
+                        self.set_logging(False)
+                    if self.on_dance_state_change:
+                        try:
+                            self.on_dance_state_change(False, self.current_map_name)
+                        except Exception:
+                            pass
+
             # Extract song map name across Just Dance versions
             detected_song = ""
-            if "setupData" in msg and isinstance(msg["setupData"], dict):
-                sdata = msg["setupData"]
-                detected_song = str(sdata.get("mapName", "") or sdata.get("songName", ""))
+            if "mapName" in sdata:
+                detected_song = str(sdata["mapName"])
+            elif "songName" in sdata:
+                detected_song = str(sdata["songName"])
             elif "mapName" in msg:
                 detected_song = str(msg["mapName"])
             elif "songName" in msg:
                 detected_song = str(msg["songName"])
+
+            # If still empty, query active song from game process memory
+            if not detected_song:
+                detected_song = detect_active_song_from_game_process()
 
             if detected_song and detected_song.strip():
                 clean_name = detected_song.strip()

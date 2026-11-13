@@ -897,10 +897,14 @@ class LegacySensorQtGUI(QMainWindow):
             hand=str(self.cfg.get("virtual_phone_hand", "right")),
             sensitivity=float(self.cfg.get("virtual_phone_sensitivity", 1.2)),
             phone_name=str(self.cfg.get("virtual_phone_name", "Legacy PSCam Phone")),
-            auto_record=bool(self.cfg.get("virtual_phone_auto_record", False)),
+            auto_record=bool(self.cfg.get("benchmark_auto_record", self.cfg.get("virtual_phone_auto_record", False))),
             adaptive=bool(self.cfg.get("virtual_phone_adaptive", False)),
         )
-        if self.cfg.get("virtual_phone_enabled", False):
+        if (
+            self.cfg.get("virtual_phone_enabled", False)
+            or self.cfg.get("benchmark_auto_record", False)
+            or self.cfg.get("virtual_phone_auto_record", False)
+        ):
             self.vphone.set_enabled(True)
 
         self._load_pixmaps()
@@ -2239,8 +2243,10 @@ class LegacySensorQtGUI(QMainWindow):
             f"font-family: '{self.font_heading}'; font-size: 13px; font-weight: bold; color: {PALETTE['text_main']};"
         )
         is_bm_enabled = bool(self.cfg.get("benchmark_auto_record", self.cfg.get("virtual_phone_auto_record", False)))
-        self.chk_benchmark_enabled.setChecked(is_bm_enabled)
         self.chk_benchmark_enabled.stateChanged.connect(self._on_benchmark_toggle_changed)
+        self.chk_benchmark_enabled.setChecked(is_bm_enabled)
+        if is_bm_enabled:
+            self.vphone.set_auto_record(True)
         bm_layout.addWidget(self.chk_benchmark_enabled)
 
         lbl_bm_desc = QLabel(
@@ -3444,8 +3450,10 @@ class LegacySensorQtGUI(QMainWindow):
         # Update active song readout in dedicated benchmark section
         lbl_song = getattr(self, "lbl_benchmark_song", getattr(self, "lbl_vphone_song", None))
         if lbl_song is not None:
-            song_name = self.vphone.current_song
             is_watching = getattr(self, "chk_benchmark_enabled", None) and self.chk_benchmark_enabled.isChecked()
+            if is_watching and not self.vphone.enabled:
+                self.vphone.set_enabled(True)
+            song_name = self.vphone.current_song
             if song_name:
                 if self.vphone.is_dancing:
                     status_tag = " [Scoring Active - Capturing Telemetry]" if is_watching else " [Scoring Active]"

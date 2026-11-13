@@ -337,9 +337,10 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
   - Disponibiliza todos os controles de telemetria, detecção de música ativa, botão de Benchmark e opções de auto-gravação diretamente no fluxo de uso do DualShock 4.
 - **Seção Dedicada de Benchmark na Interface Experimental:**
   - O utilitário de benchmark agora possui um bloco próprio e independente (`Telemetry Benchmark (Auto-Capture & Compare)`), desacoplado da caixa do Celular Virtual.
-  - **Watcher Automático de Dança:** Ao marcar a opção, o sensor fica em prontidão ativa e inicia a gravação de telemetria no instante em que a música começa no Just Dance (`enable: true`), sem necessidade de gravação manual.
+  - **Watcher Automático de Dança:** Ao marcar a opção, o sensor fica em prontidão ativa e inicia a gravação de telemetria no instante em que a música começa no Just Dance (`JD_EnableAccelValuesSending_ConsoleCommandData` ou `gameplaySetup`), sem necessidade de gravação manual.
+  - **Detecção Híbrida de Música Ativa (WebSocket + Memória de Processo):** Caso o pacote `setupData` do jogo omita o `mapName` durante a reprodução, o sensor varre a memória do processo Just Dance em ~2.8ms localizando a stream ativa `/map/<MapName>/...webm` e formata o título legível da música em tempo real.
   - Exibe o HUD de status da música ativa (`Active Song: ... [Scoring Active]`) e botões dedicados de Benchmark e Acesso à Pasta de Logs com tipografia sóbria e limpa (sem emojis).
-- **10 Suítes de Testes Automatizados:** Suíte 10 integrada em `test_suite.py` cobrindo parsing de CSV, auto-gravação, ciclo de vida de músicas, correlação de benchmark e adaptação de sensibilidade (`10/10 PASSED`).
+- **10 Suítes de Testes Automatizados:** Suíte 10 integrada em `test_suite.py` cobrindo parsing de CSV, auto-gravação, detecção de processo e mapa em memória, ciclo de vida de músicas, correlação de benchmark e adaptação de sensibilidade (`10/10 PASSED`).
 
 ---
 

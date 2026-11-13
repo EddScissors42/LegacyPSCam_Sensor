@@ -95,7 +95,7 @@ A suíte cobre 10 áreas fundamentais:
 | `test_pose_tracker` | `sensor/pose_tracker.py` | Rajada de 5 frames com intervalo < 1ms sem disparar exceção de timestamp. |
 | `test_overlay` | `sensor/tracking_overlay.py` | Renderização do HUD, silhueta e esqueleto sem falhas numpy. |
 | `test_camera_manager` | `sensor/camera_manager.py` | Snapshot PnP ultrarrápido (< 3ms via `cfgmgr32.dll`), máquina de estados da PS4 Camera, enumeração OpenCV, leitor prioritário `FrameBusReader`, detecção rápida de quadro preto e auto-crop de stereo Side-by-Side. |
-| `test_telemetry_and_adaptive_benchmark` | `sensor/telemetry_benchmark.py` | Correlação cruzada de telemetria, parsing de CSV, auto-registro por ciclo de dança e calibração adaptativa. |
+| `test_telemetry_and_adaptive_benchmark` | `sensor/telemetry_benchmark.py` | Correlação cruzada de telemetria, parsing de CSV, auto-registro por ciclo de dança, detecção de processo e mapa em memória, e calibração adaptativa. |
 
 ### Adicionando Novos Testes
 Ao criar novos recursos (como um novo algoritmo de suavização ou novo controle de GUI), adicione uma função `test_<funcionalidade>()` no arquivo `test_suite.py` e inclua sua execução na função principal `run_all_tests()`.

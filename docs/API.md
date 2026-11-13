@@ -311,4 +311,16 @@ Módulo nativo Windows HID (zero dependências) para leitura de alta taxa (500+ 
 - **Bytes 8–10:** RGB da barra de luz LED
 - **Bytes 74–77:** Checksum CRC-32 (IEEE 802.3) little-endian calculado sobre `bytes([0xA2]) + out_rep[0:74]`.
 
+---
+
+## 9. Celular Virtual e Auto-Detecção de Músicas (`sensor.virtual_phone`)
+
+O módulo `sensor.virtual_phone` gerencia a comunicação com o Just Dance através do protocolo WebSocket `/smartphone` (v1/v2):
+
+### Funções de Auto-Detecção de Processo e Música Ativa
+- `find_just_dance_pids() -> List[int]`: Enumera os processos em execução via `CreateToolhelp32Snapshot` Win32 buscando instâncias de `jd2022.exe`, `jd2021.exe`, `jd2020.exe`, `jd2019.exe`, `jd2018.exe`, `jd2017.exe`, `justdance.exe` (latência ~0.5ms).
+- `detect_active_song_from_game_process() -> str`: Varre a memória virtual do processo Just Dance localizando a stream ativa `/map/<MapName>/...webm` (latência ~2.8ms). Converte o identificador do mapa (ex: `SmalltownBoy`) no título formatado da música (`Smalltown Boy`).
+- `VirtualPhoneController.current_song`: Propriedade que retorna o nome da música ativa, executando a busca em memória sob demanda caso o pacote WebSocket `setupData` não contenha o campo `mapName`.
+
+
 
