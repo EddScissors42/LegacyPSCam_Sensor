@@ -8,12 +8,14 @@ import os
 from pathlib import Path
 
 DEFAULT_CONFIG = {
-    "camera_mode": "pscam",  # "pscam" or "webcam"
+    "camera_mode": "pscam",  # "pscam", "webcam", or "ds4"
     "camera_index": 0,
+    "camera_orientation": 0,
     "pscam_preset": "1280x800 @ 60 FPS",
     "webcam_preset": "640x480 @ 30 FPS",
     "mirror_horizontal": True,
     "tracking_preset": "balanced",
+    "pose_model": "full",
     "smoothing_alpha": 0.55,
     "detection_confidence": 0.5,
     "target_height_m": 1.75,
@@ -43,7 +45,12 @@ DEFAULT_CONFIG = {
     "virtual_phone_port": 8080,
     "virtual_phone_hand": "right",
     "virtual_phone_sensitivity": 1.0,
-    "virtual_phone_name": "Legacy PSCam Phone"
+    "virtual_phone_name": "Legacy PSCam Phone",
+    "virtual_phone_auto_record": False,
+    "virtual_phone_adaptive": False,
+    "ds4_hand": "right",
+    "ds4_sensitivity": 1.0,
+    "benchmark_auto_record": False
 }
 
 PRESETS_PSCAM = [

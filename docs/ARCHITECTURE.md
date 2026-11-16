@@ -1,6 +1,6 @@
-# 🏛️ Arquitetura do Sistema — Legacy Sensor Lite
+# 🏛️ Arquitetura do Sistema — Legacy PSCam Sensor
 
-Este documento descreve detalhadamente a arquitetura do **Legacy Sensor Lite**, a separação de responsabilidades entre seus módulos, o fluxo de dados em tempo real e o relacionamento com o hardware da **PlayStation 4 Camera** e com o processo do **Just Dance PC**.
+Este documento descreve detalhadamente a arquitetura do **Legacy PSCam Sensor**, a separação de responsabilidades entre seus módulos, o fluxo de dados em tempo real e o relacionamento com o hardware da **PlayStation 4 Camera** e com o processo do **Just Dance PC**.
 
 ---
 
@@ -9,31 +9,36 @@ Este documento descreve detalhadamente a arquitetura do **Legacy Sensor Lite**, 
 O sistema é baseado em uma **arquitetura modular em pacotes**, onde cada etapa do processamento de vídeo, inteligência artificial, cinemática, interface de usuário e comunicação entre processos opera de forma isolada e desacoplada:
 
 ```
-LegacySensor_Lite/
+LegacyPSCam_Sensor/
 ├── main.py                     # Ponto de entrada (CLI dispatcher e inicializador)
 ├── test_suite.py               # Suíte de testes automatizados (10/10 suítes integradas)
 ├── config.json                 # Gerenciamento e persistência das configurações locais
 ├── sensor/                     # Pacote do Motor de Rastreamento e Visão Computacional
 │   ├── __init__.py             # Exports unificados da API do sensor
 │   ├── camera_manager.py       # Descoberta, negociação DirectShow/MSMF e captura assíncrona
-│   ├── pose_tracker.py         # Motor MediaPipe Pose, Hand Anchor, Calibrador, EMA e Máscara
+│   ├── pose_tracker.py         # Motor MediaPipe Pose e máscara anatômica 320x240
+│   ├── pose_filters.py         # Filtros cinemáticos (HandAnchor, AdaptiveSmoother, SkeletonCalibrator, PTZ)
 │   ├── virtual_phone.py        # Cliente WebSocket UbiArt (/smartphone), Calibrador Adaptativo e Acelerômetro 3D
 │   ├── telemetry_benchmark.py  # Benchmark comparativo de telemetria (Câmera vs DS4), alinhamento temporal e ganho
-│   ├── ds4_controller.py       # Driver Bluetooth HID nativo DualShock 4 (500+ Hz, IMU, botões e vibração)
-│   ├── kinect_shared_memory.py # Driver IPC com KinectBridge (JDP1 344B + JMI1/2 1.3MB + JXC1 28B)
+│   ├── ds4_controller.py       # Driver Bluetooth/USB HID nativo DualShock 4 (500+ Hz, IMU, botões e vibração)
+│   ├── kinect_shared_memory.py # Driver IPC com KinectBridge (JDP1 344B + JDP2 664B + JMI1/2 1.3MB + JXC1 28B)
 │   ├── tracking_session.py     # Orquestrador do loop de rastreamento e eventos de teclado
 │   ├── tracking_overlay.py     # Renderização visual do esqueleto, silhueta sombreada e HUD
 │   └── config_manager.py       # Gerenciamento e persistência das configurações (config.json)
 ├── ui/                         # Pacote da Interface Gráfica
-│   ├── __init__.py             # Exporta a classe LegacySensorGUI e launch_app
-│   ├── gui_qt.py               # Interface moderna estilo PlayStation em PySide6 / Qt 6
+│   ├── __init__.py             # Exporta LegacySensorGUI, widgets reutilizáveis e launch_app
+│   ├── gui_qt.py               # Janela principal moderna estilo PlayStation em PySide6 / Qt 6
+│   ├── widgets.py              # Componentes Qt 6 reutilizáveis (SlidingStackedWidget, DeviceNavCard, CalibPresetCard)
+│   ├── benchmark_dialog.py     # Diálogo e gráfico 2D QPainter de benchmark comparativo (Câmera vs DS4)
 │   ├── theme.py                # Paleta de cores, tipografia e presets
-│   └── icons.py                # Gerador e renderizador de ícones vetoriais
+│   └── icons.py                # Gerador e renderizador de ícones vetoriais e supersampled
 ├── assets/                     # Recursos visuais e mídias
 │   ├── icons/                  # Ícones SVG e PNG da aplicação
 │   └── fonts/                  # Fontes TTF (Kanit, InterTight, NationalPark)
 ├── models/
-│   └── pose_landmarker_lite.task # Modelo pré-treinado do Google MediaPipe Pose
+│   ├── pose_landmarker_lite.task  # Modelo MediaPipe Pose Lite (Perfil Competitivo)
+│   ├── pose_landmarker_full.task  # Modelo MediaPipe Pose Full (Perfil Equilibrado)
+│   └── pose_landmarker_heavy.task # Modelo MediaPipe Pose Heavy (Perfil Ultra Estável)
 ├── tools/
 │   ├── PSCam4Win-Setup.exe       # Instalador oficial do driver da PlayStation Camera
 │   └── get_cameras.ps1           # Script PowerShell auxiliar para enumeração de câmeras WinRT

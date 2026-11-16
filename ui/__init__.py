@@ -32,10 +32,26 @@ from .icons import (
 # PySide6 modern Qt 6 GUI
 try:
     from .gui_qt import LegacySensorQtGUI
+    from .widgets import (
+        pil_to_qpixmap,
+        SlidingStackedWidget,
+        DeviceNavCard,
+        CalibPresetCard,
+    )
+    from .benchmark_dialog import (
+        TelemetryBenchmarkChart,
+        TelemetryBenchmarkDialog,
+    )
     HAS_QT = True
 except ImportError:
     HAS_QT = False
     LegacySensorQtGUI = None
+    pil_to_qpixmap = None
+    SlidingStackedWidget = None
+    DeviceNavCard = None
+    CalibPresetCard = None
+    TelemetryBenchmarkChart = None
+    TelemetryBenchmarkDialog = None
 
 # Default GUI class alias
 LegacySensorGUI = LegacySensorQtGUI
@@ -59,6 +75,12 @@ def launch_app() -> int:
 __all__ = [
     "LegacySensorGUI",
     "LegacySensorQtGUI",
+    "pil_to_qpixmap",
+    "SlidingStackedWidget",
+    "DeviceNavCard",
+    "CalibPresetCard",
+    "TelemetryBenchmarkChart",
+    "TelemetryBenchmarkDialog",
     "HAS_QT",
     "launch_app",
     "PALETTE",

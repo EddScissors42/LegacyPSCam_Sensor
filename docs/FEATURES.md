@@ -24,7 +24,7 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
 | **Painel Sensível a Estado (Balão de Desconexão Único)** | ✅ Totalmente Implementado | `ui/gui_qt.py` / `icons.py` | Quando desconectado, o balão com 'X' grande e botão contextual é o **único elemento exibido**. Ao conectar, transita automaticamente para os controles de vídeo e opções adicionais. |
 | **Perfis Simplificados e Auto-Altura** | ✅ Totalmente Implementado | `ui/gui_qt.py` / `config_manager.py` | 3 perfis estilo console (Equilibrado, Competitivo, Ultra Estável) e calibração de altura 100% automática. |
 | **HUD de Jogo e Overlay OpenCV** | ✅ Totalmente Implementado | `tracking_overlay.py` | Renderização do esqueleto, silhueta e contadores reais de FPS. |
-| **Interface de Linha de Comando (CLI)**| ✅ Totalmente Implementado | `main.py` | Flags `--start`, `--mode`, `--camera` e `--gui {qt,tkinter}`. |
+| **Interface de Linha de Comando (CLI)**| ✅ Totalmente Implementado | `main.py` | Flags `--start`, `--mode {pscam,webcam,ds4}` e `--camera`. |
 | **Rastreamento Multi-Jogador (2P)** | 🟡 Parcialmente Implementado | `pose_tracker.py` | O MediaPipe suporta `num_poses=2`, mas o Lite foca em 1P. |
 | **Auto-Framing / FaceFollow PTZ** | ✅ Totalmente Implementado | `pose_tracker.py` | Auto-framing digital com zoom suave (1.22x) e centralização dinâmica do rosto para a foto/avatar do dançarino no Just Dance. |
 | **Celular Virtual (Emulador JD Controller via Câmera)** | ✅ Totalmente Implementado | `virtual_phone.py` / `ui/gui_qt.py` | Emula um smartphone conectado via WebSocket local (`/smartphone`) e converte o movimento 3D da mão na câmera em dados de acelerômetro 3D (`JD_PhoneScoringData`) e comandos de menu para músicas que só suportam controle de mão. |
@@ -345,6 +345,26 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
   - **Detecção Híbrida de Música Ativa (WebSocket + Memória de Processo):** Caso o pacote `setupData` do jogo omita o `mapName` durante a reprodução, o sensor varre a memória do processo Just Dance em ~2.8ms localizando a stream ativa `/map/<MapName>/...webm` e formata o título legível da música em tempo real.
   - Exibe o HUD de status da música ativa (`Active Song: ... [Scoring Active]`) e botões dedicados de Benchmark e Acesso à Pasta de Logs com tipografia sóbria e limpa (sem emojis).
 - **10 Suítes de Testes Automatizados:** Suíte 10 integrada em `test_suite.py` cobrindo parsing de CSV, auto-gravação, detecção de processo e mapa em memória, ciclo de vida de músicas, correlação de benchmark e adaptação de sensibilidade (`10/10 PASSED`).
+
+### 26. Modularização do Pacote UI, Correções de Ciclo de Vida e Higienização (v0.4.11 Alpha)
+- **Modularização de `ui/` (`ui/widgets.py` e `ui/benchmark_dialog.py`):**
+  - Componentes reutilizáveis de interface (`pil_to_qpixmap`, `SlidingStackedWidget`, `DeviceNavCard` e `CalibPresetCard`) extraídos para `ui/widgets.py`.
+  - Diálogo comparador e gráfico vetorial 2D (`TelemetryBenchmarkChart` e `TelemetryBenchmarkDialog`) extraídos para `ui/benchmark_dialog.py` com tipagem explícita (`typing.List`, `Dict`, `Optional`, `Any`) compatível com Python 3.10–3.15.
+- **Sincronização de Parada e Encerramento Limpo (`closeEvent` & `stop_event`):**
+  - `LegacySensorQtGUI` agora gerencia `self._tracking_stop_event` e o repassa a `run_tracking_session`, garantindo encerramento ordenado da sessão e desconexão limpa do DualShock 4 ao fechar a aplicação.
+  - Corrigida a restauração do texto do botão principal ao finalizar uma sessão no modo DualShock 4 (`camera_mode == "ds4"`).
+- **Simetria de Atalhos na Janela de Rastreamento (`tracking_session.py` & `tracking_overlay.py`):**
+  - A tecla `[O]` (rotação de orientação de câmera 0°/90°/180°/270°) e as teclas `Enter`/`Espaço` (comando `VALID` no Celular Virtual) funcionam de maneira simétrica durante todo o loop de captura e constam no banner inferior do HUD.
+- **Consolidação de Configuração Padrão e Limpeza de Recursos:**
+  - `DEFAULT_CONFIG` em `sensor/config_manager.py` consolidado com todas as chaves persistidas pela aplicação (`camera_orientation`, `ds4_hand`, `ds4_sensitivity`, `benchmark_auto_record`, `virtual_phone_auto_record`, `virtual_phone_adaptive`).
+  - Removidos ícones legados não utilizados (`camera.svg`, `dualshock4.jpg`) e corrigida a resolução de `MODELS_DIR` para builds congelados PyInstaller (`_MEIPASS`).
+
+### 27. Seleção Dinâmica dos Modelos MediaPipe Lite, Full e Heavy nos Perfis de Precisão (v0.5.2 Alpha)
+- **Integração dos 3 Modelos Oficiais (`models/pose_landmarker_{lite,full,heavy}.task`):**
+  - **Competitive (`competitive`) ➔ `lite`:** Usa `pose_landmarker_lite.task` (EMA 0.75 / Conf 0.45) para latência mínima e máxima taxa de quadros (60+ FPS).
+  - **Balanced (`balanced`) [RECOMMENDED] ➔ `full`:** Usa `pose_landmarker_full.task` (EMA 0.55 / Conf 0.50) para o melhor equilíbrio entre estabilidade anatômica, rastreamento de mãos e desempenho.
+  - **Ultra Stable (`stable`) ➔ `heavy`:** Usa `pose_landmarker_heavy.task` (EMA 0.35 / Conf 0.40) para máxima precisão de juntas e resistência a oclusões/baixa iluminação.
+- **Resolução e Fallback Seguros:** `_resolve_model_path(model_variant)` seleciona o modelo correspondente (incluindo builds PyInstaller `_MEIPASS`) com fallback automático para `lite` caso algum arquivo `.task` não esteja disponível.
 
 ---
 

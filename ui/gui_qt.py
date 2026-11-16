@@ -16,6 +16,7 @@ import time
 import math
 import threading
 from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 if str(BASE_DIR) not in sys.path:
@@ -51,6 +52,16 @@ from ui.theme import (
     FONT_TITLE, FONT_HEADING, FONT_BODY,
     load_custom_fonts_qt
 )
+from ui.widgets import (
+    pil_to_qpixmap,
+    SlidingStackedWidget,
+    DeviceNavCard,
+    CalibPresetCard
+)
+from ui.benchmark_dialog import (
+    TelemetryBenchmarkChart,
+    TelemetryBenchmarkDialog
+)
 from ui.icons import (
     generate_icons_pil,
     generate_ds4_icons_pil,
@@ -73,781 +84,6 @@ from sensor.virtual_phone import get_virtual_phone
 from sensor.ds4_controller import get_ds4_controller, find_ds4_devices
 from sensor.telemetry_benchmark import parse_telemetry_csv, compare_telemetries, find_available_benchmarks
 from sensor import tracking_session
-
-
-def pil_to_qpixmap(pil_img, dpr: float = 4.0) -> QPixmap:
-    """Converts a Pillow RGBA Image to a Qt QPixmap with explicit stride, deep copy, and High-DPI devicePixelRatio."""
-    if pil_img is None:
-        return QPixmap()
-    img_rgba = pil_img.convert("RGBA")
-    data = img_rgba.tobytes("raw", "RGBA")
-    qimg = QImage(
-        data,
-        img_rgba.width,
-        img_rgba.height,
-        img_rgba.width * 4,
-        QImage.Format.Format_RGBA8888
-    ).copy()
-    pm = QPixmap.fromImage(qimg)
-    if dpr > 1.0:
-        pm.setDevicePixelRatio(dpr)
-    return pm
-
-
-class SlidingStackedWidget(QStackedWidget):
-    """
-    QStackedWidget featuring hardware-friendly sliding animations between pages
-    with cubic easing curves.
-    """
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._is_animating = False
-
-    def slide_to_index(self, index: int, duration: int = 240):
-        if index == self.currentIndex() or self._is_animating or index < 0 or index >= self.count():
-            return
-
-        current_idx = self.currentIndex()
-        next_widget = self.widget(index)
-        current_widget = self.widget(current_idx)
-
-        w = self.width()
-        h = self.height()
-        if w <= 0 or h <= 0:
-            self.setCurrentIndex(index)
-            return
-
-        offset = w if index > current_idx else -w
-
-        next_widget.setGeometry(offset, 0, w, h)
-        next_widget.show()
-        next_widget.raise_()
-
-        self._is_animating = True
-
-        anim_next = QPropertyAnimation(next_widget, b"pos", self)
-        anim_next.setDuration(duration)
-        anim_next.setEasingCurve(QEasingCurve.Type.OutCubic)
-        anim_next.setStartValue(QPoint(offset, 0))
-        anim_next.setEndValue(QPoint(0, 0))
-
-        anim_curr = QPropertyAnimation(current_widget, b"pos", self)
-        anim_curr.setDuration(duration)
-        anim_curr.setEasingCurve(QEasingCurve.Type.OutCubic)
-        anim_curr.setStartValue(QPoint(0, 0))
-        anim_curr.setEndValue(QPoint(-offset, 0))
-
-        self.anim_group = QParallelAnimationGroup(self)
-        self.anim_group.addAnimation(anim_next)
-        self.anim_group.addAnimation(anim_curr)
-
-        def on_finished():
-            self.setCurrentIndex(index)
-            current_widget.hide()
-            current_widget.move(0, 0)
-            next_widget.move(0, 0)
-            self._is_animating = False
-
-        self.anim_group.finished.connect(on_finished)
-        self.anim_group.start()
-
-
-class DeviceNavCard(QFrame):
-    """
-    Interactive rounded navigation card for the sidebar (PlayStation Camera / Standard Webcam).
-    Displays a crisp 38x26 icon on the left and two-line title/subtitle on the right.
-    """
-    clicked = Signal()
-
-    def __init__(self, title: str, subtitle: str, font_heading: str, font_body: str, parent=None):
-        super().__init__(parent)
-        self.font_heading = font_heading
-        self.font_body = font_body
-        self._is_active = False
-        self._pix_act = QPixmap()
-        self._pix_inact = QPixmap()
-
-        self.setFixedHeight(58)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(12, 8, 12, 8)
-        layout.setSpacing(10)
-
-        self.lbl_icon = QLabel(self)
-        self.lbl_icon.setFixedSize(38, 26)
-        self.lbl_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.lbl_icon.setStyleSheet("background: transparent; border: none;")
-        layout.addWidget(self.lbl_icon)
-
-        text_col = QVBoxLayout()
-        text_col.setContentsMargins(0, 0, 0, 0)
-        text_col.setSpacing(1)
-
-        self.lbl_title = QLabel(title, self)
-        self.lbl_sub = QLabel(subtitle, self)
-        text_col.addWidget(self.lbl_title)
-        text_col.addWidget(self.lbl_sub)
-        layout.addLayout(text_col, stretch=1)
-
-    def set_icons(self, pix_act: QPixmap, pix_inact: QPixmap):
-        self._pix_act = pix_act
-        self._pix_inact = pix_inact
-        self._refresh_visuals(hovered=False)
-
-    def set_active(self, active: bool):
-        self._is_active = active
-        self._refresh_visuals(hovered=False)
-
-    def _refresh_visuals(self, hovered: bool = False):
-        if self._is_active:
-            self.setStyleSheet(f"""
-                DeviceNavCard {{
-                    background-color: {PALETTE["ps_blue"]};
-                    border: 1px solid {PALETTE["ps_blue"]};
-                    border-radius: 12px;
-                }}
-            """)
-            self.lbl_title.setStyleSheet(
-                f"font-family: '{self.font_heading}'; font-size: 12px; font-weight: bold; color: {PALETTE['text_white']}; background: transparent; border: none;"
-            )
-            self.lbl_sub.setStyleSheet(
-                f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['blue_pastel']}; background: transparent; border: none;"
-            )
-            if not self._pix_act.isNull():
-                self.lbl_icon.setPixmap(self._pix_act)
-        else:
-            bg = "#F1F5F9" if hovered else "#F8FAFC"
-            bdr = "#CBD5E1" if hovered else PALETTE["border_subtle"]
-            self.setStyleSheet(f"""
-                DeviceNavCard {{
-                    background-color: {bg};
-                    border: 1px solid {bdr};
-                    border-radius: 12px;
-                }}
-            """)
-            self.lbl_title.setStyleSheet(
-                f"font-family: '{self.font_heading}'; font-size: 12px; font-weight: bold; color: {PALETTE['text_main']}; background: transparent; border: none;"
-            )
-            self.lbl_sub.setStyleSheet(
-                f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
-            )
-            if not self._pix_inact.isNull():
-                self.lbl_icon.setPixmap(self._pix_inact)
-
-    def enterEvent(self, event):
-        if not self._is_active:
-            self._refresh_visuals(hovered=True)
-        super().enterEvent(event)
-
-    def leaveEvent(self, event):
-        if not self._is_active:
-            self._refresh_visuals(hovered=False)
-        super().leaveEvent(event)
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.clicked.emit()
-        super().mousePressEvent(event)
-
-
-class CalibPresetCard(QFrame):
-    """Interactive card for calibration presets (Balanced, Competitive, Ultra Stable)."""
-    clicked = Signal(str)
-
-    def __init__(
-        self,
-        preset_id: str,
-        pdata: dict,
-        font_heading: str,
-        font_body: str,
-        pix_act: QPixmap = None,
-        pix_inact: QPixmap = None,
-        parent=None
-    ):
-        super().__init__(parent)
-        self.preset_id = preset_id
-        self.pdata = pdata
-        self.font_heading = font_heading
-        self.font_body = font_body
-        self.pix_act = pix_act or QPixmap()
-        self.pix_inact = pix_inact or QPixmap()
-        self._is_active = False
-
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setFixedHeight(140)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 12, 14, 12)
-        layout.setSpacing(4)
-
-        top_row = QHBoxLayout()
-        top_row.setContentsMargins(0, 0, 0, 0)
-        top_row.setSpacing(6)
-
-        self.lbl_icon = QLabel(self)
-        self.lbl_icon.setFixedSize(15, 15)
-        self.lbl_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.lbl_icon.setStyleSheet("background: transparent; border: none;")
-
-        self.lbl_title = QLabel(pdata["title"], self)
-        tag_text = pdata.get("tag", "")
-        self.lbl_tag = QLabel(tag_text, self)
-        if not tag_text:
-            self.lbl_tag.setVisible(False)
-
-        top_row.addWidget(self.lbl_icon)
-        top_row.addWidget(self.lbl_title)
-        top_row.addStretch()
-        top_row.addWidget(self.lbl_tag)
-        layout.addLayout(top_row)
-
-        self.lbl_sub = QLabel(pdata["subtitle"], self)
-        layout.addWidget(self.lbl_sub)
-
-        self.lbl_desc = QLabel(pdata["desc"], self)
-        self.lbl_desc.setWordWrap(True)
-        layout.addWidget(self.lbl_desc, stretch=1)
-
-        bot_row = QHBoxLayout()
-        bot_row.setContentsMargins(0, 2, 0, 0)
-        self.lbl_specs = QLabel(pdata["specs"], self)
-        bot_row.addWidget(self.lbl_specs)
-        bot_row.addStretch()
-        layout.addLayout(bot_row)
-
-        self.set_active(False)
-
-    def set_active(self, active: bool, hovered: bool = False):
-        self._is_active = active
-        if active:
-            if not self.pix_act.isNull():
-                self.lbl_icon.setPixmap(self.pix_act)
-            bg = PALETTE["ps_blue_tint"]
-            self.setStyleSheet(f"""
-                CalibPresetCard {{
-                    background-color: {bg};
-                    border: 2px solid {PALETTE["ps_blue"]};
-                    border-radius: 10px;
-                }}
-            """)
-            self.lbl_title.setStyleSheet(
-                f"font-family: '{self.font_heading}'; font-size: 12px; font-weight: bold; color: {PALETTE['ps_blue']}; background: transparent; border: none;"
-            )
-            self.lbl_tag.setStyleSheet(
-                f"font-family: '{self.font_heading}'; font-size: 8px; font-weight: bold; color: #FFFFFF; background-color: {PALETTE['ps_blue']}; padding: 2px 6px; border-radius: 4px; border: none;"
-            )
-            self.lbl_sub.setStyleSheet(
-                f"font-family: '{self.font_heading}'; font-size: 10px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent; border: none;"
-            )
-            self.lbl_desc.setStyleSheet(
-                f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_main']}; background: transparent; border: none;"
-            )
-            self.lbl_specs.setStyleSheet(
-                f"font-family: '{self.font_body}'; font-size: 9px; color: {PALETTE['ps_blue']}; background: transparent; border: none;"
-            )
-        else:
-            if not self.pix_inact.isNull():
-                self.lbl_icon.setPixmap(self.pix_inact)
-            bg = PALETTE["bg_card"]
-            bdr = PALETTE["input_border"] if hovered else PALETTE["border_subtle"]
-            self.setStyleSheet(f"""
-                CalibPresetCard {{
-                    background-color: {bg};
-                    border: 1px solid {bdr};
-                    border-radius: 10px;
-                }}
-            """)
-            self.lbl_title.setStyleSheet(
-                f"font-family: '{self.font_heading}'; font-size: 12px; font-weight: bold; color: {PALETTE['text_main']}; background: transparent; border: none;"
-            )
-            self.lbl_tag.setStyleSheet(
-                f"font-family: '{self.font_heading}'; font-size: 8px; font-weight: bold; color: {PALETTE['text_muted']}; background-color: {PALETTE['input_bg']}; padding: 2px 6px; border-radius: 4px; border: none;"
-            )
-            self.lbl_sub.setStyleSheet(
-                f"font-family: '{self.font_heading}'; font-size: 10px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent; border: none;"
-            )
-            self.lbl_desc.setStyleSheet(
-                f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
-            )
-            self.lbl_specs.setStyleSheet(
-                f"font-family: '{self.font_body}'; font-size: 9px; color: {PALETTE['text_dim']}; background: transparent; border: none;"
-            )
-
-    def enterEvent(self, event):
-        if not self._is_active:
-            self.set_active(False, hovered=True)
-        super().enterEvent(event)
-
-    def leaveEvent(self, event):
-        if not self._is_active:
-            self.set_active(False, hovered=False)
-        super().leaveEvent(event)
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.clicked.emit(self.preset_id)
-        super().mousePressEvent(event)
-
-
-class TelemetryBenchmarkChart(QWidget):
-    """
-    Renders an aligned 2D comparison plot of acceleration magnitude over time (Camera vs DS4).
-    Uses pure QPainter for lightweight, high-DPI rendering without external plotting dependencies.
-    """
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.chart_t: List[float] = []
-        self.chart_cam: List[float] = []
-        self.chart_ds4: List[float] = []
-        self.setMinimumHeight(180)
-
-    def set_data(self, t: List[float], cam: List[float], ds4: List[float]):
-        self.chart_t = t
-        self.chart_cam = cam
-        self.chart_ds4 = ds4
-        self.update()
-
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-        w = self.width()
-        h = self.height()
-        margin_left = 44
-        margin_right = 20
-        margin_top = 26
-        margin_bottom = 26
-
-        # Background: Crisp white canvas matching main GUI cards
-        painter.fillRect(0, 0, w, h, QColor("#FFFFFF"))
-        painter.setPen(QPen(QColor(PALETTE["border_subtle"]), 1))
-        painter.drawRect(0, 0, w - 1, h - 1)
-
-        plot_w = w - margin_left - margin_right
-        plot_h = h - margin_top - margin_bottom
-
-        if plot_w <= 10 or plot_h <= 10 or not self.chart_t:
-            painter.setPen(QPen(QColor(PALETTE["text_muted"])))
-            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "No telemetry curves available to display.")
-            return
-
-        max_g = max(5.0, max(self.chart_cam + self.chart_ds4, default=5.0)) * 1.05
-        max_t = max(self.chart_t, default=1.0)
-        if max_t <= 0:
-            max_t = 1.0
-
-        # Draw grid lines for G-forces
-        font = painter.font()
-        font.setPointSize(8)
-        painter.setFont(font)
-
-        for g_level in [1.0, 2.0, 3.5, 5.0]:
-            if g_level <= max_g:
-                y = int(margin_top + plot_h - (g_level / max_g) * plot_h)
-                painter.setPen(QPen(QColor(PALETTE["border_subtle"]), 1, Qt.PenStyle.DashLine))
-                painter.drawLine(margin_left, y, margin_left + plot_w, y)
-                painter.setPen(QPen(QColor(PALETTE["text_muted"])))
-                painter.drawText(6, y + 4, f"{g_level:.1f}G")
-
-        # Time markers (start, mid, end)
-        painter.setPen(QPen(QColor(PALETTE["text_muted"])))
-        painter.drawText(margin_left, h - 8, "0.0s")
-        painter.drawText(margin_left + plot_w // 2 - 15, h - 8, f"{max_t / 2:.1f}s")
-        painter.drawText(margin_left + plot_w - 30, h - 8, f"{max_t:.1f}s")
-
-        def pt(t_val, g_val):
-            px = margin_left + (t_val / max_t) * plot_w
-            py = margin_top + plot_h - (g_val / max_g) * plot_h
-            return QPoint(int(px), int(py))
-
-        # Draw DS4 curve (PlayStation Blue #00439C)
-        if self.chart_ds4:
-            path_ds4 = QPainterPath()
-            path_ds4.moveTo(pt(self.chart_t[0], self.chart_ds4[0]))
-            for t_val, g_val in zip(self.chart_t[1:], self.chart_ds4[1:]):
-                path_ds4.lineTo(pt(t_val, g_val))
-            painter.setPen(QPen(QColor(PALETTE["ps_blue"]), 2))
-            painter.drawPath(path_ds4)
-
-        # Draw Camera curve (Amber #EA580C)
-        if self.chart_cam:
-            path_cam = QPainterPath()
-            path_cam.moveTo(pt(self.chart_t[0], self.chart_cam[0]))
-            for t_val, g_val in zip(self.chart_t[1:], self.chart_cam[1:]):
-                path_cam.lineTo(pt(t_val, g_val))
-            painter.setPen(QPen(QColor("#EA580C"), 2))
-            painter.drawPath(path_cam)
-
-        # Legend at top
-        painter.setPen(QPen(QColor(PALETTE["ps_blue"]), 2))
-        painter.drawLine(margin_left + 10, 14, margin_left + 30, 14)
-        painter.setPen(QPen(QColor(PALETTE["ps_blue"])))
-        painter.drawText(margin_left + 35, 18, "DualShock 4 IMU (Physical Ground Truth)")
-
-        painter.setPen(QPen(QColor("#EA580C"), 2))
-        painter.drawLine(margin_left + 260, 14, margin_left + 280, 14)
-        painter.setPen(QPen(QColor("#EA580C")))
-        painter.drawText(margin_left + 285, 18, "Camera Hand Tracking (Virtual Phone)")
-
-
-class TelemetryBenchmarkDialog(QDialog):
-    """
-    Dialog for benchmarking and comparing dance telemetry between Camera and DualShock 4.
-    """
-
-    applied_sensitivity = Signal(float)
-
-    def __init__(self, parent=None, logs_dir: Optional[str] = None, current_sens: float = 1.0):
-        super().__init__(parent)
-        self.setWindowTitle("Telemetry Benchmark & Calibration Comparator")
-        self.resize(780, 580)
-        self.setMinimumSize(720, 520)
-        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.current_sens = float(current_sens)
-        base_dir = Path(__file__).resolve().parent.parent
-        self.logs_dir = Path(logs_dir) if logs_dir else base_dir / "logs"
-        self._last_result: Optional[Dict[str, Any]] = None
-
-        # Clean Crisp-White & PlayStation Blue dialog stylesheet
-        self.setStyleSheet(f"""
-            QDialog {{
-                background-color: {PALETTE["bg_window"]};
-                color: {PALETTE["text_main"]};
-                font-family: '{FONT_BODY}', 'Segoe UI', sans-serif;
-            }}
-            QLabel {{
-                color: {PALETTE["text_main"]};
-                font-family: '{FONT_BODY}', 'Segoe UI', sans-serif;
-            }}
-            QComboBox {{
-                background-color: {PALETTE["input_bg"]};
-                color: {PALETTE["text_main"]};
-                font-family: '{FONT_BODY}', sans-serif;
-                border: 1px solid {PALETTE["input_border"]};
-                border-radius: 6px;
-                padding: 6px 12px;
-                font-size: 11px;
-                min-width: 280px;
-            }}
-            QComboBox:hover {{
-                border-color: {PALETTE["ps_blue"]};
-            }}
-            QComboBox QAbstractItemView {{
-                background-color: #FFFFFF;
-                color: {PALETTE["text_main"]};
-                selection-background-color: {PALETTE["ps_blue"]};
-                selection-color: #FFFFFF;
-                border: 1px solid {PALETTE["border_subtle"]};
-            }}
-        """)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 18, 20, 18)
-        layout.setSpacing(12)
-
-        # Header Title
-        lbl_head = QLabel("TELEMETRY COMPARATIVE BENCHMARK (CAMERA vs DUALSHOCK 4)")
-        lbl_head.setStyleSheet(f"""
-            font-family: '{FONT_HEADING}', 'Segoe UI', sans-serif;
-            font-size: 13px;
-            font-weight: bold;
-            color: {PALETTE['blue_dark']};
-            background: transparent;
-            border: none;
-        """)
-        layout.addWidget(lbl_head)
-
-        lbl_sub = QLabel(
-            "Select a song that was danced twice (once with the Camera and once with the DualShock 4). "
-            "The comparator aligns both curves to calculate time latency, peak G-forces, and suggests optimal camera sensitivity."
-        )
-        lbl_sub.setWordWrap(True)
-        lbl_sub.setStyleSheet(f"""
-            font-family: '{FONT_BODY}', 'Segoe UI', sans-serif;
-            font-size: 11px;
-            color: {PALETTE['text_muted']};
-            background: transparent;
-            border: none;
-            line-height: 1.4;
-        """)
-        layout.addWidget(lbl_sub)
-
-        # Session Selector Card
-        sel_card = QFrame()
-        sel_card.setObjectName("sel_card")
-        sel_card.setStyleSheet(f"""
-            QFrame#sel_card {{
-                background-color: #FFFFFF;
-                border: 1px solid {PALETTE['border_subtle']};
-                border-radius: 8px;
-            }}
-        """)
-        sel_layout = QHBoxLayout(sel_card)
-        sel_layout.setContentsMargins(14, 10, 14, 10)
-        sel_layout.setSpacing(10)
-
-        lbl_sess = QLabel("Available Song Runs:")
-        lbl_sess.setStyleSheet(f"""
-            font-family: '{FONT_HEADING}', sans-serif;
-            font-weight: bold;
-            font-size: 11px;
-            color: {PALETTE['text_main']};
-            background: transparent;
-            border: none;
-        """)
-
-        self.cb_sessions = QComboBox()
-        self.cb_sessions.currentIndexChanged.connect(self._on_session_selected)
-
-        btn_style = f"""
-            QPushButton {{
-                background-color: #FFFFFF;
-                color: {PALETTE["text_main"]};
-                font-family: '{FONT_HEADING}', sans-serif;
-                font-size: 11px;
-                font-weight: bold;
-                border: 1px solid {PALETTE["tab_gray_border"]};
-                border-radius: 6px;
-                padding: 6px 14px;
-            }}
-            QPushButton:hover {{
-                border-color: {PALETTE["ps_blue"]};
-                color: {PALETTE["ps_blue"]};
-                background-color: {PALETTE["tab_gray_hover"]};
-            }}
-            QPushButton:pressed {{
-                background-color: {PALETTE["tab_gray_act"]};
-            }}
-        """
-
-        self.btn_refresh = QPushButton("Refresh Logs")
-        self.btn_refresh.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_refresh.setStyleSheet(btn_style)
-        self.btn_refresh.clicked.connect(self._populate_sessions)
-
-        self.btn_browse = QPushButton("Browse Files...")
-        self.btn_browse.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_browse.setStyleSheet(btn_style)
-        self.btn_browse.clicked.connect(self._on_manual_browse)
-
-        sel_layout.addWidget(lbl_sess)
-        sel_layout.addWidget(self.cb_sessions, stretch=1)
-        sel_layout.addWidget(self.btn_refresh)
-        sel_layout.addWidget(self.btn_browse)
-        layout.addWidget(sel_card)
-
-        # Metrics Card Grid (4 PlayStation Style Spec Tiles)
-        metrics_card = QFrame()
-        metrics_card.setObjectName("metrics_card")
-        metrics_card.setStyleSheet(f"""
-            QFrame#metrics_card {{
-                background-color: #FFFFFF;
-                border: 1px solid {PALETTE['border_subtle']};
-                border-radius: 8px;
-            }}
-        """)
-        m_layout = QGridLayout(metrics_card)
-        m_layout.setContentsMargins(12, 12, 12, 12)
-        m_layout.setHorizontalSpacing(12)
-        m_layout.setVerticalSpacing(10)
-
-        def make_tile(title_text: str):
-            tile = QFrame()
-            tile.setStyleSheet(f"""
-                QFrame {{
-                    background-color: {PALETTE['input_bg']};
-                    border: 1px solid {PALETTE['border_subtle']};
-                    border-radius: 6px;
-                }}
-            """)
-            t_layout = QVBoxLayout(tile)
-            t_layout.setContentsMargins(10, 8, 10, 8)
-            t_layout.setSpacing(3)
-            lbl_t = QLabel(title_text)
-            lbl_t.setStyleSheet(f"""
-                font-family: '{FONT_BODY}', sans-serif;
-                font-size: 10px;
-                font-weight: bold;
-                color: {PALETTE['text_muted']};
-                background: transparent;
-                border: none;
-            """)
-            lbl_v = QLabel("--")
-            lbl_v.setStyleSheet(f"""
-                font-family: '{FONT_HEADING}', sans-serif;
-                font-size: 13px;
-                font-weight: bold;
-                color: {PALETTE['text_main']};
-                background: transparent;
-                border: none;
-            """)
-            t_layout.addWidget(lbl_t)
-            t_layout.addWidget(lbl_v)
-            return tile, lbl_v
-
-        tile_corr, self.lbl_metric_corr = make_tile("CURVE CORRELATION")
-        tile_lag, self.lbl_metric_lag = make_tile("TIME LATENCY")
-        tile_peaks, self.lbl_metric_peaks = make_tile("PEAK G-FORCE (CAM / DS4)")
-        tile_sens, self.lbl_metric_sens = make_tile("SUGGESTED SENSITIVITY")
-
-        self.lbl_metric_corr.setText("--%")
-        self.lbl_metric_lag.setText("-- ms")
-        self.lbl_metric_peaks.setText("--G / --G")
-        self.lbl_metric_sens.setText(f"--x (Current: {self.current_sens:.2f}x)")
-
-        m_layout.addWidget(tile_corr, 0, 0)
-        m_layout.addWidget(tile_lag, 0, 1)
-        m_layout.addWidget(tile_peaks, 1, 0)
-        m_layout.addWidget(tile_sens, 1, 1)
-        layout.addWidget(metrics_card)
-
-        # Comparison Plot
-        self.chart = TelemetryBenchmarkChart()
-        layout.addWidget(self.chart, stretch=1)
-
-        # Bottom Actions Row
-        bot_row = QHBoxLayout()
-        bot_row.setSpacing(10)
-
-        self.btn_apply_sens = QPushButton("Apply Suggested Sensitivity")
-        self.btn_apply_sens.setEnabled(False)
-        self.btn_apply_sens.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_apply_sens.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {PALETTE['ps_blue']};
-                color: #FFFFFF;
-                font-family: '{FONT_HEADING}', sans-serif;
-                font-size: 11px;
-                font-weight: bold;
-                border: none;
-                border-radius: 6px;
-                padding: 9px 20px;
-            }}
-            QPushButton:hover {{
-                background-color: {PALETTE['ps_blue_hover']};
-            }}
-            QPushButton:pressed {{
-                background-color: {PALETTE['ps_blue_active']};
-            }}
-            QPushButton:disabled {{
-                background-color: #CBD5E1;
-                color: #64748B;
-            }}
-        """)
-        self.btn_apply_sens.clicked.connect(self._on_apply_sens_clicked)
-
-        self.btn_close = QPushButton("Close")
-        self.btn_close.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_close.setStyleSheet(btn_style)
-        self.btn_close.clicked.connect(self.accept)
-
-        bot_row.addWidget(self.btn_apply_sens)
-        bot_row.addStretch()
-        bot_row.addWidget(self.btn_close)
-        layout.addLayout(bot_row)
-
-        self._populate_sessions()
-
-    def _populate_sessions(self):
-        self.cb_sessions.clear()
-        benchmarks = find_available_benchmarks(self.logs_dir)
-        ready_count = 0
-        for b in benchmarks:
-            status = " [READY (Cam + DS4)]" if b["is_ready"] else " [Incomplete]"
-            self.cb_sessions.addItem(f"{b['map_name']}{status}", b)
-            if b["is_ready"]:
-                ready_count += 1
-
-        if not benchmarks:
-            self.cb_sessions.addItem("No dance telemetry logs found in logs/ directory", None)
-            self._clear_results()
-        elif ready_count == 0:
-            self.cb_sessions.addItem("No matching Camera + DS4 log pairs found", None)
-            self._clear_results()
-
-    def _on_session_selected(self, index: int):
-        data = self.cb_sessions.currentData()
-        if not data or not data.get("is_ready"):
-            self._clear_results()
-            return
-        self._run_comparison(data["camera_path"], data["ds4_path"])
-
-    def _on_manual_browse(self):
-        cam_file, _ = QFileDialog.getOpenFileName(
-            self, "Select Camera Telemetry CSV", str(self.logs_dir), "CSV Files (*.csv)"
-        )
-        if not cam_file:
-            return
-        ds4_file, _ = QFileDialog.getOpenFileName(
-            self, "Select DualShock 4 Telemetry CSV", str(self.logs_dir), "CSV Files (*.csv)"
-        )
-        if not ds4_file:
-            return
-        self._run_comparison(cam_file, ds4_file)
-
-    def _run_comparison(self, cam_path: str, ds4_path: str):
-        try:
-            res = compare_telemetries(cam_path, ds4_path, current_sensitivity=self.current_sens)
-            self._last_result = res
-            self.lbl_metric_corr.setText(f"{res['correlation_pct']:.1f}%")
-            self.lbl_metric_corr.setStyleSheet(
-                f"font-family: '{FONT_HEADING}', sans-serif; font-size: 13px; font-weight: bold; color: {PALETTE['ps_blue']}; background: transparent; border: none;"
-            )
-            self.lbl_metric_lag.setText(f"{res['lag_ms']:+.1f} ms")
-            self.lbl_metric_lag.setStyleSheet(
-                f"font-family: '{FONT_HEADING}', sans-serif; font-size: 13px; font-weight: bold; color: {PALETTE['ps_blue']}; background: transparent; border: none;"
-            )
-            self.lbl_metric_peaks.setText(f"{res['cam_max_g']:.2f}G / {res['ds4_max_g']:.2f}G")
-            self.lbl_metric_peaks.setStyleSheet(
-                f"font-family: '{FONT_HEADING}', sans-serif; font-size: 13px; font-weight: bold; color: {PALETTE['text_main']}; background: transparent; border: none;"
-            )
-            self.lbl_metric_sens.setText(
-                f"{res['suggested_sensitivity']:.2f}x (Current: {res['current_sensitivity']:.2f}x)"
-            )
-            self.lbl_metric_sens.setStyleSheet(
-                f"font-family: '{FONT_HEADING}', sans-serif; font-size: 13px; font-weight: bold; color: {PALETTE['status_ok']}; background: transparent; border: none;"
-            )
-            self.chart.set_data(res["chart_t"], res["chart_cam"], res["chart_ds4"])
-            self.btn_apply_sens.setEnabled(True)
-            self.btn_apply_sens.setText(f"Apply Suggested Sensitivity ({res['suggested_sensitivity']:.2f}x)")
-        except Exception as e:
-            QMessageBox.warning(self, "Benchmark Comparison Error", f"Failed to compare logs:\n{e}")
-            self._clear_results()
-
-    def _clear_results(self):
-        self._last_result = None
-        self.lbl_metric_corr.setText("--%")
-        self.lbl_metric_corr.setStyleSheet(
-            f"font-family: '{FONT_HEADING}', sans-serif; font-size: 13px; font-weight: bold; color: {PALETTE['text_muted']}; background: transparent; border: none;"
-        )
-        self.lbl_metric_lag.setText("-- ms")
-        self.lbl_metric_lag.setStyleSheet(
-            f"font-family: '{FONT_HEADING}', sans-serif; font-size: 13px; font-weight: bold; color: {PALETTE['text_muted']}; background: transparent; border: none;"
-        )
-        self.lbl_metric_peaks.setText("--G / --G")
-        self.lbl_metric_peaks.setStyleSheet(
-            f"font-family: '{FONT_HEADING}', sans-serif; font-size: 13px; font-weight: bold; color: {PALETTE['text_muted']}; background: transparent; border: none;"
-        )
-        self.lbl_metric_sens.setText(f"--x (Current: {self.current_sens:.2f}x)")
-        self.lbl_metric_sens.setStyleSheet(
-            f"font-family: '{FONT_HEADING}', sans-serif; font-size: 13px; font-weight: bold; color: {PALETTE['text_muted']}; background: transparent; border: none;"
-        )
-        self.chart.set_data([], [], [])
-        self.btn_apply_sens.setEnabled(False)
-        self.btn_apply_sens.setText("Apply Suggested Sensitivity")
-
-    def _on_apply_sens_clicked(self):
-        if self._last_result:
-            sugg = self._last_result["suggested_sensitivity"]
-            self.applied_sensitivity.emit(sugg)
-            QMessageBox.information(
-                self,
-                "Sensitivity Applied",
-                f"Camera Virtual Phone sensitivity updated to {sugg:.2f}x!",
-            )
-            self.accept()
 
 
 class LegacySensorQtGUI(QMainWindow):
@@ -877,6 +113,7 @@ class LegacySensorQtGUI(QMainWindow):
         self.cfg_mgr = ConfigManager()
         self.cfg = self.cfg_mgr.config
         self.is_tracking_active = False
+        self._tracking_stop_event = threading.Event()
         self._last_hw_snapshot = CameraManager.get_hardware_snapshot()
         self._last_pscam_state = None
         self._current_pscam_state = "DISCONNECTED"
@@ -884,6 +121,8 @@ class LegacySensorQtGUI(QMainWindow):
         self.camera_list = []
         self.active_tab = "video"
         self.current_calib_preset = self.cfg.get("tracking_preset", "balanced")
+        if self.current_calib_preset in CALIB_PRESETS:
+            self.cfg["pose_model"] = CALIB_PRESETS[self.current_calib_preset].get("pose_model", "full")
         self.is_adv_calib_open = False
         self._is_closing = False
         self._is_connecting_ds4 = False
@@ -3609,6 +2848,7 @@ class LegacySensorQtGUI(QMainWindow):
         self.current_calib_preset = preset_id
         self.cfg["tracking_preset"] = preset_id
         p = CALIB_PRESETS[preset_id]
+        self.cfg["pose_model"] = p.get("pose_model", "lite")
         self.cfg["smoothing_alpha"] = p["smoothing_alpha"]
         self.cfg["detection_confidence"] = p["detection_confidence"]
 
@@ -3709,6 +2949,7 @@ class LegacySensorQtGUI(QMainWindow):
 
             self._save_settings()
             self.is_tracking_active = True
+            self._tracking_stop_event.clear()
             self.btn_start.setText("TRACKING IN PROGRESS...")
             self.btn_start.setEnabled(False)
             self.showMinimized()
@@ -3717,7 +2958,9 @@ class LegacySensorQtGUI(QMainWindow):
                 success = False
                 err_msg = ""
                 try:
-                    success = tracking_session.run_tracking_session(self.cfg)
+                    success = tracking_session.run_tracking_session(
+                        self.cfg, stop_event=self._tracking_stop_event
+                    )
                 except Exception as e:
                     err_msg = str(e)
                 finally:
@@ -3762,6 +3005,7 @@ class LegacySensorQtGUI(QMainWindow):
         self._save_settings()
 
         self.is_tracking_active = True
+        self._tracking_stop_event.clear()
         if hasattr(self, "lbl_vphone_accel"):
             self.lbl_vphone_accel.setVisible(True)
         self.btn_start.setText("TRACKING IN PROGRESS...")
@@ -3772,7 +3016,9 @@ class LegacySensorQtGUI(QMainWindow):
             success = False
             err_msg = ""
             try:
-                success = tracking_session.run_tracking_session(self.cfg)
+                success = tracking_session.run_tracking_session(
+                    self.cfg, stop_event=self._tracking_stop_event
+                )
             except Exception as e:
                 err_msg = str(e)
             finally:
@@ -3785,7 +3031,7 @@ class LegacySensorQtGUI(QMainWindow):
         self.is_tracking_active = False
         if hasattr(self, "lbl_vphone_accel"):
             self.lbl_vphone_accel.setVisible(False)
-        if self.cfg.get("camera_source") == "ds4":
+        if self.cfg.get("camera_mode") == "ds4":
             self.btn_start.setText("START CONTROLLER (DS4)")
         else:
             self.btn_start.setText("START TRACKING")
@@ -3813,12 +3059,18 @@ class LegacySensorQtGUI(QMainWindow):
 
     def closeEvent(self, event):
         self._is_closing = True
+        if hasattr(self, "_tracking_stop_event") and self._tracking_stop_event is not None:
+            self._tracking_stop_event.set()
         if hasattr(self, "timer_periodic") and self.timer_periodic is not None:
             self.timer_periodic.stop()
         if hasattr(self, "timer_vphone") and self.timer_vphone is not None:
             self.timer_vphone.stop()
         if hasattr(self, "vphone") and self.vphone is not None:
             self.vphone.stop()
+        try:
+            get_ds4_controller().disconnect()
+        except Exception:
+            pass
         if hasattr(self, "bridge") and self.bridge is not None:
             self.bridge.close()
         event.accept()

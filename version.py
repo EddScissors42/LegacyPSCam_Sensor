@@ -1,11 +1,4 @@
-"""
-Legacy PSCam Sensor - Official Versioning.
-Standard:
-- Increment 3rd digit for minor changes/improvements (e.g. 0.1.1 -> 0.1.2)
-- Increment 2nd digit for major architectural changes or large refactorings (e.g. 0.1.2 -> 0.2.0)
-- Always include version number and '(Alpha)' in window titles and UI headers.
-"""
-__version__ = "0.4.10"
+__version__ = "0.5.2"
 STAGE = "Alpha"
 VERSION_STRING = f"v{__version__} ({STAGE})"
 APP_NAME = "Legacy PSCam Sensor"

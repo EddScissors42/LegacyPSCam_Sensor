@@ -10,6 +10,8 @@ mp_datas, mp_binaries, mp_hiddenimports = collect_all('mediapipe')
 
 added_datas = [
     ('models/pose_landmarker_lite.task', 'models'),
+    ('models/pose_landmarker_full.task', 'models'),
+    ('models/pose_landmarker_heavy.task', 'models'),
     ('assets', 'assets'),
     ('tools/PSCam4Win-Setup.exe', 'tools'),
     ('tools/get_cameras.ps1', 'tools'),
@@ -28,6 +30,8 @@ a = Analysis(
         'PySide6.QtWidgets',
         'sensor',
         'ui',
+        'ui.widgets',
+        'ui.benchmark_dialog',
         'assets',
         'version',
     ] + mp_hiddenimports,

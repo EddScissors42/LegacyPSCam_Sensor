@@ -96,12 +96,18 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
         return False
 
     # 3. Initialize Pose Tracker
+    preset_model_map = {"balanced": "full", "competitive": "lite", "stable": "heavy"}
+    pose_model = str(config.get("pose_model", "")).strip().lower()
+    if pose_model not in ("lite", "full", "heavy"):
+        pose_model = preset_model_map.get(config.get("tracking_preset", "balanced"), "lite")
+
     try:
         tracker = PoseTracker(
             detection_confidence=det_conf,
             smoothing_alpha=smoothing_alpha,
             target_height_m=target_height,
-            cfg=config
+            cfg=config,
+            model_variant=pose_model,
         )
     except Exception as e:
         print(f"[ERROR] Failed to start MediaPipe Pose Tracker: {e}")
@@ -167,6 +173,9 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
                     camera_orientation = (camera_orientation + 90) % 360
                     camera.set_orientation(camera_orientation)
                     print(f"[INFO] Camera orientation toggled to: {camera_orientation}°")
+                elif key in (13, 32):
+                    if vphone.enabled:
+                        vphone.send_input("VALID")
                 if cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1:
                     break
                 time.sleep(0.0015)
@@ -253,6 +262,10 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
                 print(f"[INFO] Mirroring toggled to: {mirror}")
             elif key in (ord('h'), ord('H')):
                 overlay.toggle_hud()
+            elif key in (ord('o'), ord('O')):
+                camera_orientation = (camera_orientation + 90) % 360
+                camera.set_orientation(camera_orientation)
+                print(f"[INFO] Camera orientation toggled to: {camera_orientation}°")
             elif key in (13, 32):  # Enter or Space: Send VALID / OK to game via Virtual Phone
                 if vphone.enabled:
                     vphone.send_input("VALID")

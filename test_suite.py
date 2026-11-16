@@ -517,6 +517,8 @@ def test_project_structure():
     assert (BASE_DIR / "assets" / "icons" / "lab.svg").exists(), "Asset lab.svg must exist in assets/icons/"
     assert (BASE_DIR / "assets" / "icons" / "arrow_down.png").exists() or (BASE_DIR / "assets" / "icons" / "arrow_down.svg").exists(), "Asset arrow_down must exist in assets/icons/"
     assert (BASE_DIR / "models" / "pose_landmarker_lite.task").exists(), "models/pose_landmarker_lite.task must exist"
+    assert (BASE_DIR / "models" / "pose_landmarker_full.task").exists(), "models/pose_landmarker_full.task must exist"
+    assert (BASE_DIR / "models" / "pose_landmarker_heavy.task").exists(), "models/pose_landmarker_heavy.task must exist"
 
     import sensor
     assert hasattr(sensor, "PoseTracker")
@@ -534,6 +536,9 @@ def test_project_structure():
     assert hasattr(ui, "launch_app")
     assert hasattr(ui, "PALETTE")
     assert hasattr(ui, "CALIB_PRESETS")
+    assert ui.CALIB_PRESETS["balanced"]["pose_model"] == "full"
+    assert ui.CALIB_PRESETS["competitive"]["pose_model"] == "lite"
+    assert ui.CALIB_PRESETS["stable"]["pose_model"] == "heavy"
     assert hasattr(ui, "generate_icons")
 
     # Verify Qt GUI offscreen instantiation, icons, and fonts
@@ -656,6 +661,15 @@ def test_project_structure():
     assert hasattr(ds4.state, "is_usb")
     assert isinstance(find_ds4_devices(), list)
 
+    from ui.widgets import pil_to_qpixmap, SlidingStackedWidget, DeviceNavCard, CalibPresetCard
+    from ui.benchmark_dialog import TelemetryBenchmarkChart, TelemetryBenchmarkDialog
+    assert callable(pil_to_qpixmap)
+    assert SlidingStackedWidget is not None
+    assert DeviceNavCard is not None
+    assert CalibPresetCard is not None
+    assert TelemetryBenchmarkChart is not None
+    assert TelemetryBenchmarkDialog is not None
+
     import assets
     assert hasattr(assets, "ASSETS_DIR")
     assert hasattr(assets, "ICONS_DIR")
@@ -668,6 +682,14 @@ def test_project_structure():
     assert assets.ICON_WEBCAM_PATH.exists()
     assert assets.ICON_DUALSHOCK4_PATH.exists()
     assert assets.MODEL_POSE_PATH.exists(), "Canonical pose model path must exist via assets.MODEL_POSE_PATH"
+    assert assets.MODEL_POSE_LITE_PATH.exists()
+    assert assets.MODEL_POSE_FULL_PATH.exists()
+    assert assets.MODEL_POSE_HEAVY_PATH.exists()
+
+    from sensor.pose_tracker import _resolve_model_path
+    assert _resolve_model_path("lite").name == "pose_landmarker_lite.task"
+    assert _resolve_model_path("full").name == "pose_landmarker_full.task"
+    assert _resolve_model_path("heavy").name == "pose_landmarker_heavy.task"
 
     print("  -> Modular Project Structure PASSED")
 

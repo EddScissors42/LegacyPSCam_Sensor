@@ -40,24 +40,44 @@ from sensor.pose_filters import (
 )
 
 
-def _resolve_model_path() -> Path:
+MODEL_FILENAMES = {
+    "lite": "pose_landmarker_lite.task",
+    "full": "pose_landmarker_full.task",
+    "heavy": "pose_landmarker_heavy.task",
+}
+
+
+def _resolve_model_path(model_variant: str = "lite") -> Path:
+    variant = str(model_variant or "lite").strip().lower()
+    if variant not in MODEL_FILENAMES:
+        variant = "lite"
+    filename = MODEL_FILENAMES[variant]
+
     if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
-        meipass_model = Path(sys._MEIPASS) / "models" / "pose_landmarker_lite.task"
+        meipass_model = Path(sys._MEIPASS) / "models" / filename
         if meipass_model.exists():
             return meipass_model
+
     base = Path(__file__).resolve().parent
     candidates = [
-        base / "models" / "pose_landmarker_lite.task",
-        base.parent / "models" / "pose_landmarker_lite.task",
-        base.parent / "assets" / "models" / "pose_landmarker_lite.task",
+        base / "models" / filename,
+        base.parent / "models" / filename,
+        base.parent / "assets" / "models" / filename,
     ]
     for c in candidates:
         if c.exists():
             return c
-    return base.parent / "models" / "pose_landmarker_lite.task"
+
+    if variant != "lite":
+        fallback = _resolve_model_path("lite")
+        if fallback.exists():
+            print(f"[WARN] Model '{filename}' not found, falling back to '{fallback.name}'.")
+            return fallback
+
+    return base.parent / "models" / filename
 
 
-DEFAULT_MODEL_PATH = _resolve_model_path()
+DEFAULT_MODEL_PATH = _resolve_model_path("lite")
 
 
 class PoseTracker:
@@ -68,18 +88,19 @@ class PoseTracker:
     # Native Kinect player segmentation mask resolution (320x240)
     MASK_INTERNAL_W = 320
     MASK_INTERNAL_H = 240
-    # Fixed MediaPipe input resolution (4:3 aspect ratio; normalized landmarks are resolution-independent)
-    INFER_W = 640
-    INFER_H = 480
     _MORPH_KERNEL_SMALL = np.ones((3, 3), np.uint8)
     _MORPH_KERNEL_LARGE = np.ones((7, 7), np.uint8)
 
-    def __init__(self, model_path=None, detection_confidence=0.5, smoothing_alpha=0.55, target_height_m=1.75, cfg=None):
-        self.model_path = Path(model_path) if model_path else DEFAULT_MODEL_PATH
+    def __init__(self, model_path=None, detection_confidence=0.5, smoothing_alpha=0.55, target_height_m=1.75, cfg=None, model_variant=None):
+        self.cfg = dict(cfg) if cfg else {}
+        variant = str(model_variant or self.cfg.get("pose_model", "lite")).strip().lower()
+        if variant not in MODEL_FILENAMES:
+            variant = "lite"
+        self.model_variant = variant
+        self.model_path = Path(model_path) if model_path else _resolve_model_path(variant)
         if not self.model_path.exists():
             raise FileNotFoundError(f"Modelo do MediaPipe não encontrado: {self.model_path}")
 
-        self.cfg = dict(cfg) if cfg else {}
         self.detection_confidence = float(detection_confidence)
         self.detector = None
         self._init_detector()
@@ -109,7 +130,10 @@ class PoseTracker:
             output_segmentation_masks=True
         )
         self.detector = vision.PoseLandmarker.create_from_options(options)
-        print(f"[TRACKER] MediaPipe Pose Landmarker successfully initialized (det={det_c:.2f}, pres={pres_c:.2f}).")
+        print(
+            f"[TRACKER] MediaPipe Pose Landmarker ({self.model_variant}) initialized "
+            f"(model={self.model_path.name}, det={det_c:.2f}, pres={pres_c:.2f})."
+        )
 
     def update_settings(self, smoothing_alpha=None, detection_confidence=None, target_height_m=None, cfg=None):
         if cfg is not None:

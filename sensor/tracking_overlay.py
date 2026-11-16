@@ -197,7 +197,7 @@ class TrackingOverlay:
                     cv2.FONT_HERSHEY_SIMPLEX, 0.40, (140, 240, 140), 1, cv2.LINE_AA)
 
         # 4. Bottom Controls Banner
-        controls_text = "[C] Recalibrate  |  [M] Mirror  |  [H] Toggle HUD  |  [Q / ESC] Exit"
+        controls_text = "[C] Recalibrate  |  [M] Mirror  |  [O] Rotate  |  [H] HUD  |  [Q / ESC] Exit"
         cv2.putText(frame, controls_text, (16, h - 12),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.44, (220, 220, 225), 1, cv2.LINE_AA)
 

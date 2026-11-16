@@ -28,7 +28,7 @@ def run():
     parser = argparse.ArgumentParser(description=WINDOW_TITLE)
     parser.add_argument("--version", action="version", version=f"{APP_NAME} {VERSION_STRING}")
     parser.add_argument("--start", action="store_true", help="Start tracking directly without opening GUI menu")
-    parser.add_argument("--mode", choices=["pscam", "webcam"], help="Force camera mode")
+    parser.add_argument("--mode", choices=["pscam", "webcam", "ds4"], help="Force input mode (pscam, webcam, or ds4)")
     parser.add_argument("--camera", type=int, help="Camera index to use")
     args = parser.parse_args()
 

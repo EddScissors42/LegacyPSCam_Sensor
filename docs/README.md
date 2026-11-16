@@ -57,26 +57,33 @@ All non-essential overhead has been removed while perfecting the core components
 ```
 LegacyPSCam_Sensor/
 ├── main.py                     # CLI launcher and entry point
-├── version.py                  # Official versioning & build metadata (v0.4.9 Alpha)
-├── test_suite.py               # 9 complete automated test suites
+├── version.py                  # Official versioning & build metadata (v0.5.2 Alpha)
+├── test_suite.py               # 10 complete automated test suites (10/10 PASSED)
 ├── config.json                 # Saved user preferences
 ├── sensor/                     # Tracking Engine and AI package
 │   ├── camera_manager.py       # Camera discovery and async capture
 │   ├── pose_tracker.py         # MediaPipe engine, Hand Anchor, Calibrator & EMA
+│   ├── pose_filters.py         # Kinematic filters (HandAnchor, AdaptiveSmoother, SkeletonCalibrator, PTZ)
 │   ├── virtual_phone.py        # UbiArt Smartphone WebSocket client & 3D Hand Accelerometer
+│   ├── ds4_controller.py       # Native Bluetooth/USB HID DualShock 4 driver
+│   ├── telemetry_benchmark.py  # Comparative telemetry benchmark (Camera vs DS4)
 │   ├── tracking_session.py     # Tracking loop orchestrator and hotkeys
 │   ├── tracking_overlay.py     # Skeleton, HUD, and silhouette renderer
-│   ├── kinect_shared_memory.py # Windows shared memory IPC driver (JDP1, JMI1/2, JXC1)
+│   ├── kinect_shared_memory.py # Windows shared memory IPC driver (JDP1, JDP2, JMI1/2, JXC1)
 │   └── config_manager.py       # config.json persistence
 ├── ui/                         # User Interface package
-│   ├── gui_qt.py               # Modern PlayStation-themed UI with fluid animations (PySide6 / Qt 6)
+│   ├── gui_qt.py               # Primary PlayStation-themed window (PySide6 / Qt 6)
+│   ├── widgets.py              # Reusable Qt 6 widgets (SlidingStackedWidget, DeviceNavCard, CalibPresetCard)
+│   ├── benchmark_dialog.py     # Telemetry Benchmark & Calibration Comparator dialog & 2D chart
 │   ├── theme.py                # Palette, fonts, and calibration presets
 │   └── icons.py                # Supersampled icons, SVGs, and status badges
 ├── assets/                     # Visual assets and media
-│   ├── icons/                  # Custom icons (IconePSCAMERA.png, settings, sliders, mode SVGs)
+│   ├── icons/                  # Custom icons (IconePSCAMERA.png, officialdualshock.png, SVGs)
 │   └── fonts/                  # Bundled typography (Kanit, National Park, Inter Tight)
 ├── models/                     # Pre-trained neural network models
-│   └── pose_landmarker_lite.task # Google MediaPipe Pose model
+│   ├── pose_landmarker_lite.task  # Google MediaPipe Pose Lite model (Competitive preset)
+│   ├── pose_landmarker_full.task  # Google MediaPipe Pose Full model (Balanced preset)
+│   └── pose_landmarker_heavy.task # Google MediaPipe Pose Heavy model (Ultra Stable preset)
 ├── tools/                      # Setup utilities
 │   ├── PSCam4Win-Setup.exe     # Official PSCam4Win driver installer
 │   └── get_cameras.ps1         # WinRT camera enumeration script

@@ -1,10 +1,12 @@
 {
     "camera_mode": "webcam",
-    "camera_index": 1,
+    "camera_index": 0,
+    "camera_orientation": 0,
     "pscam_preset": "1280x800 @ 60 FPS",
     "webcam_preset": "640x480 @ 60 FPS",
     "mirror_horizontal": true,
     "tracking_preset": "balanced",
+    "pose_model": "full",
     "smoothing_alpha": 0.55,
     "detection_confidence": 0.5,
     "target_height_m": 1.75,
@@ -35,7 +37,9 @@
     "virtual_phone_hand": "right",
     "virtual_phone_sensitivity": 1.0,
     "virtual_phone_name": "Legacy PSCam Phone",
-    "camera_orientation": 0,
-    "benchmark_auto_record": true,
-    "virtual_phone_auto_record": true
+    "virtual_phone_auto_record": true,
+    "virtual_phone_adaptive": false,
+    "ds4_hand": "right",
+    "ds4_sensitivity": 1.0,
+    "benchmark_auto_record": true
 }

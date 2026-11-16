@@ -190,14 +190,15 @@ Quando o jogo inicializa o rastreamento via `NuiSkeletonTrackingEnable` ou abre 
 O arquivo `main.py` aceita os seguintes parâmetros de execução:
 
 ```powershell
-python main.py [--start] [--mode {pscam,webcam}] [--camera <int>]
+python main.py [--start] [--mode {pscam,webcam,ds4}] [--camera <int>]
 ```
 
 ### Argumentos:
-- `--start`: Pula a exibição da interface gráfica Tkinter e inicia o rastreamento imediatamente com a última configuração salva.
-- `--mode {pscam,webcam}`: Força o modo de câmera:
+- `--start`: Pula a exibição da interface gráfica Qt 6 e inicia o rastreamento imediatamente com a última configuração salva.
+- `--mode {pscam,webcam,ds4}`: Força o modo de entrada:
   - `pscam`: Seleciona as otimizações para a PlayStation 4 Camera (60 FPS, YUY2/NV12).
   - `webcam`: Seleciona as otimizações para webcams convencionais (30/60 FPS DirectShow).
+  - `ds4`: Inicia o modo de controle sem fio/USB DualShock 4 (IMU 500+ Hz via Virtual Phone).
 - `--camera <int>`: Define o índice numérico do dispositivo de vídeo a ser aberto pelo OpenCV (`0`, `1`, etc.).
 
 ---
@@ -213,7 +214,7 @@ Para desenvolvedores que importam os módulos internamente:
 - `CameraManager.enumerate_cameras(max_probe: int = 6) -> List[CameraInfo]`: Retorna a lista de câmeras conectadas cruzando índices com nomes PnP do Windows.
 
 ### `pose_tracker.PoseTracker`
-- `PoseTracker(model_path: Path, min_conf: float = 0.5)`: Construtor do motor de IA.
+- `PoseTracker(model_path=None, detection_confidence=0.5, smoothing_alpha=0.55, target_height_m=1.75, cfg=None, model_variant=None)`: Construtor do motor de IA (`model_variant` aceita `"lite"`, `"full"` ou `"heavy"`).
 - `PoseTracker.process_frame(frame: np.ndarray, mirror: bool = False) -> Tuple[bool, List[Tuple], List[Tuple], Optional[np.ndarray]]`: Processa o quadro bruto, executa Hand Anchor, suavização EMA, calibração de esqueleto e gera a máscara de segmentação anatômica. Retorna `(sucesso, kinect_joints, pixel_joints, body_mask)`.
 - `PoseTracker.build_body_mask(norm_landmarks, width, height) -> np.ndarray`: Gera a máscara binária 2D do corpo do jogador a partir dos landmarks.
 - `PoseTracker.reset_filters()`: Limpa o estado interno dos filtros de suavização após perda de rastreamento.
@@ -246,6 +247,7 @@ As preferências do usuário são persistidas em `config.json` via `ConfigManage
   "webcam_preset": "640x480 @ 30 FPS",
   "mirror_horizontal": true,
   "tracking_preset": "balanced",
+  "pose_model": "full",
   "smoothing_alpha": 0.55,
   "detection_confidence": 0.5,
   "target_height_m": 1.75,
@@ -267,24 +269,26 @@ As preferências do usuário são persistidas em `config.json` via `ConfigManage
 O ponto de entrada `main.py` aceita argumentos de linha de comando para controle direto:
 
 ```powershell
-python main.py [-h] [--start] [--mode {pscam,webcam}] [--camera CAMERA]
+python main.py [-h] [--start] [--mode {pscam,webcam,ds4}] [--camera CAMERA]
 ```
 
 | Argumento | Opções | Padrão | Descrição |
 |---|---|---|---|
 | `--start` | Flag booleana | `False` | Inicia a sessão de rastreamento diretamente sem abrir a interface gráfica. |
-| `--mode` | `pscam`, `webcam` | Configurado em `config.json` | Força o modo de câmera a ser utilizado. |
+| `--mode` | `pscam`, `webcam`, `ds4` | Configurado em `config.json` | Força o modo de sensor/controle a ser utilizado. |
 | `--camera` | Inteiro (`0`, `1`, ...) | Configurado em `config.json` | Força o índice da câmera de captura no OpenCV. |
 
 ---
 
 ## 7. Pacote de Interface Gráfica (`ui`)
 
-O pacote `ui` expõe uma interface unificada baseada em **PySide6 (Qt 6)**:
+O pacote `ui` expõe uma interface modular baseada em **PySide6 (Qt 6)**:
 
 - `ui.launch_app() -> int`: Inicializador principal da interface gráfica Qt 6 (`PySide6`).
-- `ui.LegacySensorQtGUI`: Janela principal baseada em PySide6 / Qt 6, com `SlidingStackedWidget`, curvas de animação cúbicas, detecção de hotplug por sinais Qt e balão contextual de estado de hardware.
+- `ui.LegacySensorQtGUI`: Janela principal baseada em PySide6 / Qt 6, com detecção de hotplug por sinais Qt e balão contextual de estado de hardware.
 - `ui.LegacySensorGUI`: Alias padrão para `LegacySensorQtGUI`.
+- `ui.widgets`: Exporta `pil_to_qpixmap`, `SlidingStackedWidget`, `DeviceNavCard` e `CalibPresetCard`.
+- `ui.benchmark_dialog`: Exporta `TelemetryBenchmarkChart` e `TelemetryBenchmarkDialog`.
 - `ui.HAS_QT -> bool`: Booleano que indica se o PySide6 está instalado e operacional.
 
 ---

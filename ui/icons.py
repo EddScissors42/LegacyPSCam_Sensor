@@ -131,8 +131,6 @@ def generate_ds4_icons_pil(target_box=(38, 26), scale: int = 4):
         base_dir.parent / "assets" / "officialdualshock.png",
         base_dir / "assets" / "icons" / "officialdualshock.png",
         base_dir / "assets" / "officialdualshock.png",
-        base_dir.parent / "assets" / "icons" / "dualshock4.jpg",
-        base_dir.parent / "assets" / "dualshock4.jpg",
     ]
     img_path = next((p for p in candidates if p.exists()), None)
 
