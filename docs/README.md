@@ -58,7 +58,7 @@ All non-essential overhead has been removed while perfecting the core components
 ```
 LegacyPSCam_Sensor/
 ├── main.py                     # CLI launcher and entry point
-├── version.py                  # Official versioning & build metadata (v0.5.5 Alpha)
+├── version.py                  # Official versioning & build metadata (v0.5.6 Alpha)
 ├── test_suite.py               # 10 complete automated test suites (10/10 PASSED)
 ├── config.json                 # Saved user preferences
 ├── sensor/                     # Tracking Engine and AI package
@@ -85,11 +85,9 @@ LegacyPSCam_Sensor/
 │   ├── pose_landmarker_lite.task  # Google MediaPipe Pose Lite model (Competitive preset)
 │   ├── pose_landmarker_full.task  # Google MediaPipe Pose Full model (Balanced preset)
 │   └── pose_landmarker_heavy.task # Google MediaPipe Pose Heavy model (Ultra Stable preset)
-├── tools/                      # Setup utilities
-│   ├── PSCam4Win-Setup.exe     # Official PSCam4Win driver installer
-│   └── get_cameras.ps1         # WinRT camera enumeration script
-└── Kinect for Legacy DLL/
-    └── Kinect10.dll            # 32-bit proxy DLL for Just Dance PC root folder
+└── tools/                      # Setup utilities & proxy DLL
+    ├── Kinect10.dll            # 32-bit proxy DLL for Just Dance PC root folder
+    └── get_cameras.ps1         # WinRT camera enumeration script
 ```
 
 ---
@@ -97,7 +95,7 @@ LegacyPSCam_Sensor/
 ## Quick Steps
 
 1. Copy DLL to Just Dance:
-   Place `Kinect10.dll` from `Kinect for Legacy DLL/` into the directory where your Just Dance PC executable is installed.
+   Place `Kinect10.dll` from `tools/` into the directory where your Just Dance PC executable is installed.
 2. Run the Sensor:
    Launch `LegacySensor.exe` or execute `python main.py`.
 3. Select Camera:

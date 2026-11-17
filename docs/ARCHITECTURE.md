@@ -39,11 +39,9 @@ LegacyPSCam_Sensor/
 │   ├── pose_landmarker_lite.task  # Modelo MediaPipe Pose Lite (Perfil Competitivo)
 │   ├── pose_landmarker_full.task  # Modelo MediaPipe Pose Full (Perfil Equilibrado)
 │   └── pose_landmarker_heavy.task # Modelo MediaPipe Pose Heavy (Perfil Ultra Estável)
-├── tools/
-│   ├── PSCam4Win-Setup.exe       # Instalador oficial do driver da PlayStation Camera
-│   └── get_cameras.ps1           # Script PowerShell auxiliar para enumeração de câmeras WinRT
-└── Kinect for Legacy DLL/
-    └── Kinect10.dll              # DLL proxy de 32 bits para a pasta do Just Dance PC
+└── tools/
+    ├── Kinect10.dll               # DLL proxy de 32 bits para a pasta do Just Dance PC
+    └── get_cameras.ps1            # Script PowerShell auxiliar para enumeração de câmeras WinRT
 ```
 
 ```mermaid

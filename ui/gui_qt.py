@@ -3002,12 +3002,15 @@ class LegacySensorQtGUI(QMainWindow):
 
     def _open_dll_folder(self):
         candidates = [
-            Path(sys.executable).parent / "Kinect for Legacy DLL",
-            BASE_DIR / "Kinect for Legacy DLL",
-            BASE_DIR.parent / "Kinect for Legacy DLL",
+            Path(sys.executable).parent / "tools",
             BASE_DIR / "tools",
+            BASE_DIR.parent / "tools",
         ]
-        dll_dir = next((c for c in candidates if (c / "Kinect10.dll").exists() or c.exists()), None)
+        if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+            candidates.insert(1, Path(sys._MEIPASS) / "tools")
+        dll_dir = next((c for c in candidates if (c / "Kinect10.dll").exists()), None)
+        if dll_dir is None:
+            dll_dir = next((c for c in candidates if c.exists()), None)
         if dll_dir and dll_dir.exists():
             os.startfile(str(dll_dir))
         else:

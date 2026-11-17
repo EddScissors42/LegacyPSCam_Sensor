@@ -185,7 +185,7 @@ def test_shared_memory():
     print("  -> KinectBridge (Unified IPC) PASSED")
 
     # Verify Kinect10.dll pacer byte (33ms / 30 FPS standard for Just Dance scoring compatibility)
-    dll_path = BASE_DIR / "Kinect for Legacy DLL" / "Kinect10.dll"
+    dll_path = BASE_DIR / "tools" / "Kinect10.dll"
     if dll_path.exists():
         dll_bytes = dll_path.read_bytes()
         assert len(dll_bytes) == 121344, f"Unexpected Kinect10.dll size: {len(dll_bytes)}"

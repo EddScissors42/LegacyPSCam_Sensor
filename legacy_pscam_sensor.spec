@@ -13,6 +13,7 @@ added_datas = [
     ('models/pose_landmarker_full.task', 'models'),
     ('models/pose_landmarker_heavy.task', 'models'),
     ('assets', 'assets'),
+    ('tools/Kinect10.dll', 'tools'),
     ('tools/get_cameras.ps1', 'tools'),
 ] + mp_datas
 
