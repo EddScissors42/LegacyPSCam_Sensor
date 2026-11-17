@@ -13,9 +13,11 @@ added_datas = [
     ('models/pose_landmarker_full.task', 'models'),
     ('models/pose_landmarker_heavy.task', 'models'),
     ('assets', 'assets'),
-    ('tools/PSCam4Win-Setup.exe', 'tools'),
     ('tools/get_cameras.ps1', 'tools'),
 ] + mp_datas
+
+if Path('tools/PSCam4Win-Setup.exe').exists():
+    added_datas.append(('tools/PSCam4Win-Setup.exe', 'tools'))
 
 added_binaries = [] + mp_binaries
 
@@ -28,6 +30,7 @@ a = Analysis(
         'PySide6.QtCore',
         'PySide6.QtGui',
         'PySide6.QtWidgets',
+        'PySide6.QtSvg',
         'sensor',
         'ui',
         'ui.widgets',
