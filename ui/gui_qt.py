@@ -81,7 +81,7 @@ from sensor.config_manager import ConfigManager, parse_preset, PRESETS_PSCAM, PR
 from sensor.camera_manager import CameraManager
 from sensor.kinect_shared_memory import KinectBridge
 from sensor.virtual_phone import get_virtual_phone
-from sensor.ds4_controller import get_ds4_controller, find_ds4_devices
+from sensor.ds4_controller import get_ds4_controller, find_ds4_devices, detect_controller_name
 from sensor.telemetry_benchmark import parse_telemetry_csv, compare_telemetries, find_available_benchmarks
 from sensor import tracking_session
 
@@ -127,6 +127,12 @@ class LegacySensorQtGUI(QMainWindow):
         self._is_closing = False
         self._is_connecting_ds4 = False
         self.calib_cards = {}
+
+        # Initialize DS4 Controller attributes from config
+        ds4 = get_ds4_controller()
+        ds4.hand = str(self.cfg.get("ds4_hand", "right"))
+        ds4.sensitivity = float(self.cfg.get("ds4_sensitivity", 1.0))
+        ds4.permissive_mode = bool(self.cfg.get("ds4_permissive_mode", True))
 
         # Initialize Virtual Phone Controller from config
         self.vphone = get_virtual_phone()
@@ -1446,9 +1452,11 @@ class LegacySensorQtGUI(QMainWindow):
         exp_layout.addWidget(vphone_box)
 
         # =====================================================================
-        # Dedicated Telemetry Benchmark Feature Box
+        # Dedicated Telemetry Benchmark Feature Box (Preserved but Disabled & Hidden from UI)
         # =====================================================================
         self.benchmark_box = QFrame(exp_card)
+        self.benchmark_box.setVisible(False)
+        self.benchmark_box.setEnabled(False)
         self.benchmark_box.setStyleSheet(f"""
             QFrame {{
                 background-color: {PALETTE["input_bg"]};
@@ -1550,8 +1558,9 @@ class LegacySensorQtGUI(QMainWindow):
         bm_det_layout.addWidget(self.chk_benchmark_adaptive)
 
         bm_layout.addWidget(self.benchmark_details_frame)
-        self.benchmark_details_frame.setVisible(self.chk_benchmark_enabled.isChecked())
-        exp_layout.addWidget(self.benchmark_box)
+        self.benchmark_details_frame.setVisible(False)
+        # Note: benchmark_box is preserved but hidden and not added to exp_layout per user request
+        self.benchmark_box.setVisible(False)
 
         # Compatibility aliases
         self.lbl_vphone_song = self.lbl_benchmark_song
@@ -1700,6 +1709,49 @@ class LegacySensorQtGUI(QMainWindow):
         )
         warn_layout.addWidget(lbl_warn_text, stretch=1)
         ds4_layout.addWidget(warn_box)
+
+        # Permissive Mode Toggle (Clones & Third-Party Controllers)
+        perm_box = QFrame(ds4_card)
+        perm_box.setStyleSheet(f"""
+            QFrame {{
+                background-color: {PALETTE["input_bg"]};
+                border: 1px solid {PALETTE["tab_gray_border"]};
+                border-radius: 8px;
+            }}
+        """)
+        perm_layout = QHBoxLayout(perm_box)
+        perm_layout.setContentsMargins(14, 10, 14, 10)
+        perm_layout.setSpacing(10)
+
+        self.chk_ds4_permissive = QCheckBox("Permissive Discovery Mode (Third-Party & Clone PS4 Controllers)", perm_box)
+        self.chk_ds4_permissive.setStyleSheet(f"""
+            QCheckBox {{
+                font-family: '{self.font_body}';
+                font-size: 11px;
+                font-weight: 600;
+                color: {PALETTE['text_main']};
+                background: transparent;
+            }}
+            QCheckBox::indicator {{
+                width: 15px;
+                height: 15px;
+                border-radius: 3px;
+                border: 1px solid {PALETTE['tab_gray_border']};
+            }}
+            QCheckBox::indicator:checked {{
+                background-color: {PALETTE['ps_blue']};
+                border-color: {PALETTE['ps_blue']};
+            }}
+        """)
+        self.chk_ds4_permissive.setChecked(bool(self.cfg.get("ds4_permissive_mode", True)))
+        self.chk_ds4_permissive.setToolTip(
+            "Enables discovery of licensed third-party controllers (Hori, Nacon, Razer, Astro, Scuf) "
+            "and generic DS4 clone chipsets (ShanWan, DragonRise, etc.)."
+        )
+        self.chk_ds4_permissive.stateChanged.connect(self._on_ds4_permissive_changed)
+        perm_layout.addWidget(self.chk_ds4_permissive)
+        perm_layout.addStretch()
+        ds4_layout.addWidget(perm_box)
 
         # Disconnected Balloon (Shown when DualShock 4 is not connected)
         self.ds4_disconnected_box = QWidget(ds4_card)
@@ -2738,36 +2790,59 @@ class LegacySensorQtGUI(QMainWindow):
             st = ds4.state
             charging_str = " [Charging]" if st.is_charging else ""
             conn_type = "Connected on USB" if ds4.is_usb else "Connected via Bluetooth"
-            self.lbl_ds4_status.setText(
-                f"Status: {conn_type} ({st.sample_rate_hz:.0f} Hz • Battery: {st.battery_pct}%{charging_str})"
-            )
-            self.lbl_ds4_status.setStyleSheet(
-                f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['ps_blue']}; background: transparent; border: none;"
-            )
+            ctrl_name = getattr(st, "controller_name", "DualShock 4")
+
+            # Check for imu_frozen condition (typical in clone DS4s over Bluetooth)
+            if getattr(st, "imu_frozen", False):
+                self.lbl_ds4_status.setText(
+                    f"Status: {ctrl_name} ({conn_type}) — [!] IMU SENSOR FROZEN (0G): Connect via USB cable!"
+                )
+                self.lbl_ds4_status.setStyleSheet(
+                    f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['status_err']}; background: transparent; border: none;"
+                )
+            else:
+                self.lbl_ds4_status.setText(
+                    f"Status: {ctrl_name} ({conn_type} • {st.sample_rate_hz:.0f} Hz • Battery: {st.battery_pct}%{charging_str})"
+                )
+                self.lbl_ds4_status.setStyleSheet(
+                    f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['ps_blue']}; background: transparent; border: none;"
+                )
+
             ax, ay, az = st.accel_g
             tot = math.sqrt(ax * ax + ay * ay + az * az)
             act_btns = [b.upper() for b, pressed in st.buttons.items() if pressed]
             btn_str = f"  |  Buttons: {', '.join(act_btns)}" if act_btns else ""
-            self.lbl_ds4_accel.setText(
-                f"3D Accelerometer: X: {ax:+.2f}G  |  Y: {ay:+.2f}G  |  Z: {az:+.2f}G  |  |G|: {tot:.2f}G{btn_str}"
-            )
-            self.lbl_ds4_accel.setStyleSheet(
-                f"font-family: '{self.font_body}'; font-size: 11px; font-weight: 600; color: {PALETTE['text_main']}; background: transparent; border: none;"
-            )
+
+            if getattr(st, "imu_frozen", False):
+                self.lbl_ds4_accel.setText(
+                    f"3D Accelerometer: 0.00G (IMU Inactive/Zeroed over BT)  |  Buttons: {', '.join(act_btns) if act_btns else 'None'}"
+                )
+                self.lbl_ds4_accel.setStyleSheet(
+                    f"font-family: '{self.font_body}'; font-size: 11px; font-weight: 600; color: {PALETTE['status_err']}; background: transparent; border: none;"
+                )
+            else:
+                self.lbl_ds4_accel.setText(
+                    f"3D Accelerometer: X: {ax:+.2f}G  |  Y: {ay:+.2f}G  |  Z: {az:+.2f}G  |  |G|: {tot:.2f}G{btn_str}"
+                )
+                self.lbl_ds4_accel.setStyleSheet(
+                    f"font-family: '{self.font_body}'; font-size: 11px; font-weight: 600; color: {PALETTE['text_main']}; background: transparent; border: none;"
+                )
         else:
             if hasattr(self, "ds4_disconnected_box"):
                 self.ds4_disconnected_box.setVisible(True)
             if hasattr(self, "ds4_info_frame"):
                 self.ds4_info_frame.setVisible(False)
-            paths = find_ds4_devices()
+            perm = bool(self.cfg.get("ds4_permissive_mode", True))
+            paths = find_ds4_devices(permissive=perm)
             if paths:
                 is_usb_path = any("bth" not in p.lower() and "bluetooth" not in p.lower() and "00001124" not in p.lower() for p in paths)
                 detected_str = "on USB" if is_usb_path else "via Bluetooth"
+                detected_name = detect_controller_name(paths[0])
                 if hasattr(self, "lbl_ds4_conn_title"):
-                    self.lbl_ds4_conn_title.setText(f"DualShock® 4 detected {detected_str}")
+                    self.lbl_ds4_conn_title.setText(f"{detected_name} detected {detected_str}")
                 if hasattr(self, "lbl_ds4_conn_info"):
-                    self.lbl_ds4_conn_info.setText(f"Connecting to controller {detected_str}...")
-                self.lbl_ds4_status.setText(f"Status: DualShock 4 detected {detected_str} (Connecting...)")
+                    self.lbl_ds4_conn_info.setText(f"Connecting to {detected_name} {detected_str}...")
+                self.lbl_ds4_status.setText(f"Status: {detected_name} detected {detected_str} (Connecting...)")
                 self.lbl_ds4_status.setStyleSheet(
                     f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['status_warn']}; background: transparent; border: none;"
                 )
@@ -2775,7 +2850,7 @@ class LegacySensorQtGUI(QMainWindow):
                     self._is_connecting_ds4 = True
                     def _auto_connect_ds4():
                         try:
-                            ds4.connect()
+                            ds4.connect(permissive=perm)
                         except Exception:
                             pass
                         finally:
@@ -2798,8 +2873,9 @@ class LegacySensorQtGUI(QMainWindow):
 
     def _test_ds4_rumble(self):
         ds4 = get_ds4_controller()
+        perm = bool(self.cfg.get("ds4_permissive_mode", True))
         if not ds4.is_connected:
-            ds4.connect()
+            ds4.connect(permissive=perm)
         if ds4.is_connected:
             ds4.trigger_rumble(small=180, large=120, duration_sec=0.35)
         else:
@@ -2811,13 +2887,14 @@ class LegacySensorQtGUI(QMainWindow):
 
     def _reconnect_ds4(self):
         if hasattr(self, "lbl_ds4_conn_info"):
-            self.lbl_ds4_conn_info.setText("Connecting to DualShock® 4 (USB / Bluetooth HID)...")
+            self.lbl_ds4_conn_info.setText("Connecting to controller (USB / Bluetooth HID)...")
+        perm = bool(self.cfg.get("ds4_permissive_mode", True))
         def worker():
             ds4 = get_ds4_controller()
             if ds4.is_connected:
                 ds4.disconnect()
                 time.sleep(0.1)
-            ok = ds4.connect()
+            ok = ds4.connect(permissive=perm)
             if ok:
                 ds4.trigger_rumble(small=140, large=80, duration_sec=0.15)
             QtCore.QMetaObject.invokeMethod(self, "_finish_ds4_reconnect", Qt.ConnectionType.QueuedConnection)
@@ -2825,6 +2902,14 @@ class LegacySensorQtGUI(QMainWindow):
 
     @Slot()
     def _finish_ds4_reconnect(self):
+        self._update_ds4_ui_readout()
+
+    def _on_ds4_permissive_changed(self, state: int):
+        val = (state == Qt.CheckState.Checked.value or state == 2)
+        self.cfg["ds4_permissive_mode"] = val
+        ds4 = get_ds4_controller()
+        ds4.permissive_mode = val
+        self._save_settings()
         self._update_ds4_ui_readout()
 
     def _on_ds4_hand_changed(self, idx: int):

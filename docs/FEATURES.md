@@ -28,8 +28,8 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
 | **Rastreamento Multi-Jogador (2P)** | 🟡 Parcialmente Implementado | `pose_tracker.py` | O MediaPipe suporta `num_poses=2`, mas o Lite foca em 1P. |
 | **Auto-Framing / FaceFollow PTZ** | ✅ Totalmente Implementado | `pose_tracker.py` | Auto-framing digital com zoom suave (1.22x) e centralização dinâmica do rosto para a foto/avatar do dançarino no Just Dance. |
 | **Celular Virtual (Emulador JD Controller via Câmera)** | ✅ Totalmente Implementado | `virtual_phone.py` / `ui/gui_qt.py` | Emula um smartphone conectado via WebSocket local (`/smartphone`) e converte o movimento 3D da mão na câmera em dados de acelerômetro 3D (`JD_PhoneScoringData`) e comandos de menu para músicas que só suportam controle de mão. |
-| **DualShock 4 [EXPERIMENTAL]** | ✅ Totalmente Implementado | `sensor/ds4_controller.py` / `ui/gui_qt.py` | Driver nativo Bluetooth HID (500+ Hz) com handshake 0x11, leitura do acelerômetro 3D, feedback de botões, rumble háptico, telemetria em tempo real e ponte para o Just Dance via Virtual Phone. |
-| **Benchmark de Telemetria & Calibração Adaptativa** | ✅ Totalmente Implementado | `sensor/telemetry_benchmark.py` / `sensor/virtual_phone.py` / `ui/gui_qt.py` | Auto-gravação sincronizada de telemetria por música (`mapName`), comparação temporal e de picos G entre Câmera e DualShock 4 com cálculo de latência e ganho sugerido, e calibração adaptativa em tempo real baseada em feedbacks (*PERFECT*, *GOOD*, *OK*). |
+| **DualShock 4 & Controles Compatíveis (Nível A) [EXPERIMENTAL]** | ✅ Totalmente Implementado | `sensor/ds4_controller.py` / `ui/gui_qt.py` | Driver nativo Bluetooth/USB HID (500+ Hz) com suporte a DS4 original, controles licenciados de terceiros (Hori, Nacon, Razer, Astro, Scuf) e clones/réplicas (ShanWan, DragonRise) com diagnóstico automático de IMU congelado (0G). |
+| **Benchmark de Telemetria & Calibração Adaptativa** | 🔒 Preservado / Oculto na UI | `sensor/telemetry_benchmark.py` / `ui/benchmark_dialog.py` | Módulo de benchmark comparativo de aceleração (Câmera vs DS4) e auto-gravação por música preservado no código, porém desabilitado por padrão e removido da interface visual para manter o design enxuto. |
 | **Modo Headless (Sem Janela)** | ⏳ Planejado | `tracking_session.py` | Rastrear em background sem gastar GPU com janela gráfica. |
 
 ---
@@ -365,6 +365,40 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
   - **Balanced (`balanced`) [RECOMMENDED] ➔ `full`:** Usa `pose_landmarker_full.task` (EMA 0.55 / Conf 0.50) para o melhor equilíbrio entre estabilidade anatômica, rastreamento de mãos e desempenho.
   - **Ultra Stable (`stable`) ➔ `heavy`:** Usa `pose_landmarker_heavy.task` (EMA 0.35 / Conf 0.40) para máxima precisão de juntas e resistência a oclusões/baixa iluminação.
 - **Resolução e Fallback Seguros:** `_resolve_model_path(model_variant)` seleciona o modelo correspondente (incluindo builds PyInstaller `_MEIPASS`) com fallback automático para `lite` caso algum arquivo `.task` não esteja disponível.
+
+### 28. Expansão DualShock 4: Suporte a Controles de Terceiros e Clones (Nível A) e Diagnóstico IMU (v0.5.3 Alpha)
+- **Ampla Compatibilidade com Controles de PS4 (Nível A):**
+  - Suporte estendido para além do DualShock 4 original da Sony (`0x054C`), adicionando identificação e aceitação direta de controles de terceiros licenciados:
+    - **Hori:** PS4 Fighting Commander, Mini Gamepad (`0x0F0D`).
+    - **Nacon:** Revolution Pro Controller 1, 2 e 3 (`0x146B`).
+    - **Razer:** Raiju Ultimate e Raiju Tournament (`0x1532`).
+    - **Astro:** C40 TR Controller (`0x9886`).
+    - **Scuf:** Vantage e Impact (`0x2E95`).
+    - **Qanba:** Controles arcade e pads PS4 (`0x2C22`).
+    - **Mad Catz:** FightPad Pro (`0x0738`).
+  - Reconhecimento de chipsets comuns em réplicas/clones genéricos sem fio:
+    - **ShanWan:** Chips comuns em réplicas de DS4 (`0x2563`).
+    - **DragonRise:** Chips genéricos USB/Bluetooth (`0x0079`).
+- **Modo Permissivo Configurável (`ds4_permissive_mode`):**
+  - Adicionado toggle visual na aba DualShock 4 da interface Qt 6 e chave correspondente em `config.json` (`ds4_permissive_mode: True` por padrão).
+  - Quando ativado, permite que qualquer controle HID compatível com o layout de relatório do DualShock 4 seja enumerado e aceito.
+  - **Proteção contra Falsos Positivos:** Controles Microsoft Xbox (`VID 0x045E`) são explicitamente bloqueados por blacklist interna, pois não possuem sensores de movimento físicos (acelerômetro/giroscópio).
+- **Detecção e Nomenclatura Automática (`detect_controller_name`):**
+  - O sistema identifica automaticamente a marca/modelo do controle a partir do ID do dispositivo e exibe seu nome exato na interface (ex.: *"Razer Raiju (PS4)"*, *"ShanWan DS4 Clone"* ou *"Generic / Clone DS4"*), tanto no card de status da UI quanto no HUD da sessão OpenCV.
+- **Diagnóstico Automático de Sensor IMU Travado (`imu_frozen`):**
+  - Controles piratas ou réplicas muitas vezes conectam por Bluetooth com sucesso, mas seus firmwares não transmitem os bytes do acelerômetro pelo ar, gerando um vetor constante de $0.0G$ (a gravidade terrestre normal em repouso deve registrar sempre $\sim 1.0G$).
+  - O driver analisa a magnitude do acelerômetro em tempo real. Se registrar magnitude $< 0.05G$ continuamente por 50 leituras consecutivas, o estado `imu_frozen` é ativado.
+  - A interface gráfica e o HUD de rastreamento exibem um aviso em destaque em vermelho alertando o usuário: `"[!] IMU SENSOR FROZEN (0G) — Conecte via cabo USB!"`, orientando o uso do cabo para recuperar o stream de aceleração física.
+
+### 29. Desativação e Ocultação do Telemetry Benchmark na Interface Gráfica (v0.5.4 Alpha)
+- **Remoção Visual da UI:**
+  - O bloco visual dedicado de Benchmark de Telemetria (`self.benchmark_box`), seus botões de comparação gráfica e toggles de auto-captura foram removidos da árvore de exibição da aba Experimental (`page_exp`), simplificando e limpando o painel de configurações para o usuário final.
+- **Desativação Segura por Padrão:**
+  - Configurações persistidas em `config.json` e `DEFAULT_CONFIG` (`benchmark_auto_record: false` e `virtual_phone_auto_record: false`) garantem que o sistema não inicie gravação contínua em segundo plano sem necessidade.
+- **Preservação Integral do Código (Sem Exclusão):**
+  - Todo o motor matemático de parsing de CSVs, interpolação temporal, correlação cruzada e ganho sugerido (`sensor/telemetry_benchmark.py`), bem como a janela de renderização gráfica vetorial (`ui/benchmark_dialog.py`), permanecem 100% íntegros, testados e funcionais no repositório.
+  - Os objetos continuam instanciados e conectados internamente no controlador Qt, permitindo que o recurso seja reativado no futuro sem necessidade de reimplementação.
+
 
 ---
 

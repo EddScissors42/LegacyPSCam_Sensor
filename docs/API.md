@@ -293,18 +293,44 @@ O pacote `ui` expõe uma interface modular baseada em **PySide6 (Qt 6)**:
 
 ---
 
-## 8. Driver Bluetooth HID do DualShock 4 (`sensor.ds4_controller`)
+## 8. Driver Bluetooth/USB HID do DualShock 4 e Compatíveis (`sensor.ds4_controller`)
 
-Módulo nativo Windows HID (zero dependências) para leitura de alta taxa (500+ Hz) do controle DualShock 4 via Bluetooth.
+Módulo nativo Windows HID (zero dependências) para leitura de alta taxa (500+ Hz) do controle DualShock 4 e gamepads compatíveis (Nível A) via Bluetooth ou cabo USB.
+
+### Constantes e Estruturas de Descoberta
+- `KNOWN_DS4_TARGETS: Dict[str, Tuple[str, ...]]`: Mapeamento de VIDs e PIDs conhecidos:
+  - Sony (`054c`): `05c4` (V1), `09cc` (V2), `0ba0` (Dongle USB sem fio).
+  - Hori (`0f0d`): `005e`, `0066`, `00ee`, `011c`.
+  - Nacon (`146b`): `06cd`, `06e5`, `0d01`, `0d02`.
+  - Razer (`1532`): `1000`, `1004`, `1007`, `1008`, `1009`, `100a` (Raiju Ultimate/Tournament).
+  - Astro (`9886`): `0025` (C40 TR).
+  - Scuf (`2e95`): `7725`, `9925` (Vantage / Impact).
+  - Qanba (`2c22`): `2000`, `2300`, `2500`.
+  - Mad Catz (`0738`): `5252`, `8250`, `8384`.
+  - ShanWan (`2563`): `0575`, `0555`, `0523` (clones sem fio).
+  - DragonRise (`0079`): `181b`, `181c`, `181d` (clones sem fio).
+- `BLACKLISTED_DEVICE_VENDORS = ("045e",)`: Dispositivos explicitamente bloqueados (controles Microsoft Xbox sem giroscópio/acelerômetro).
 
 ### Funções e Classes Principais
-- `find_ds4_devices() -> List[str]`: Enumera as interfaces HID PnP do Windows sob a GUID `{4d1e55b2-f16f-11cf-88cb-001111000030}` filtrando por VID `0x054C` e PID `0x05C4` / `0x09CC`.
+- `find_ds4_devices(permissive: bool = True) -> List[str]`: Enumera as interfaces HID PnP do Windows sob a GUID `{4d1e55b2-f16f-11cf-88cb-001111000030}`. No modo estrito filtra por Sony (`0x054C`), e no modo permissivo aceita os alvos conhecidos e qualquer controle HID compatível (exceto Xbox).
+- `is_compatible_ds4_path(path: str, permissive: bool = True) -> bool`: Valida se o caminho HID pertence a um dispositivo compatível.
+- `detect_controller_name(path: str) -> str`: Identifica e retorna o nome amigável do modelo (ex.: `"Razer Raiju (PS4)"`, `"ShanWan DS4 Clone"` ou `"Generic / Clone DS4"`).
 - `get_ds4_controller() -> DS4Controller`: Retorna a instância singleton do controlador.
-- `DS4Controller.connect(device_path=None) -> bool`: Abre o handle Win32, realiza o handshake do Relatório Estendido 0x11, aciona vibração háptica de boas-vindas e inicia a thread de amostragem.
-- `DS4Controller.disconnect() -> None`: Desativa a barra de luz e fecha o handle Win32.
+- `DS4Controller.connect(device_path=None, permissive=None) -> bool`: Abre o handle Win32, realiza o handshake do Relatório Estendido 0x11 (se aplicável), detecta o nome do periférico, aciona vibração háptica de boas-vindas e inicia a thread de amostragem.
+- `DS4Controller.disconnect() -> None`: Desativa a barra de luz e fecha o handle Win32 de forma segura.
 - `DS4Controller.trigger_rumble(small, large, duration_sec) -> None`: Dispara um pulso háptico assíncrono.
 - `DS4Controller.set_lightbar(r, g, b) -> None`: Altera a cor RGB da barra de luz LED.
-- `DS4State`: Dataclass contendo `connected`, `battery_pct`, `is_charging`, `accel_g (ax, ay, az)`, `gyro (gx, gy, gz)`, `buttons` e `sample_rate_hz`.
+- `DS4State`: Dataclass contendo:
+  - `connected: bool`
+  - `is_usb: bool`
+  - `battery_pct: int`
+  - `is_charging: bool`
+  - `accel_g: Tuple[float, float, float]`
+  - `gyro: Tuple[float, float, float]`
+  - `buttons: Dict[str, bool]`
+  - `sample_rate_hz: float`
+  - `imu_frozen: bool`: Flag booleana que acusa quando a magnitude do acelerômetro é $< 0.05G$ por 50 leituras seguidas (sensor ausente ou sem envio pelo Bluetooth).
+  - `controller_name: str`: Nome legível do controle conectado.
 
 ### Estrutura do Pacote Bluetooth Output Report 0x11 (78 Bytes)
 - **Byte 0:** `0x11` (Report ID)

@@ -102,17 +102,22 @@ Por padrão, o executável do driver PSCam4Win (`PSCam4WinTray.exe`) possui uma 
 
 ---
 
-## 5. Pareamento e Uso do DualShock 4 (Modo Controle Bluetooth)
+## 5. Pareamento e Uso do DualShock 4 e Controles Compatíveis (Bluetooth / USB)
 
-Para utilizar o controle DualShock 4 como controle de mão (rastreando os movimentos pelo acelerômetro físico interno):
+Para utilizar o controle DualShock 4 ou controles compatíveis (Nível A) como controle de mão (rastreando os movimentos pelo acelerômetro físico interno):
 
-1. **Colocar o DualShock 4 em Modo de Pareamento:**
-   - Com o controle desligado, mantenha pressionados os botões **Share** e **PS** simultaneamente por 3 a 5 segundos até que a barra de luz comece a piscar rapidamente em branco.
+1. **Colocar o Controle em Modo de Pareamento (ou conectar via USB):**
+   - **DualShock 4:** Com o controle desligado, mantenha pressionados os botões **Share** e **PS** simultaneamente por 3 a 5 segundos até que a barra de luz comece a piscar rapidamente em branco.
+   - **Controles de Terceiros Licenciados (Hori, Nacon, Razer Raiju, Astro C40, Scuf, Qanba):** Siga as instruções do fabricante para pareamento Bluetooth no PC ou conecte o cabo USB / dongle sem fio correspondente.
+   - **Réplicas / Clones Genéricos (ShanWan, DragonRise):** Podem ser pareados via Bluetooth ou plugados diretamente via cabo USB.
 2. **Conectar no Windows:**
    - Acesse **Configurações do Windows > Bluetooth e Dispositivos > Adicionar Dispositivo > Bluetooth**.
-   - Selecione **Wireless Controller**. O Windows concluirá o pareamento e registrará o dispositivo HID Bluetooth.
+   - Selecione o dispositivo (geralmente listado como **Wireless Controller**). O Windows concluirá o pareamento e registrará o dispositivo HID.
 3. **No Legacy PSCam Sensor:**
    - Na barra lateral em `CAPTURE DEVICE`, clique em **DualShock 4**.
+   - O sistema reconhece o modelo automaticamente (ex.: *"Sony DualShock 4"*, *"Razer Raiju (PS4)"*, *"ShanWan DS4 Clone"* ou *"Generic / Clone DS4"*).
+   - O **Modo Permissivo** (`Permissive Discovery Mode`) vem ativado por padrão para aceitar controles de terceiros e clones.
+   - **Aviso de IMU Travado (`[!] IMU SENSOR FROZEN 0G`):** Se o seu controle for uma réplica genérica que conecta no Windows via Bluetooth mas não transmite os dados de movimento pelo ar (gerando 0G contínuo em vez de ~1.0G de gravidade em repouso), a interface exibirá um alerta em vermelho. **Basta conectar o controle pelo cabo USB** para que o stream de aceleração física funcione normalmente.
    - Na aba **Controller Settings**, você verá o status em tempo real (`Status: Connected • 500 Hz • Battery: X%`), a leitura contínua do acelerômetro 3D e poderá testar a vibração clicando em **Test Rumble Vibration**.
    - Clique em **START CONTROLLER (DS4)** para iniciar a sessão de dança!
 

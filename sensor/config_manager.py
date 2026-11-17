@@ -50,6 +50,7 @@ DEFAULT_CONFIG = {
     "virtual_phone_adaptive": False,
     "ds4_hand": "right",
     "ds4_sensitivity": 1.0,
+    "ds4_permissive_mode": True,
     "benchmark_auto_record": False
 }
 

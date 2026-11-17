@@ -18,6 +18,7 @@ from __future__ import annotations
 import ctypes
 from ctypes import wintypes
 from dataclasses import dataclass, field
+import math
 import struct
 import threading
 import time
@@ -40,6 +41,84 @@ DIGCF_DEVICEINTERFACE = 0x00000010
 SONY_VID = 0x054C
 DS4_PID_V1 = 0x05C4
 DS4_PID_V2 = 0x09CC
+
+# Target Vendor and Product IDs for Official Sony DS4, Licensed Third-Party & Known Clone Chips
+KNOWN_DS4_TARGETS: Dict[str, Tuple[str, ...]] = {
+    "054c": ("05c4", "09cc", "0ba0"),  # Official Sony DS4 v1, v2, USB Wireless Adapter
+    "0f0d": ("0055", "0066", "0084", "00a0", "00ee", "011c", "00c1"),  # Hori (Onyx, Mini, Fighting Commander)
+    "146b": ("0601", "0602", "0603", "0604", "0605", "0606", "0609", "0d01", "0d02", "0d08"),  # Nacon (Revolution Pro, Compact)
+    "1532": ("1000", "1004", "1007", "1008", "1009", "100a"),  # Razer Raiju series (Ultimate, Tournament)
+    "9886": ("0025",),  # Astro Gaming C40 TR
+    "2e95": ("7725", "9925"),  # Scuf Gaming (Vantage / Impact)
+    "2c22": ("2000", "2300", "2500"),  # Qanba PS4 controllers
+    "0738": ("5252", "8250", "8384"),  # Mad Catz PS4
+    "2563": ("0575", "0555", "0523"),  # ShanWan clone chips commonly found in generic wireless DS4 replicas
+    "0079": ("181b", "181c", "181d"),  # DragonRise / Generic wireless clones
+}
+
+# Blacklisted devices that should NEVER be treated as a DS4 clone (e.g. Xbox controllers without motion IMU)
+BLACKLISTED_DEVICE_VENDORS = ("045e",)  # Microsoft Xbox controllers (no accelerometer)
+
+
+def detect_controller_name(path: str) -> str:
+    """Returns a friendly vendor / controller name based on device path identifiers."""
+    p_lower = path.lower()
+    if "1532" in p_lower:
+        return "Razer Raiju (PS4)"
+    elif "146b" in p_lower:
+        return "Nacon Revolution (PS4)"
+    elif "0f0d" in p_lower:
+        return "Hori Controller (PS4)"
+    elif "9886" in p_lower:
+        return "Astro C40 TR (PS4)"
+    elif "2e95" in p_lower:
+        return "Scuf Controller (PS4)"
+    elif "2c22" in p_lower:
+        return "Qanba Controller (PS4)"
+    elif "0738" in p_lower:
+        return "Mad Catz (PS4)"
+    elif "2563" in p_lower:
+        return "ShanWan DS4 Clone"
+    elif "0079" in p_lower:
+        return "DragonRise DS4 Clone"
+    elif "054c" in p_lower:
+        return "Sony DualShock 4"
+    return "Generic / Clone DS4"
+
+
+def is_known_ds4_target(path: str) -> bool:
+    """Returns True if the path matches an explicit VID/PID pair in KNOWN_DS4_TARGETS."""
+    path_lower = path.lower()
+    for vid, pids in KNOWN_DS4_TARGETS.items():
+        if f"vid_{vid}" in path_lower or f"vid&{vid}" in path_lower or vid in path_lower:
+            if any(f"pid_{pid}" in path_lower or f"pid&{pid}" in path_lower or pid in path_lower for pid in pids):
+                return True
+    return False
+
+
+def is_compatible_ds4_path(path: str, permissive: bool = True) -> bool:
+    """
+    Checks if a Windows HID device path belongs to an official Sony DS4,
+    a licensed third-party controller (Hori, Nacon, Razer, Astro, Scuf),
+    a known clone chip (ShanWan, DragonRise), or matches permissive mode criteria.
+    """
+    path_lower = path.lower()
+
+    if any(bvid in path_lower for bvid in BLACKLISTED_DEVICE_VENDORS):
+        return False
+
+    # 1. Check known vendor & product ID pairs
+    if is_known_ds4_target(path_lower):
+        return True
+
+    # 2. Permissive mode: allow unknown USB/Bluetooth HID devices with VID/PID that are not blacklisted
+    if permissive:
+        if "kbd" in path_lower or "mou" in path_lower:
+            return False
+        if "vid" in path_lower and "pid" in path_lower:
+            return True
+
+    return False
 
 # Win32 Structures
 class GUID(ctypes.Structure):
@@ -140,9 +219,59 @@ def _init_win32_apis():
 _setupapi, _hid, _kernel32 = _init_win32_apis()
 
 
-def find_ds4_devices() -> List[str]:
+def _probe_hid_gamepad_caps(path: str, is_known_target: bool = False) -> bool:
     """
-    Scans Windows PnP device interfaces for connected Sony DualShock 4 controllers.
+    Verifies via HidD_GetPreparsedData / HidP_GetCaps whether a live Windows HID path
+    is a valid Gamepad/Joystick interface with InputReportByteLength >= 64.
+    """
+    h = _kernel32.CreateFileW(
+        path,
+        GENERIC_READ | GENERIC_WRITE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
+        None,
+        OPEN_EXISTING,
+        0,
+        None,
+    )
+    if h == -1 or h == wintypes.HANDLE(-1).value:
+        h = _kernel32.CreateFileW(
+            path,
+            GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            None,
+            OPEN_EXISTING,
+            0,
+            None,
+        )
+    if h == -1 or h == wintypes.HANDLE(-1).value:
+        return False
+
+    valid = False
+    try:
+        prep = ctypes.c_void_p()
+        if _hid.HidD_GetPreparsedData(h, ctypes.byref(prep)):
+            caps = HIDP_CAPS()
+            if _hid.HidP_GetCaps(prep, ctypes.byref(caps)):
+                in_len = int(caps.InputReportByteLength)
+                usage_page = int(caps.UsagePage)
+                usage = int(caps.Usage)
+                if in_len >= 64:
+                    if is_known_target:
+                        valid = True
+                    elif usage_page == 0x01 and usage in (0x04, 0x05):
+                        valid = True
+            _hid.HidD_FreePreparsedData(prep)
+    except Exception:
+        pass
+    finally:
+        _kernel32.CloseHandle(h)
+    return valid
+
+
+def find_ds4_devices(permissive: bool = True) -> List[str]:
+    """
+    Scans Windows PnP device interfaces for connected Sony DualShock 4 controllers,
+    compatible third-party controllers (Nacon, Razer, Hori, Astro, Scuf) or clone chips.
     Returns a list of device interface paths.
     """
     hid_guid = GUID()
@@ -188,10 +317,10 @@ def find_ds4_devices() -> List[str]:
                 hdev, ctypes.byref(idata), ctypes.byref(detail), req_size, None, None
             ):
                 path = detail.DevicePath
-                path_lower = path.lower()
-                # Check for Sony VID (0x054C) and DS4 PIDs (0x05C4, 0x09CC, 0x0BA0)
-                if "054c" in path_lower and any(pid in path_lower for pid in ("09cc", "05c4", "0ba0")):
-                    ds4_paths.append(path)
+                if is_compatible_ds4_path(path, permissive=permissive):
+                    known = is_known_ds4_target(path)
+                    if _probe_hid_gamepad_caps(path, is_known_target=known):
+                        ds4_paths.append(path)
     finally:
         _setupapi.SetupDiDestroyDeviceInfoList(hdev)
 
@@ -209,6 +338,8 @@ class DS4State:
     buttons: Dict[str, bool] = field(default_factory=dict)
     sample_rate_hz: float = 0.0
     last_update_ts: float = 0.0
+    imu_frozen: bool = False
+    controller_name: str = "DualShock 4"
 
 
 class DS4Controller:
@@ -244,6 +375,7 @@ class DS4Controller:
         # Configurable attributes
         self.hand: str = "right"
         self.sensitivity: float = 1.0
+        self.permissive_mode: bool = True
 
         # State snapshot
         self.state = DS4State()
@@ -264,16 +396,17 @@ class DS4Controller:
     def is_connected(self) -> bool:
         return self._handle is not None and self.state.connected
 
-    def connect(self, device_path: Optional[str] = None) -> bool:
+    def connect(self, device_path: Optional[str] = None, permissive: Optional[bool] = None) -> bool:
         """
-        Connects to the DualShock 4 controller (via USB or Bluetooth),
+        Connects to the DualShock 4 or compatible controller (via USB or Bluetooth),
         performs handshake, and starts high-frequency HID polling.
         """
         with self._lock:
             if self.is_connected:
                 return True
 
-            paths = [device_path] if device_path else find_ds4_devices()
+            perm = self.permissive_mode if permissive is None else permissive
+            paths = [device_path] if device_path else find_ds4_devices(permissive=perm)
             if not paths:
                 self.state.connected = False
                 self.state.is_usb = False
@@ -350,7 +483,7 @@ class DS4Controller:
             self._output_len = out_len
             self._stop_event.clear()
 
-            # Detect USB vs Bluetooth connection
+            # Detect USB vs Bluetooth connection & friendly controller name
             path_lower = chosen_path.lower()
             self.is_usb = (
                 "bth" not in path_lower
@@ -359,6 +492,8 @@ class DS4Controller:
             )
             self.state.is_usb = self.is_usb
             self.state.connected = True
+            self.state.controller_name = detect_controller_name(chosen_path)
+            self.state.imu_frozen = False
 
             # Perform handshake + welcome rumble buzz
             self._send_output_report(
@@ -418,6 +553,8 @@ class DS4Controller:
             self.state.connected = False
             self.state.is_usb = False
             self.state.sample_rate_hz = 0.0
+            self.state.imu_frozen = False
+            self.state.controller_name = "DualShock 4"
             self.is_usb = False
 
         if self._thread and self._thread.is_alive():
@@ -531,6 +668,7 @@ class DS4Controller:
 
         samples_count = 0
         samples_time_start = time.perf_counter()
+        zero_accel_count = 0
 
         self.state.connected = True
         self.state.is_usb = self.is_usb
@@ -613,6 +751,17 @@ class DS4Controller:
             phone_ay = round(raw_ay, 4)
             phone_az = round(raw_az, 4)
 
+            # IMU Health check (monitors for 0.0G or frozen sensor stream common in clones on Bluetooth)
+            accel_mag = math.sqrt(phone_ax * phone_ax + phone_ay * phone_ay + phone_az * phone_az)
+            if accel_mag < 0.05:
+                zero_accel_count += 1
+                if zero_accel_count >= 50 and not self.state.imu_frozen:
+                    self.state.imu_frozen = True
+            else:
+                zero_accel_count = 0
+                if self.state.imu_frozen:
+                    self.state.imu_frozen = False
+
             # Feed to Virtual Phone scoring bridge if enabled
             if vphone.enabled:
                 vphone.update_from_hardware_accel(phone_ax, phone_ay, phone_az)
@@ -675,6 +824,7 @@ class DS4Controller:
         self.state.connected = False
         self.state.is_usb = False
         self.state.sample_rate_hz = 0.0
+        self.state.imu_frozen = False
 
     def _handle_button_press(self, btn: str, vphone) -> None:
         """

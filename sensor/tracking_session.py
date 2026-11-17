@@ -301,8 +301,9 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
     from sensor.virtual_phone import get_virtual_phone
 
     ds4 = get_ds4_controller()
+    ds4.permissive_mode = bool(config.get("ds4_permissive_mode", True))
     if not ds4.is_connected:
-        ds4.connect()
+        ds4.connect(permissive=ds4.permissive_mode)
 
     hand = str(config.get("ds4_hand", "right")).lower()
     sens = float(config.get("ds4_sensitivity", 1.0))
@@ -359,12 +360,14 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
 
             # Render DualShock 4 HUD Header (PlayStation Blue banner)
             cv2.rectangle(frame, (0, 0), (canvas_w, 54), (156, 67, 0), -1)
+            conn_method = "USB" if ds4.is_usb else "BLUETOOTH"
+            c_header = f"{st.controller_name.upper()} ({conn_method})"
             cv2.putText(
                 frame,
-                "DUALSHOCK 4 MOTION SENSOR (BLUETOOTH)",
+                c_header,
                 (18, 34),
                 cv2.FONT_HERSHEY_DUPLEX,
-                0.60,
+                0.54,
                 (255, 255, 255),
                 1,
                 cv2.LINE_AA,
@@ -414,7 +417,7 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
                 cv2.LINE_AA,
             )
 
-            # Disconnected alert banner
+            # Disconnected / IMU Frozen alert banner
             if not ds4.is_connected:
                 cv2.rectangle(frame, (18, 132), (canvas_w - 18, 172), (20, 20, 140), -1)
                 cv2.rectangle(frame, (18, 132), (canvas_w - 18, 172), (60, 60, 220), 1)
@@ -424,6 +427,19 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
                     (30, 158),
                     cv2.FONT_HERSHEY_DUPLEX,
                     0.46,
+                    (255, 255, 255),
+                    1,
+                    cv2.LINE_AA,
+                )
+            elif ds4.state.imu_frozen:
+                cv2.rectangle(frame, (18, 132), (canvas_w - 18, 172), (0, 70, 180), -1)
+                cv2.rectangle(frame, (18, 132), (canvas_w - 18, 172), (0, 140, 255), 1)
+                cv2.putText(
+                    frame,
+                    "[!] SENSOR IMU ZERADO/TRAVADO (0G) — Conecte via cabo USB!",
+                    (26, 158),
+                    cv2.FONT_HERSHEY_DUPLEX,
+                    0.44,
                     (255, 255, 255),
                     1,
                     cv2.LINE_AA,
@@ -540,7 +556,7 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
                 reconnect_feedback_until = time.time() + 1.5
                 ds4.disconnect()
                 time.sleep(0.15)
-                success = ds4.connect()
+                success = ds4.connect(permissive=ds4.permissive_mode)
                 if success:
                     ds4.trigger_rumble(small=160, large=100, duration_sec=0.25)
                     print("[INFO] DualShock 4 reconnected successfully!")

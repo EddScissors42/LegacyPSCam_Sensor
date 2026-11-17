@@ -37,9 +37,10 @@
     "virtual_phone_hand": "right",
     "virtual_phone_sensitivity": 1.0,
     "virtual_phone_name": "Legacy PSCam Phone",
-    "virtual_phone_auto_record": true,
+    "virtual_phone_auto_record": false,
     "virtual_phone_adaptive": false,
     "ds4_hand": "right",
     "ds4_sensitivity": 1.0,
-    "benchmark_auto_record": true
+    "ds4_permissive_mode": true,
+    "benchmark_auto_record": false
 }

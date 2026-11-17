@@ -169,12 +169,14 @@ flowchart TD
 ### 8. `config_manager.py` — Persistência de Configurações
 - **Responsabilidade:** Lê, valida e grava as preferências do usuário no arquivo `config.json`. Oferece fallbacks robustos caso o arquivo seja corrompido ou inacessível.
 
-### 9. `ds4_controller.py` — Driver Nativo DualShock 4 Bluetooth HID
-- **Responsabilidade:** Comunicação direta de ultra-alta frequência via Win32 SetupAPI e HID com controles Sony DualShock 4 conectados por Bluetooth:
+### 9. `ds4_controller.py` — Driver Nativo DualShock 4 & Controles Compatíveis (Nível A) Bluetooth/USB HID
+- **Responsabilidade:** Comunicação direta de ultra-alta frequência via Win32 SetupAPI e HID com controles Sony DualShock 4, controles licenciados de terceiros (Hori, Nacon, Razer, Astro, Scuf) e réplicas/clones com chipsets comuns (ShanWan, DragonRise) conectados por Bluetooth ou USB:
   1. Suporta nativamente relatórios padrão `0x01` (64 bytes) e relatórios estendidos `0x11` (78 bytes).
   2. Suporte adaptativo de Output Report para vibração háptica (rumble) e lightbar RGB (`32 bytes` report `0x05` ou `78 bytes` report `0x11` com CRC-32).
   3. Desacoplamento total de hardware de câmera durante o modo de controle.
   4. Mapeamento de 3 eixos de aceleração diretamente para o protocolo de pontuação do Just Dance PC através do `virtual_phone.py`.
+  5. Modo Permissivo com identificação amigável do modelo (`detect_controller_name`) e bloqueio preventivo de gamepads Xbox.
+  6. Diagnóstico contínuo de integridade do sensor de aceleração (`imu_frozen`) para sinalizar réplicas que necessitam de conexão cabeada USB.
 
 ### 10. `virtual_phone.py` — Emulador de Celular UbiArt Just Dance Controller & Calibração Adaptativa
 - **Responsabilidade:** Emula um smartphone conectado via WebSocket local (`/smartphone`), permitindo dançar músicas que exigem controle de mão tanto por visão computacional da mão quanto via hardware físico (DualShock 4).
@@ -191,6 +193,7 @@ flowchart TD
   3. Cálculo de métricas comparativas: correlação de Pearson, atraso/latência média em milissegundos, picos G e P95.
   4. Cálculo matemático do ganho de sensibilidade sugerido para equiparar a curva da câmera à aceleração real do acelerômetro de hardware.
   5. Agrupamento de sessões prontas na pasta `logs/` para exibição instantânea no `TelemetryBenchmarkDialog`.
+  6. *Nota de UI:* Módulo e caixas de diálogo preservados de forma íntegra no backend, porém desabilitados por padrão (`benchmark_auto_record: false`) e desacoplados da interface gráfica Qt 6 (`gui_qt.py`) para manter a experiência enxuta.
 
 ---
 

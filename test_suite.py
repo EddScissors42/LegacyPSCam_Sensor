@@ -44,6 +44,8 @@ def test_config():
     cfg = cfg_mgr.config
     assert "camera_mode" in cfg
     assert "smoothing_alpha" in cfg
+    assert "ds4_permissive_mode" in cfg
+    assert cfg["ds4_permissive_mode"] is True
     assert parse_preset("1280x800 @ 60 FPS") == (1280, 800, 60)
     assert parse_preset("640x480 @ 30 FPS") == (640, 480, 30)
     assert "1280x800 @ 60 FPS" in PRESETS_PSCAM
@@ -573,7 +575,7 @@ def test_project_structure():
         assert hasattr(win, "page_exp"), "Experimental page widget must exist"
         assert hasattr(win, "chk_vphone_enabled"), "Celular Virtual toggle must exist in Experimental"
         assert hasattr(win, "btn_vphone_ftue"), "Skip Finish button must exist in Celular Virtual block"
-        assert hasattr(win, "benchmark_box"), "Dedicated Benchmark feature box must exist in Experimental tab"
+        assert hasattr(win, "benchmark_box") and not win.benchmark_box.isVisible(), "Benchmark feature box must exist preserved but hidden from UI"
         assert hasattr(win, "chk_benchmark_enabled"), "Benchmark auto-record toggle must exist"
         assert hasattr(win, "lbl_benchmark_song"), "Benchmark song label must exist"
         assert hasattr(win, "btn_open_benchmark"), "Benchmark open button must exist"
@@ -629,6 +631,7 @@ def test_project_structure():
         assert hasattr(win, "page_ds4"), "DualShock 4 page widget must exist"
         assert hasattr(win, "btn_ds4_rumble"), "Test rumble button must exist in DS4 view"
         assert hasattr(win, "btn_ds4_reconnect"), "Reconnect button must exist in DS4 view"
+        assert hasattr(win, "chk_ds4_permissive"), "Permissive mode checkbox must exist in DS4 settings"
 
         win._set_mode("ds4")
         assert win.active_tab == "controller", "Should switch to controller settings tab on ds4 mode"
@@ -655,11 +658,25 @@ def test_project_structure():
         win.close()
         app.processEvents()
 
-    from sensor.ds4_controller import get_ds4_controller, DS4Controller, DS4State, find_ds4_devices
+    from sensor.ds4_controller import (
+        get_ds4_controller, DS4Controller, DS4State, find_ds4_devices,
+        KNOWN_DS4_TARGETS, is_compatible_ds4_path, detect_controller_name
+    )
     ds4 = get_ds4_controller()
     assert hasattr(ds4, "is_usb")
+    assert hasattr(ds4, "permissive_mode")
     assert hasattr(ds4.state, "is_usb")
+    assert hasattr(ds4.state, "imu_frozen")
+    assert hasattr(ds4.state, "controller_name")
     assert isinstance(find_ds4_devices(), list)
+
+    # Level A compatibility verification:
+    assert is_compatible_ds4_path("hid#vid_054c&pid_09cc") is True
+    assert is_compatible_ds4_path("hid#vid_1532&pid_1000") is True # Razer Raiju
+    assert is_compatible_ds4_path("hid#vid_045e&pid_02e0") is False # Xbox blacklisted
+    assert detect_controller_name("hid#vid_1532&pid_1000") == "Razer Raiju (PS4)"
+    assert detect_controller_name("hid#vid_2563&pid_0575") == "ShanWan DS4 Clone"
+    assert detect_controller_name("hid#vid_9999&pid_8888") == "Generic / Clone DS4"
 
     from ui.widgets import pil_to_qpixmap, SlidingStackedWidget, DeviceNavCard, CalibPresetCard
     from ui.benchmark_dialog import TelemetryBenchmarkChart, TelemetryBenchmarkDialog
