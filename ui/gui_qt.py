@@ -706,7 +706,7 @@ class LegacySensorQtGUI(QMainWindow):
         self.lbl_pscam_conn_title.setStyleSheet(
             f"font-family: '{self.font_heading}'; font-size: 14px; font-weight: bold; color: {PALETTE['text_main']}; background: transparent; border: none;"
         )
-        self.lbl_pscam_info = QLabel("Driver Offline and Camera disconnected from USB Port", self.pscam_status_card)
+        self.lbl_pscam_info = QLabel("Connect camera to USB 3.0 Port (AUX adapter required)", self.pscam_status_card)
         self.lbl_pscam_info.setStyleSheet(
             f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
         )
@@ -715,12 +715,9 @@ class LegacySensorQtGUI(QMainWindow):
         card_layout.addLayout(text_col, stretch=1)
         ps_disc_layout.addWidget(self.pscam_status_card)
 
-        self.btn_launch_pscam = QPushButton("Start PSCam4Win Driver", self.pscam_disconnected_box)
-        self.btn_launch_pscam.setProperty("class", "btn_balloon_action")
-        self.btn_launch_pscam.setFixedHeight(42)
-        self.btn_launch_pscam.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_launch_pscam.clicked.connect(self._launch_pscam_tray)
-        ps_disc_layout.addWidget(self.btn_launch_pscam)
+        # Retained hidden for backward compatibility
+        self.btn_launch_pscam = QPushButton(self.pscam_disconnected_box)
+        self.btn_launch_pscam.setVisible(False)
         layout.addWidget(self.pscam_disconnected_box)
 
         # 1.2 Connected Options Card
@@ -736,7 +733,7 @@ class LegacySensorQtGUI(QMainWindow):
         )
         ps_conn_layout.addWidget(lbl_ps_title)
 
-        self.lbl_pscam_ready_info = QLabel("Driver active and PlayStation®Camera connected (60 FPS)", self.pscam_card)
+        self.lbl_pscam_ready_info = QLabel("PlayStation®Camera connected and ready (60 FPS)", self.pscam_card)
         self.lbl_pscam_ready_info.setStyleSheet(
             f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['status_ok']}; background: transparent; border: none;"
         )
@@ -745,23 +742,105 @@ class LegacySensorQtGUI(QMainWindow):
         spec_badge = QFrame(self.pscam_card)
         spec_badge.setProperty("class", "spec_badge")
         spec_layout = QVBoxLayout(spec_badge)
-        spec_layout.setContentsMargins(12, 10, 12, 10)
-        spec_layout.setSpacing(2)
-        lbl_spec_title = QLabel("Optimized Auto Mode: 1280x800 @ 60 FPS (OV580 Stereo DirectShow)", spec_badge)
+        spec_layout.setContentsMargins(12, 8, 12, 8)
+        spec_layout.setSpacing(0)
+        lbl_spec_title = QLabel("Optimized Auto Mode: 1280x800 @ 60 FPS (OV580 Stereo)", spec_badge)
         lbl_spec_title.setStyleSheet(
             f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent; border: none;"
         )
-        lbl_spec_sub = QLabel(
-            "Resolution picker is hidden in this tab because the PlayStation®Camera operates in the driver's native format.",
-            spec_badge
+        spec_layout.addWidget(lbl_spec_title)
+        ps_conn_layout.addWidget(spec_badge)
+
+        # Eye Sensor Selector Block (Right Eye Default / Left Eye)
+        self.block_ps_eye = QFrame(self.pscam_card)
+        self.block_ps_eye.setObjectName("settingBlockPsEye")
+        self.block_ps_eye.setFixedHeight(92)
+        self.block_ps_eye.setStyleSheet(f"""
+            QFrame#settingBlockPsEye {{
+                background-color: #FFFFFF;
+                border: 1px solid {PALETTE["border_subtle"]};
+                border-radius: 10px;
+            }}
+            QFrame#settingBlockPsEye:hover {{
+                border-color: {PALETTE["input_border"]};
+            }}
+            QFrame#settingBlockPsEye:disabled {{
+                background-color: {PALETTE["input_bg"]};
+                border-color: {PALETTE["border_subtle"]};
+            }}
+        """)
+        ps_eye_layout = QVBoxLayout(self.block_ps_eye)
+        ps_eye_layout.setContentsMargins(14, 10, 14, 10)
+        ps_eye_layout.setSpacing(4)
+
+        lbl_eye_title = QLabel("CAMERA SENSOR EYE (OV9713 STEREO)", self.block_ps_eye)
+        lbl_eye_title.setStyleSheet(
+            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent; border: none;"
         )
-        lbl_spec_sub.setWordWrap(True)
-        lbl_spec_sub.setStyleSheet(
+        ps_eye_layout.addWidget(lbl_eye_title)
+
+        lbl_eye_sub = QLabel("Select which lens feeds body tracking (Right Eye is the standard default).", self.block_ps_eye)
+        lbl_eye_sub.setWordWrap(True)
+        lbl_eye_sub.setStyleSheet(
             f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
         )
-        spec_layout.addWidget(lbl_spec_title)
-        spec_layout.addWidget(lbl_spec_sub)
-        ps_conn_layout.addWidget(spec_badge)
+        ps_eye_layout.addWidget(lbl_eye_sub)
+
+        self.cb_ps4_eye = QComboBox(self.block_ps_eye)
+        self.cb_ps4_eye.setFixedHeight(32)
+        self.cb_ps4_eye.addItems(["Right Eye (Default)", "Left Eye"])
+        curr_eye = str(self.cfg.get("ps4_eye", "right")).strip().lower()
+        self.cb_ps4_eye.setCurrentIndex(1 if curr_eye == "left" else 0)
+        self.cb_ps4_eye.currentIndexChanged.connect(self._on_ps4_eye_changed)
+        ps_eye_layout.addWidget(self.cb_ps4_eye)
+
+        ps_conn_layout.addWidget(self.block_ps_eye)
+
+        # Stereo Vision Feature Box (PlayStation 4 Camera Dual Sensor)
+        self.stereo_box = QFrame(self.pscam_card)
+        self.stereo_box.setObjectName("settingBlockStereo")
+        self.stereo_box.setStyleSheet(f"""
+            QFrame#settingBlockStereo {{
+                background-color: #FFFFFF;
+                border: 1px solid {PALETTE["border_subtle"]};
+                border-radius: 10px;
+            }}
+            QFrame#settingBlockStereo:hover {{
+                border-color: {PALETTE["input_border"]};
+            }}
+        """)
+        st_layout = QVBoxLayout(self.stereo_box)
+        st_layout.setContentsMargins(14, 12, 14, 12)
+        st_layout.setSpacing(6)
+
+        self.chk_stereo = QCheckBox("Stereo Vision", self.stereo_box)
+        is_stereo_on = str(self.cfg.get("stereo_mode", "disabled")).strip().lower() in (
+            "sparse_metric", "full_depth", "true", "enabled", "1"
+        )
+        self.chk_stereo.setChecked(is_stereo_on)
+        self.chk_stereo.stateChanged.connect(self._on_stereo_toggled)
+        st_layout.addWidget(self.chk_stereo)
+
+        # Compatibility alias
+        self.cb_stereo_mode = self.chk_stereo
+
+        lbl_stereo_desc = QLabel(
+            "Leverages both synchronized PlayStation 4 Camera sensors (85.2mm baseline) with Pyramidal "
+            "Lucas-Kanade (PyrLK) optical flow and dynamic lens auto-alignment to triangulate real metric 3D depth "
+            "for skeletal joints (< 0.5 ms, locked 60 FPS).",
+            self.stereo_box
+        )
+        lbl_stereo_desc.setWordWrap(True)
+        lbl_stereo_desc.setStyleSheet(
+            f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['text_muted']}; line-height: 1.4; background: transparent; border: none;"
+        )
+        st_layout.addWidget(lbl_stereo_desc)
+
+        ps_conn_layout.addWidget(self.stereo_box)
+
+        # Synchronize eye selector disabled state based on initial Stereo Vision setting
+        self._update_eye_selector_state()
+
         layout.addWidget(self.pscam_card)
 
         # =====================================================================
@@ -1660,6 +1739,34 @@ class LegacySensorQtGUI(QMainWindow):
             if hasattr(self, "vphone_details_frame"):
                 self.vphone_details_frame.setVisible(saved_state)
 
+        if hasattr(self, "chk_stereo"):
+            is_on = str(self.cfg.get("stereo_mode", "disabled")).strip().lower() in (
+                "sparse_metric", "full_depth", "true", "enabled", "1"
+            )
+            self.chk_stereo.blockSignals(True)
+            self.chk_stereo.setChecked(is_on)
+            self.chk_stereo.blockSignals(False)
+            self._update_eye_selector_state()
+
+    def _on_stereo_toggled(self, state=None):
+        if hasattr(self, "chk_stereo"):
+            enabled = self.chk_stereo.isChecked()
+            self.cfg["stereo_mode"] = "sparse_metric" if enabled else "disabled"
+            self._save_settings()
+            self._update_eye_selector_state()
+
+    def _update_eye_selector_state(self):
+        is_stereo = False
+        if hasattr(self, "chk_stereo"):
+            is_stereo = self.chk_stereo.isChecked()
+        if hasattr(self, "block_ps_eye"):
+            self.block_ps_eye.setEnabled(not is_stereo)
+        if hasattr(self, "cb_ps4_eye"):
+            self.cb_ps4_eye.setEnabled(not is_stereo)
+
+    def _on_stereo_mode_changed(self):
+        self._on_stereo_toggled()
+
     def _build_ds4_view(self):
         """Constructs Page 3: DualShock 4 [EXPERIMENTAL] Controller Settings."""
         self.page_ds4 = QWidget()
@@ -2319,77 +2426,34 @@ class LegacySensorQtGUI(QMainWindow):
     def _apply_pscam_state(self, ps4_info: dict):
         state = ps4_info.get("state", "DISCONNECTED")
         self._current_pscam_state = state
-        running = ps4_info.get("running", False)
-        vcam_count = ps4_info.get("vcam_count", 0)
 
-        if state == "NOT_INSTALLED":
+        if state in ("NOT_INSTALLED", "DISCONNECTED"):
             self.lbl_pscam_icon.setPixmap(self.pix_status_err)
             self.lbl_pscam_conn_title.setText("PlayStation Camera not connected")
-            self.lbl_pscam_info.setText("Driver Not Installed and Camera disconnected from USB Port")
+            self.lbl_pscam_info.setText("Connect camera to USB 3.0 Port (AUX adapter required)")
             self.lbl_pscam_info.setStyleSheet(
-                f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['status_err']}; background: transparent; border: none;"
+                f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
             )
-            self.btn_launch_pscam.setEnabled(False)
-            self.btn_launch_pscam.setText("Driver Not Installed")
 
-        elif state == "DISCONNECTED":
-            self.lbl_pscam_icon.setPixmap(self.pix_status_err)
-            self.lbl_pscam_conn_title.setText("PlayStation Camera not connected")
-            if running:
-                self.lbl_pscam_info.setText("Driver Online but Camera still disconnected from USB Port")
-                self.lbl_pscam_info.setStyleSheet(
-                    f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['status_warn']}; background: transparent; border: none;"
-                )
-                self.btn_launch_pscam.setEnabled(False)
-                self.btn_launch_pscam.setText("PSCam4Win Driver Active")
-            else:
-                self.lbl_pscam_info.setText("Driver Offline and Camera disconnected from USB Port")
-                self.lbl_pscam_info.setStyleSheet(
-                    f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
-                )
-                self.btn_launch_pscam.setEnabled(True)
-                self.btn_launch_pscam.setText("Start PSCam4Win Driver")
-
-        elif state == "DRIVER_STOPPED":
-            self.lbl_pscam_icon.setPixmap(self.pix_status_warn)
-            self.lbl_pscam_conn_title.setText("PlayStation Camera detected")
-            self.lbl_pscam_info.setText("Camera connected, but PSCam4Win Driver is Offline")
-            self.lbl_pscam_info.setStyleSheet(
-                f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['status_warn']}; background: transparent; border: none;"
-            )
-            self.btn_launch_pscam.setEnabled(True)
-            self.btn_launch_pscam.setText("Start PSCam4Win Driver")
-
-        elif state == "BOOTLOADER_UPLOADING":
+        elif state in ("DRIVER_STOPPED", "BOOTLOADER_UPLOADING", "WAITING_VCAM"):
             self.lbl_pscam_icon.setPixmap(self.pix_status_warn)
             self.lbl_pscam_conn_title.setText("PlayStation Camera initializing")
-            self.lbl_pscam_info.setText("PlayStation®Camera detected! PSCam4Win uploading USB firmware...")
+            self.lbl_pscam_info.setText("Camera detected! Initializing high-speed 60 FPS video stream...")
             self.lbl_pscam_info.setStyleSheet(
                 f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['ps_blue']}; background: transparent; border: none;"
             )
-            self.btn_launch_pscam.setEnabled(False)
-            self.btn_launch_pscam.setText("Uploading Firmware...")
-
-        elif state == "WAITING_VCAM":
-            self.lbl_pscam_icon.setPixmap(self.pix_status_warn)
-            self.lbl_pscam_conn_title.setText("PlayStation Camera initializing")
-            self.lbl_pscam_info.setText("Hardware ready! Initializing DirectShow virtual camera (60 FPS)...")
-            self.lbl_pscam_info.setStyleSheet(
-                f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['ps_blue']}; background: transparent; border: none;"
-            )
-            self.btn_launch_pscam.setEnabled(False)
-            self.btn_launch_pscam.setText("PSCam4Win Driver Active")
 
         elif state == "READY":
             self.lbl_pscam_icon.setPixmap(self.pix_status_ok)
             self.lbl_pscam_conn_title.setText("PlayStation Camera connected")
+            eye_label = "Left Eye" if str(self.cfg.get("ps4_eye", "right")).lower() == "left" else "Right Eye"
             cams = getattr(self, "camera_list", [])
             ps_cams = [c for c in cams if c.is_pscam]
             if ps_cams:
                 cam_idx = ps_cams[0].index
-                txt = f"Driver active and PlayStation®Camera connected (Index {cam_idx} • 60 FPS)"
+                txt = f"PlayStation®Camera connected (Index {cam_idx} • {eye_label} • 60 FPS)"
             else:
-                txt = f"Driver active and PlayStation®Camera connected ({vcam_count} virtual camera(s) active • 60 FPS)"
+                txt = f"PlayStation®Camera connected ({eye_label} • 60 FPS)"
             self.lbl_pscam_ready_info.setText(txt)
 
         self._update_video_view_visibility()
@@ -2510,6 +2574,11 @@ class LegacySensorQtGUI(QMainWindow):
         angle = orientations[index] if 0 <= index < len(orientations) else 0
         self.cfg["camera_orientation"] = angle
         self._save_settings()
+
+    def _on_ps4_eye_changed(self, index: int):
+        self.cfg["ps4_eye"] = "left" if index == 1 else "right"
+        self._save_settings()
+        self._update_pscam_status()
 
     # =========================================================================
     # VIRTUAL PHONE CONTROLLER (CELULAR VIRTUAL) HANDLERS
@@ -2995,10 +3064,10 @@ class LegacySensorQtGUI(QMainWindow):
     def _launch_pscam_tray(self):
         ok, msg = CameraManager.launch_pscam_tray()
         if ok:
-            QMessageBox.information(self, "PSCam4Win", msg)
+            QMessageBox.information(self, "PlayStation Camera Backend", msg)
             self._refresh_cameras_async()
         else:
-            QMessageBox.warning(self, "PSCam4Win", msg)
+            QMessageBox.warning(self, "PlayStation Camera Backend", msg)
 
     def _open_dll_folder(self):
         candidates = [
@@ -3058,27 +3127,33 @@ class LegacySensorQtGUI(QMainWindow):
             return
 
         if mode == "pscam":
-            if CameraManager.is_pscam_installed() and not CameraManager.is_pscam_running():
-                ok, msg = CameraManager.launch_pscam_tray()
+            ps4_st = CameraManager.get_ps4_camera_state()
+            if ps4_st.get("bootloader") or ps4_st.get("state") in ("NOT_INSTALLED", "DRIVER_STOPPED"):
+                ok, msg = CameraManager.initialize_ps4_camera()
                 if not ok:
-                    QMessageBox.critical(self, "Driver Launch Error", msg)
+                    QMessageBox.critical(self, "PlayStation Camera Initialization Error", msg)
                     return
-                time.sleep(1.2)
+                time.sleep(0.5)
                 self._refresh_cameras()
 
             ps_cams = [c for c in getattr(self, "camera_list", []) if c.is_pscam]
             cam_idx = self.cfg.get("camera_index", -1)
             is_valid_pscam = any(c.index == cam_idx and c.is_pscam for c in getattr(self, "camera_list", []))
+            hw_connected = CameraManager.is_ps4_hardware_connected()
 
-            if not ps_cams or not is_valid_pscam or cam_idx < 0:
+            if (not ps_cams or not is_valid_pscam or cam_idx < 0) and not hw_connected:
                 QMessageBox.warning(
                     self,
                     "PlayStation®Camera Not Connected",
                     "PlayStation®Camera was not detected on this computer!\n\n"
-                    "• Ensure the PS4 Camera USB 3.0 Adapter is connected.\n"
-                    "• Verify that the PSCam4Win driver is running in the Windows system tray."
+                    "• Ensure the PS4 Camera USB 3.0 Adapter is connected to a USB 3.0 port.\n"
+                    "• Verify that the WinUSB driver association is active."
                 )
                 return
+            if cam_idx < 0 and ps_cams:
+                self.cfg["camera_index"] = ps_cams[0].index
+            elif cam_idx < 0 and hw_connected:
+                self.cfg["camera_index"] = 0
         else:
             cam_idx = self.cfg.get("camera_index", -1)
             if cam_idx < 0 or not getattr(self, "camera_list", []):

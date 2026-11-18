@@ -59,20 +59,28 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
     target_height = config.get("target_height_m", 1.75)
     show_hud = config.get("show_hud", True)
     camera_orientation = int(config.get("camera_orientation", 0))
+    ps4_eye = str(config.get("ps4_eye", "right")).strip().lower()
+    ps4_backend_mode = str(config.get("ps4_camera_backend", "native")).strip().lower()
 
     print(f"\n==========================================")
     print(f"  STARTING TRACKING SESSION")
     print(f"  Mode: {'PlayStation Camera' if mode == 'pscam' else 'Standard Webcam'}")
     print(f"  Camera: {cam_idx} | Resolution: {w}x{h} @ {target_fps} FPS")
+    if mode == "pscam":
+        print(f"  PS4 Backend: {ps4_backend_mode} | Eye: {ps4_eye}")
     print(f"  Mirrored: {mirror} | Smoothing: {smoothing_alpha}")
     print(f"==========================================\n")
 
     # Enable Windows 1ms high-precision timer for 60 FPS IPC streaming
     set_high_resolution_timer(True)
 
-    # Auto-launch PSCam4Win tray if running in PS Camera mode and tray is inactive
-    if mode == "pscam" and CameraManager.is_pscam_installed() and not CameraManager.is_pscam_running():
-        CameraManager.launch_pscam_tray()
+    # Ensure PS4 Camera is initialized (firmware uploaded if in bootloader state)
+    if mode == "pscam":
+        if ps4_backend_mode == "pscam4win":
+            if CameraManager.is_legacy_pscam4win_installed() and not CameraManager.is_legacy_pscam4win_running():
+                CameraManager.launch_pscam_tray()
+        else:
+            CameraManager.initialize_ps4_camera()
 
     # 1. Initialize IPC Shared Memory Bridge (Pose, Image & CoachX)
     bridge = KinectBridge()
@@ -86,7 +94,9 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
             target_fps=target_fps,
             mirror=mirror,
             is_pscam=(mode == "pscam"),
-            orientation=camera_orientation
+            orientation=camera_orientation,
+            ps4_eye=ps4_eye,
+            ps4_backend_mode=ps4_backend_mode,
         )
     except Exception as e:
         print(f"[ERROR] Failed to start camera: {e}")
@@ -181,8 +191,15 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
                 time.sleep(0.0015)
                 continue
 
+            # If stereo vision is active on PS4 Camera, retrieve synchronous Left Eye frame
+            frame_left = None
+            if getattr(tracker, "stereo_mode", "disabled") != "disabled":
+                st_data = camera.read_stereo(only_new=False)
+                if st_data:
+                    frame_left = st_data.get("left_bgr")
+
             # Process Pose on pristine RAW frame with MediaPipe (guarantees correct anatomical limbs)
-            is_tracked, kinect_joints, px_joints, body_mask = tracker.process_frame(frame)
+            is_tracked, kinect_joints, px_joints, body_mask = tracker.process_frame(frame, frame_left=frame_left)
 
             # Measure tracking FPS
             track_fps_counter += 1

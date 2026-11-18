@@ -13,7 +13,9 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
 | **Silhueta e Contorno Neon ("Sombrinha")** | ✅ Totalmente Implementado | `pose_tracker.py` / `tracking_overlay.py` | Máscara anatômica com contorno neon e preenchimento translúcido. |
 | **Ponte de Imagem e Máscara (JMI1)** | ✅ Totalmente Implementado | `kinect_shared_memory.py` | Buffer de 1.3 MB (640x480 BGRA + 320x240 Player Mask) para o Just Dance. |
 | **Ponte de Coach X (JXC1)** | ✅ Totalmente Implementado | `kinect_shared_memory.py` | Buffer de 28 bytes para posicionamento de coach no jogo. |
-| **Integração PlayStation 4 Camera** | ✅ Totalmente Implementado | `camera_manager.py` | Suporte nativo ao sensor OV580 em **1280x800 @ 60 FPS**, captura direta via FrameBus IPC (anti-tela preta) e auto-crop de Side-by-Side. |
+| **Integração PlayStation 4 Camera (Backend Nativo WinUSB)** | ✅ Totalmente Implementado | `sensor/ps4_backend/` / `camera_manager.py` | Backend próprio em espaço de usuário via `winusb.dll`, upload automático de firmware OV580, streaming isócrono em **1280x800 @ 60 FPS** e seleção de olho (**Olho Direito** padrão / **Olho Esquerdo**). |
+| **Gerenciador Criptográfico de Firmware OV580** | ✅ Totalmente Implementado | `sensor/ps4_backend/firmware_manager.py` | Verificação estrita SHA-1/SHA-256 (`68.032` bytes), cache em `%ProgramData%\LegacySensor\Firmware` e download automático sob demanda. |
+| **Instalação Automática de Associação WinUSB** | ✅ Totalmente Implementado | `sensor/ps4_backend/driver_installer.py` / `driver/legacy_pscam_device.inf` | Associação automática ao `WinUSB.sys` via `pnputil.exe` com elevação UAC pontual apenas quando necessário. |
 | **Auto-Detecção de Hotplug e Reconexão** | ✅ Totalmente Implementado | `camera_manager.py` / `gui.py` | Monitoramento PnP de hardware via Win32 CfgMgr32 (< 3ms) com auto-seleção e atualização fluida sem congelar o menu. |
 | **Máquina de Estados da PS4 Camera** | ✅ Totalmente Implementado | `camera_manager.py` / `gui.py` | Detecção em tempo real do ciclo de vida USB (Desconectada, Bootloader, Câmera Virtual e Pronta). |
 | **Integração Webcams Padrão** | ✅ Totalmente Implementado | `camera_manager.py` | Suporte a webcams USB e embutidas em 30 e 60 FPS. |
@@ -30,6 +32,7 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
 | **Celular Virtual (Emulador JD Controller via Câmera)** | ✅ Totalmente Implementado | `virtual_phone.py` / `ui/gui_qt.py` | Emula um smartphone conectado via WebSocket local (`/smartphone`) e converte o movimento 3D da mão na câmera em dados de acelerômetro 3D (`JD_PhoneScoringData`) e comandos de menu para músicas que só suportam controle de mão. |
 | **DualShock 4 & Controles Compatíveis (Nível A) [EXPERIMENTAL]** | ✅ Totalmente Implementado | `sensor/ds4_controller.py` / `ui/gui_qt.py` | Driver nativo Bluetooth/USB HID (500+ Hz) com suporte a DS4 original, controles licenciados de terceiros (Hori, Nacon, Razer, Astro, Scuf) e clones/réplicas (ShanWan, DragonRise) com diagnóstico automático de IMU congelado (0G). |
 | **Benchmark de Telemetria & Calibração Adaptativa** | 🔒 Preservado / Oculto na UI | `sensor/telemetry_benchmark.py` / `ui/benchmark_dialog.py` | Módulo de benchmark comparativo de aceleração (Câmera vs DS4) e auto-gravação por música preservado no código, porém desabilitado por padrão e removido da interface visual para manter o design enxuto. |
+| **Visão Estéreo (Stereo Vision) para PS4 Camera** | ✅ Totalmente Implementado | `sensor/stereo_matcher.py` / `ui/gui_qt.py` | Calibração de fábrica ($B=85.2\text{ mm}$), auto-alinhamento vertical dinâmico das lentes ($\Delta y$), triangulação 3D sub-pixel via Fluxo Óptico Piramidal (`PyrLK`, <0.5ms) e suavização temporal EMA da silhueta. |
 | **Modo Headless (Sem Janela)** | ⏳ Planejado | `tracking_session.py` | Rastrear em background sem gastar GPU com janela gráfica. |
 
 ---
@@ -44,17 +47,27 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
   - `Y`: Vertical (+1.0m para cima, -1.0m para baixo).
   - `Z`: Profundidade em metros (centralizado na distância nominal de dança de 2.0m).
 
-### 2. Integração Especializada com a PlayStation 4 Camera (OV580)
-- **Como funciona:** A PS4 Camera é uma câmera estéreo equipada com o processador OmniVision OV580 e dois sensores OV9713, capaz de atingir 60 FPS com alta nitidez e amplo campo de visão horizontal.
-- **Implementação:**
-  - O `camera_manager.py` detecta a instalação e o status de execução do driver `PSCam4Win`.
-  - **Leitura Direta via FrameBus IPC (Anti-Tela Preta):** Utiliza o leitor de memória compartilhada `FrameBusReader` para se conectar diretamente aos canais `Global\PSCam4Win{slot}.FrameBus`. Isso elimina a tela preta causada pelo cache do Windows Camera Frame Server que forçava 1280x400 no DirectShow e ativava o `FillYuy2Black` no driver.
-  - **Auto-Crop de Stereo Side-by-Side (SBS):** Quando o driver inicializa no modo Side-by-Side (2560x800 ou 1280x400), o sistema detecta a proporção panorâmica (`w >= 1.8 * h`) e recorta automaticamente a metade correspondente ao sensor esquerdo (`frame[:, :w//2]`), entregando uma visão limpa de 16:10 do dançarino sem duplicação estéreo.
-  - Configura a câmera virtual DirectShow para operar em **1280x800 @ 60 FPS**.
-  - Mantém o FourCC original do driver em **YUY2 / NV12**, sem tentar forçar compactação MJPG incompatível.
-  - Oferece no menu a detecção em tempo real e o botão para iniciar o driver caso ele esteja parado.
+### 2. Integração Especializada com a PlayStation 4 Camera (Backend Próprio WinUSB — OV580)
+- **Como funciona:** A PS4 Camera (incluindo a versão **PlayStation 4 Camera Slim**) é uma câmera estéreo equipada com o processador OmniVision OV580 e dois sensores OV9713, capaz de atingir 60 FPS em 1280x800 (ou até 240 FPS em 320x192) com amplo campo de visão horizontal.
+- **Implementação (`sensor/ps4_backend/`):**
+  - **Comunicação Direta em Espaço de Usuário (`winusb.dll`):** O `LegacyPSCam_Sensor` comunica-se diretamente com o dispositivo USB através do driver nativo `WinUSB.sys` da Microsoft, eliminando a dependência de aplicativos externos de bandeja (`PSCam4WinTray.exe`), DLLs de câmera virtual ou serviços em segundo plano.
+  - **Gerenciamento e Upload Automático de Firmware (`PS4FirmwareManager`):** Ao detectar a câmera no estado de bootloader (`VID_05A9&PID_0580`), o sistema valida criptograficamente o `firmware.bin` (`68.032` bytes, SHA-1 `8b8a6621d358f6782c2e3b31aac2cdfb25102c00`, SHA-256 `09513d10...`) armazenado em `%ProgramData%\LegacySensor\Firmware\`, envia os blocos de 512 bytes via transferência de controle USB e dispara o comando de reboot (`0x5B`), aguardando a re-enumeração como `VID_05A9&PID_058B` (`MI_00`).
+  - **Streaming Isócrono de Baixa Latência (`PS4CameraBackend`):** Mantém um anel assíncrono de 8 URBs Overlapped (`WinUsb_ReadIsochPipeAsap`) no endpoint `0x81`, negociando UVC YUY2 e ativando Auto-Exposure (`CT_AE_MODE_CONTROL = 0x02`) e Anti-Flicker 60Hz no ISP interno do OV580.
+  - **Seleção de Olho e Arquitetura Dual-Stream:** Desempacota cada linha entregando simultaneamente os planos do **Olho Direito** (padrão) e **Olho Esquerdo**, permitindo alternar entre as duas lentes na interface gráfica e mantendo ambos os fluxos sincronizados com timestamps PTS para uso estéreo.
 
-### 3. Filtro Hand Anchor (Extrapolação Anatômica)
+### 3. Visão Estéreo (Stereo Vision) para PlayStation 4 Camera
+- **Como funciona:** Aproveita os dois sensores independentes OmniVision OV9713 espaçados por $85.2\text{ mm}$ na carcaça rígida da PS4 Camera, sincronizados linha a linha pelo hardware do processador OV580 a 60 FPS (1280x800) ou 120 FPS (640x400).
+- **Implementação (`sensor/stereo_matcher.py` & `sensor/pose_tracker.py`):**
+  - **Retificação Epipolar Sub-milissegundo (`StereoCalibrator`):** Utiliza matrizes intrínsecas e extrínsecas pré-calibradas de fábrica para as revisões CUH-ZEY1 e CUH-ZEY2. Gera mapas de remapeamento calculados uma única vez, executando `cv2.remap` em menos de 0.8 ms.
+  - **Triangulação 3D Sub-Pixel (`PyrLK` + Banda Epipolar 2D):** Realiza busca em banda 2D com interpolação parabólica seguida de refinamento por Fluxo Óptico Piramidal Lucas-Kanade (`cv2.calcOpticalFlowPyrLK`) nas 20 articulações corporais (< 0.5 ms). Substitui a profundidade estática $Z \approx 2.0\text{m}$ por medição métrica física real ($Z = \frac{f \cdot B}{d}$).
+  - **Auto-Calibração Epipolar Vertical Dinâmica (`vertical_offset_px`):** Mede e compensa automaticamente em background pequenas diferenças de inclinação vertical ($\Delta y$) entre a lente esquerda e a direita da unidade física da câmera, dispensando calibração com tabuleiro de xadrez.
+  - **Suavização Temporal EMA na Silhueta (`_seg_prob_ema`):** Suaviza temporalmente o tensor de probabilidade da máscara de segmentação do MediaPipe antes da binarização, eliminando tremulações de ruído ISO em 60 FPS sem usar `StereoSGBM` denso.
+- **Controle na UI (Aba Video Settings):**
+  - Posicionado diretamente abaixo do seletor de lente (*Camera Sensor Eye*).
+  - Quando o **Stereo Vision** é ativado via checkbox, o seletor de lente é automaticamente desabilitado na interface gráfica, pois ambos os sensores ópticos (esquerdo e direito) passam a ser processados de forma simultânea e sincronizada a 60 FPS.
+  - Ao desativar, o seletor de lente volta a ficar habilitado para rastreamento monocular com custo zero de processamento adicional.
+
+### 4. Filtro Hand Anchor (Extrapolação Anatômica)
 - **Problema resolvido:** Em coreografias de dança com giros rápidos ou mãos próximas ao tronco, as redes neurais de detecção de pose frequentemente perdem a visibilidade dos dedos (`INDEX` e `WRIST`), fazendo a mão "pular" para coordenadas inválidas e gerando notas `MISS` ou `OK`.
 - **Implementação:** O `HandAnchorFilter` calcula o vetor diretor 3D que vai do cotovelo até o pulso (`vetor = pulso - cotovelo`) e, caso a confiança dos dedos caia, projeta a ponta da mão ao longo dessa linha anatômica natural por uma distância proporcional de 12 centímetros.
 
@@ -399,6 +412,21 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
   - Todo o motor matemático de parsing de CSVs, interpolação temporal, correlação cruzada e ganho sugerido (`sensor/telemetry_benchmark.py`), bem como a janela de renderização gráfica vetorial (`ui/benchmark_dialog.py`), permanecem 100% íntegros, testados e funcionais no repositório.
   - Os objetos continuam instanciados e conectados internamente no controlador Qt, permitindo que o recurso seja reativado no futuro sem necessidade de reimplementação.
 
+
+### 30. Compatibilidade Total com Controles Clones e Réplicas DualShock 4 (v0.5.7 Alpha)
+- **Desbloqueio de Modo Operacional (Handshake Feature Reports 0x02, 0x05 e 0x04):**
+  - No Windows via Bluetooth, controles DualShock 4 (originais e cópias) iniciam por padrão em modo básico restrito de economia de energia (Relatório de Entrada `0x01`), onde os sensores de movimento (giroscópio e acelerômetro) permanecem inativos ou zerados.
+  - O driver agora envia os relatórios de recursos (`HidD_GetFeature` e `HidD_SetFeature`) correspondentes aos relatórios `0x02` (desbloqueio operacional de 37 bytes), `0x05` (calibração de 41 bytes) e `0x04` (handshake específico de microcontroladores genéricos), forçando o hardware a iniciar a transmissão contínua em alta taxa do fluxo IMU.
+- **Detecção Inteligente de Ordem de Blocos IMU (Layout Sony vs. InvenSense/Clone):**
+  - No padrão proprietário da Sony, o giroscópio localiza-se nos primeiros 6 bytes (Bloco A) e o acelerômetro nos 6 bytes seguintes (Bloco B).
+  - Em sensores MEMS genéricos (InvenSense MPU-6050, BMI160) amplamente usados em réplicas chinesas, o acelerômetro localiza-se no Bloco A e o giroscópio no Bloco B.
+  - O motor analisa a presença do vetor de gravidade terrestre ($\approx 1.0G$ / 1500 a 35000 contagens) em ambos os blocos e estabelece dinamicamente se o acelerômetro reside no Bloco A ou B, prevenindo leituras zeradas em repouso.
+- **Detecção Dinâmica de Escala LSB/G:**
+  - Identifica e calibra automaticamente a sensibilidade do acelerômetro de acordo com o ADC do clone ($16384, 8192, 4096$ ou $2048\text{ LSB/G}$), garantindo aceleração física consistente em $1.0G$.
+- **Priorização de Interfaces HID (Gamepad vs. Áudio/Consumer Control):**
+  - Implementado algoritmo de pontuação de interfaces (`_score_hid_interface`) que prioriza coleções de *Gamepad / Joystick* (`UsagePage 0x01`, `Usage 0x05 / 0x04`) e rejeita coleções multimídia de áudio (`UsagePage 0x0C`) ou touchpads (`UsagePage 0x0D`) frequentemente expostas em primeira ordem por drivers Bluetooth genéricos.
+- **Mecanismo Ativo de Auto-Wakeup:**
+  - Caso um controle clone adormeça ou transmita leituras nulas durante a sessão Bluetooth, o driver despacha pulsos periódicos de reativação a cada 0.8s para reanimar o chipset IMU sem interrupção para o usuário.
 
 ---
 

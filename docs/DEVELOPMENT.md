@@ -24,7 +24,7 @@ O projeto segue estritamente as convenções padrão do ecossistema Python (PEP 
 O projeto adota uma convenção estrita de versionamento semântico pragmático centralizada em `version.py`:
 
 ```python
-__version__ = "0.5.6"
+__version__ = "0.6.0"
 STAGE = "Alpha"
 VERSION_STRING = f"v{__version__} ({STAGE})"
 WINDOW_TITLE = f"Legacy PSCam Sensor {VERSION_STRING}"
@@ -82,7 +82,7 @@ Antes de aprovar qualquer modificação de código, execute a suíte de testes i
 python LegacyPSCam_Sensor/test_suite.py
 ```
 
-A suíte cobre 10 áreas fundamentais:
+A suíte cobre 13 áreas fundamentais:
 
 | Teste | Módulo Testado | Critério de Sucesso |
 |---|---|---|
@@ -96,6 +96,9 @@ A suíte cobre 10 áreas fundamentais:
 | `test_overlay` | `sensor/tracking_overlay.py` | Renderização do HUD, silhueta e esqueleto sem falhas numpy. |
 | `test_camera_manager` | `sensor/camera_manager.py` | Snapshot PnP ultrarrápido (< 3ms via `cfgmgr32.dll`), máquina de estados da PS4 Camera, enumeração OpenCV, leitor prioritário `FrameBusReader`, detecção rápida de quadro preto e auto-crop de stereo Side-by-Side. |
 | `test_telemetry_and_adaptive_benchmark` | `sensor/telemetry_benchmark.py` | Correlação cruzada de telemetria, parsing de CSV, auto-registro por ciclo de dança, detecção de processo e mapa em memória, e calibração adaptativa. |
+| `test_ps4_native_backend` | `sensor/ps4_backend/` | Verificação de pacote INF, validação SHA-1/SHA-256 do firmware OV580, depacketizer UVC, demultiplexação independente dos dois sensores (Olho Direito e Esquerdo) e captura ao vivo em hardware físico a 60 FPS. |
+| `test_stereo_vision_engine` | `sensor/stereo_matcher.py` | Calibração de fábrica rígida ($B=85.2\text{ mm}$), retificação epipolar via `cv2.remap`, triangulação esparsa dos joints em < 1.0 ms com precisão métrica de Z, máscara de profundidade densa (320x240) e integração com `SkeletonCalibrator`. |
+| `test_ds4_controller` | `sensor/ds4_controller.py` | Compatibilidade com DS4 original e clones/réplicas (ShanWan, DragonRise), priorização de interfaces de Gamepad, validação de CRC-32 do Relatório 0x11, detecção de blocos de giroscópio vs acelerômetro e auto-escala LSB/G. |
 
 ### Adicionando Novos Testes
 Ao criar novos recursos (como um novo algoritmo de suavização ou novo controle de GUI), adicione uma função `test_<funcionalidade>()` no arquivo `test_suite.py` e inclua sua execução na função principal `run_all_tests()`.

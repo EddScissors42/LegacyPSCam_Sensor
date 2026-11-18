@@ -1,6 +1,6 @@
 # Legacy PSCam Sensor - Technical Documentation
 
-Legacy PSCam Sensor is a high-performance, ultra-low latency, and zero-bloatware body motion tracking sensor designed for Just Dance PC (Legacy Offline). It unifies support for standard USB/integrated webcams and the PlayStation 4 Camera (PS4 Camera via PSCam4Win driver at 1280x800 @ 60 FPS).
+Legacy PSCam Sensor is a high-performance, ultra-low latency, and zero-bloatware body motion tracking sensor designed for Just Dance PC (Legacy Offline). It unifies support for standard USB/integrated webcams and the PlayStation 4 Camera (PS4 Camera Slim & V1 via a Native WinUSB User-Space Backend at 1280x800 @ 60 FPS).
 
 ---
 
@@ -26,7 +26,7 @@ All non-essential overhead has been removed while perfecting the core components
 | Skeletal Tracking (20 Joints) | Maps human body pose to the exact 20-joint binary format consumed by Just Dance PC. | Implemented |
 | Silhouette & Neon Contour | Real-time anatomical segmentation mask rendering player shadow and feeding Just Dance PC. | Implemented |
 | Image & Depth Bridge (JMI1 & JMI2) | `Local\LegacyWebcamKinectImage` buffer (1.3 MB) streaming BGRA frame and player mask to the game. | Implemented |
-| PlayStation 4 Camera Support | Presets optimized for PS4 Camera at 1280x800 @ 60 FPS (native YUY2/NV12 DirectShow). | Implemented |
+| PlayStation 4 Camera Native WinUSB Backend | Direct user-space WinUSB driver (`sensor/ps4_backend/`), automatic OV580 firmware upload, 1280x800 @ 60 FPS isochronous capture, and eye selection (Right Eye default / Left Eye). | Implemented |
 | Real-time Hotplug Detection | Instant PnP Win32 connection/disconnection polling (< 3ms) without freezing the UI. | Implemented |
 | Hand Anchor Filter | Forearm vector extrapolation preventing lost tracking during rapid hand movements and routines. | Implemented |
 | Dynamic Anti-Jitter EMA Filter | Velocity-dependent adaptive smoothing eliminating resting jitter while preserving instant response. | Implemented |
@@ -49,7 +49,7 @@ All non-essential overhead has been removed while perfecting the core components
 - Python: Version 3.10, 3.11, or 3.12 (64-bit).
 - Dependencies: `opencv-python`, `mediapipe`, `numpy`, `Pillow`, `PySide6`.
 - Hardware: USB webcam (720p/1080p recommended) or PlayStation 4 Camera (with AUX-to-USB3 adapter).
-- Drivers (for PS4 Camera): PSCam4Win (WinUSB user-mode driver + DirectShow virtual camera).
+- Drivers (for PS4 Camera): Built-in Native WinUSB Backend (`driver/legacy_pscam_device.inf` + `winusb.dll`).
 
 ---
 
@@ -58,10 +58,14 @@ All non-essential overhead has been removed while perfecting the core components
 ```
 LegacyPSCam_Sensor/
 ├── main.py                     # CLI launcher and entry point
-├── version.py                  # Official versioning & build metadata (v0.5.6 Alpha)
-├── test_suite.py               # 10 complete automated test suites (10/10 PASSED)
+├── version.py                  # Official versioning & build metadata (v0.6.0 Alpha)
+├── test_suite.py               # 11 complete automated test suites (11/11 PASSED)
 ├── config.json                 # Saved user preferences
+├── THIRD_PARTY_NOTICES.md      # Licensing & third-party attribution notices
+├── driver/
+│   └── legacy_pscam_device.inf # WinUSB association package for PS4 Camera
 ├── sensor/                     # Tracking Engine and AI package
+│   ├── ps4_backend/            # Native WinUSB PlayStation 4 Camera Backend
 │   ├── camera_manager.py       # Camera discovery and async capture
 │   ├── pose_tracker.py         # MediaPipe engine, Hand Anchor, Calibrator & EMA
 │   ├── pose_filters.py         # Kinematic filters (HandAnchor, AdaptiveSmoother, SkeletonCalibrator, PTZ)

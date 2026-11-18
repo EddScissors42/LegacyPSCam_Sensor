@@ -1,0 +1,97 @@
+; legacy_pscam_device.inf
+; Legacy PSCam Sensor — Native WinUSB Driver Association Package
+; Binds the inbox Microsoft-signed WinUSB.sys kernel driver to the PlayStation 4 Camera
+; (OmniVision OV580 + Dual OV9713 stereo sensors) in both Bootloader and Streaming states.
+;
+; Supported USB Hardware Identities:
+;   - USB\VID_05A9&PID_0580        : OV580 Bootloader ("USB Boot", pre-firmware)
+;   - USB\VID_05A9&PID_058A        : OV580 Legacy Firmware Streaming Device
+;   - USB\VID_05A9&PID_058B&MI_00  : OV580 Final Firmware (PS4 Sys 6.00+) Composite Video Interface
+
+[Strings]
+DeviceNameBoot = "PlayStation 4 Camera (OV580 Bootloader)"
+DeviceNameCam  = "PlayStation 4 Camera (OV580 USB Sensor)"
+VendorName     = "Sony Interactive Entertainment / OmniVision Technologies"
+ProviderName   = "Legacy PSCam Sensor"
+DeviceIDA      = "VID_05A9&PID_0580"
+DeviceIDB      = "VID_05A9&PID_058A"
+DeviceIDC      = "VID_05A9&PID_058B&MI_00"
+DeviceGUID     = "{B8F4A2C0-5D31-4E76-9A1B-6C0E3F8D2A47}"
+
+[Version]
+Signature   = "$Windows NT$"
+Class       = "USBDevice"
+ClassGuid   = {88bae032-5a81-49f0-bc3d-a4ff138216d6}
+Provider    = %ProviderName%
+CatalogFile = legacy_pscam_device.cat
+DriverVer   = 11/17/2026, 2.0.0.0
+
+[ClassInstall32]
+Addreg = WinUSBDeviceClassReg
+
+[WinUSBDeviceClassReg]
+HKR,,,0,"Universal Serial Bus devices"
+HKR,,Icon,,-20
+
+[Manufacturer]
+%VendorName% = LegacyPSCam_WinUSB,NTx86,NTamd64,NTarm64
+
+[LegacyPSCam_WinUSB.NTx86]
+%DeviceNameBoot% = USB_Install, USB\%DeviceIDA%
+%DeviceNameCam%  = USB_Install_Isoch, USB\%DeviceIDB%
+%DeviceNameCam%  = USB_Install_Isoch, USB\%DeviceIDC%
+
+[LegacyPSCam_WinUSB.NTamd64]
+%DeviceNameBoot% = USB_Install, USB\%DeviceIDA%
+%DeviceNameCam%  = USB_Install_Isoch, USB\%DeviceIDB%
+%DeviceNameCam%  = USB_Install_Isoch, USB\%DeviceIDC%
+
+[LegacyPSCam_WinUSB.NTarm64]
+%DeviceNameBoot% = USB_Install, USB\%DeviceIDA%
+%DeviceNameCam%  = USB_Install_Isoch, USB\%DeviceIDB%
+%DeviceNameCam%  = USB_Install_Isoch, USB\%DeviceIDC%
+
+[USB_Install]
+Include = winusb.inf
+Needs   = WINUSB.NT
+
+[USB_Install.Services]
+Include    = winusb.inf
+AddService = WinUSB,0x00000002,WinUSB_ServiceInstall
+
+[USB_Install.Wdf]
+KmdfService = WINUSB, WinUsb_Install
+
+[USB_Install.HW]
+AddReg = AddDeviceInterfaceGUID
+
+[USB_Install_Isoch]
+Include = winusb.inf
+Needs   = WINUSB.NT
+
+[USB_Install_Isoch.Services]
+Include    = winusb.inf
+AddService = WinUSB,0x00000002,WinUSB_ServiceInstall
+
+[USB_Install_Isoch.Wdf]
+KmdfService = WINUSB, WinUsb_Install
+
+[USB_Install_Isoch.HW]
+AddReg = AddDeviceInterfaceGUID_Isoch
+
+[WinUSB_ServiceInstall]
+DisplayName   = "WinUSB - Microsoft Kernel Driver"
+ServiceType   = 1
+StartType     = 3
+ErrorControl  = 1
+ServiceBinary = %12%\WinUSB.sys
+
+[WinUsb_Install]
+KmdfLibraryVersion = 1.11
+
+[AddDeviceInterfaceGUID]
+HKR,,DeviceInterfaceGUIDs,0x10000,%DeviceGUID%
+
+[AddDeviceInterfaceGUID_Isoch]
+HKR,,DeviceInterfaceGUIDs,0x10000,%DeviceGUID%
+HKR,,WinusbIsochUsed,0x00010001,1

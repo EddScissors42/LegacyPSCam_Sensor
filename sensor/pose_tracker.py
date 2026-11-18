@@ -38,6 +38,13 @@ from sensor.pose_filters import (
     CameraSpaceXTracker, apply_camera_space_translation,
     apply_slot_snap, FaceFollowPTZ
 )
+from sensor.stereo_matcher import (
+    StereoDepthEngine,
+    STEREO_MODE_DISABLED,
+    STEREO_MODE_SPARSE_METRIC,
+    STEREO_MODE_FULL_DEPTH,
+    PS4_STEREO_BASELINE_M,
+)
 
 
 MODEL_FILENAMES = {
@@ -110,6 +117,9 @@ class PoseTracker:
         self.calibrator = SkeletonCalibrator(target_height_m=target_height_m, cfg=self.cfg)
         self.camera_x_tracker = CameraSpaceXTracker(cfg=self.cfg)
         self.face_ptz = FaceFollowPTZ(cfg=self.cfg)
+        self.stereo_mode = str(self.cfg.get("stereo_mode", STEREO_MODE_DISABLED)).strip().lower()
+        self.stereo_engine = StereoDepthEngine(baseline_m=PS4_STEREO_BASELINE_M)
+        self._seg_prob_ema = None
         self.last_norm_landmarks = None
         self.start_time = time.time()
         self.frame_index = 0
@@ -141,6 +151,8 @@ class PoseTracker:
             self.calibrator.cfg = self.cfg
             self.camera_x_tracker.cfg = self.cfg
             self.face_ptz.cfg = self.cfg
+            if "stereo_mode" in self.cfg:
+                self.stereo_mode = str(self.cfg.get("stereo_mode", STEREO_MODE_DISABLED)).strip().lower()
         if smoothing_alpha is not None:
             self.smoother.update_base_alpha(smoothing_alpha)
         if target_height_m is not None:
@@ -151,11 +163,55 @@ class PoseTracker:
             self.close()
             self._init_detector()
 
+    @staticmethod
+    def _extract_joints_2d(norm_lm, w, h):
+        """Extracts 2D pixel coordinates and confidence for key Kinect joints."""
+        def pt(idx):
+            lm = norm_lm[idx]
+            vis = getattr(lm, 'visibility', 1.0)
+            pres = getattr(lm, 'presence', 1.0)
+            return (float(lm.x * w), float(lm.y * h), min(1.0, max(0.0, min(vis, pres))))
+
+        hip_l = pt(LEFT_HIP)
+        hip_r = pt(RIGHT_HIP)
+        hip_c = ((hip_l[0] + hip_r[0]) * 0.5, (hip_l[1] + hip_r[1]) * 0.5, min(hip_l[2], hip_r[2]))
+
+        sh_l = pt(LEFT_SHOULDER)
+        sh_r = pt(RIGHT_SHOULDER)
+        sh_c = ((sh_l[0] + sh_r[0]) * 0.5, (sh_l[1] + sh_r[1]) * 0.5, min(sh_l[2], sh_r[2]))
+
+        spine = (hip_c[0] * 0.48 + sh_c[0] * 0.52, hip_c[1] * 0.48 + sh_c[1] * 0.52, min(hip_c[2], sh_c[2]))
+
+        return {
+            0: hip_c,
+            1: spine,
+            2: sh_c,
+            3: pt(NOSE),
+            4: sh_l,
+            5: pt(LEFT_ELBOW),
+            6: pt(LEFT_WRIST),
+            7: pt(LEFT_INDEX),
+            8: sh_r,
+            9: pt(RIGHT_ELBOW),
+            10: pt(RIGHT_WRIST),
+            11: pt(RIGHT_INDEX),
+            12: hip_l,
+            13: pt(LEFT_KNEE),
+            14: pt(LEFT_ANKLE),
+            15: pt(LEFT_FOOT_INDEX),
+            16: hip_r,
+            17: pt(RIGHT_KNEE),
+            18: pt(RIGHT_ANKLE),
+            19: pt(RIGHT_FOOT_INDEX),
+        }
+
     def recalibrate(self):
         self.calibrator.reset()
         self.smoother.reset()
         self.camera_x_tracker.reset()
         self.face_ptz.reset()
+        self.stereo_engine.reset_calibration()
+        self._seg_prob_ema = None
 
     def build_body_mask(self, norm_landmarks, width, height):
         """
@@ -246,16 +302,27 @@ class PoseTracker:
         mask = cv2.dilate(mask, kernel, iterations=1)
         return mask
 
-    def process_frame(self, frame_bgr):
+    def process_frame(self, frame_bgr, frame_left=None):
         """
-        Processes a BGR camera frame.
+        Processes a BGR camera frame (or stereo frame pair).
         Supports full-body and partial-body (waist-up / desk framing) with robust lower-body synthesis.
+        When frame_left is provided and stereo mode is enabled, applies stereo rectification,
+        metric 3D sparse joint triangulation, and optional dense depth background clipping.
         Returns:
             tracked (bool): True if pose detected.
             kinect_joints (list): 20 joints in Kinect 3D space (x, y, z, conf).
             pixel_joints (list): 20 joints in pixel coordinates (px, py, conf) for HUD drawing.
             body_mask (np.ndarray): Binary silhouette mask (320x240 native Kinect resolution) with 255 for player.
         """
+        if isinstance(frame_bgr, dict):
+            if frame_left is None:
+                frame_left = frame_bgr.get("left_bgr")
+            frame_bgr = frame_bgr.get("right_bgr")
+        elif isinstance(frame_bgr, (tuple, list)) and len(frame_bgr) == 2:
+            if frame_left is None:
+                frame_left = frame_bgr[1]
+            frame_bgr = frame_bgr[0]
+
         h, w = frame_bgr.shape[:2]
         frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_rgb)
@@ -278,6 +345,7 @@ class PoseTracker:
             self.smoother.reset()
             self.camera_x_tracker.reset()
             self.face_ptz.reset()
+            self._seg_prob_ema = None
             self.last_norm_landmarks = None
             return False, None, None, None
 
@@ -389,8 +457,22 @@ class PoseTracker:
         if not self.calibrator.is_calibrated or (self.calibrator.calibration_tier != "full_body" and legs_visible):
             self.calibrator.calibrate(anchored, legs_visible=legs_visible, hips_visible=hips_visible)
 
+        # 3.1 Stereo Triangulation (if Left Eye frame is provided and stereo mode is active)
+        stereo_depths = None
+        rect_left_frame = None
+        rect_right_frame = None
+        if self.stereo_mode != STEREO_MODE_DISABLED and frame_left is not None:
+            try:
+                rect_left_frame, rect_right_frame = self.stereo_engine.calibrator.rectify(frame_left, frame_bgr)
+                joints_2d = self._extract_joints_2d(norm_lm, w, h)
+                stereo_depths = self.stereo_engine.triangulate_sparse_joints(
+                    rect_left_frame, rect_right_frame, joints_2d
+                )
+            except Exception:
+                stereo_depths = None
+
         # 4. Transform to Kinect v1 camera coordinate space (with hip height +1.0m)
-        kinect_space = self.calibrator.transform(anchored)
+        kinect_space = self.calibrator.transform(anchored, stereo_depths=stereo_depths)
 
         # 4.1 Smooth anatomical gestures first (zero lag on body moves, dt-normalized across 30/60 FPS)
         smoothed_kinect = self.smoother.apply(kinect_space, dt=dt_infer)
@@ -465,15 +547,24 @@ class PoseTracker:
         pixel_joints = self.smoother.apply_pixel(pixel_joints, frame_w=w, frame_h=h, dt=dt_infer)
 
         # 7. Generate player silhouette mask at native Kinect 320x240 resolution
-        # (13x fewer pixels than 1280x800, eliminating full-res morphology & resize overhead)
+        # Uses Temporal EMA Probability Smoothing on the MediaPipe segmentation tensor before thresholding
+        # to eliminate 60 FPS sensor grain flicker without StereoSGBM block-matching artifacts.
         mw, mh = self.MASK_INTERNAL_W, self.MASK_INTERNAL_H
         neural_mask = None
         if hasattr(result, 'segmentation_masks') and result.segmentation_masks:
             try:
                 seg_view = result.segmentation_masks[0].numpy_view()
-                neural_mask = (seg_view > 0.22).astype(np.uint8) * 255
-                if neural_mask.shape[0] != mh or neural_mask.shape[1] != mw:
-                    neural_mask = cv2.resize(neural_mask, (mw, mh), interpolation=cv2.INTER_LINEAR)
+                if seg_view.shape[0] != mh or seg_view.shape[1] != mw:
+                    prob_small = cv2.resize(seg_view, (mw, mh), interpolation=cv2.INTER_LINEAR)
+                else:
+                    prob_small = seg_view.astype(np.float32, copy=False)
+
+                if self._seg_prob_ema is None or self._seg_prob_ema.shape != prob_small.shape:
+                    self._seg_prob_ema = prob_small.astype(np.float32, copy=True)
+                else:
+                    cv2.addWeighted(prob_small, 0.65, self._seg_prob_ema, 0.35, 0.0, dst=self._seg_prob_ema)
+
+                neural_mask = (self._seg_prob_ema > 0.24).astype(np.uint8) * 255
             except Exception:
                 neural_mask = None
 

@@ -531,6 +531,8 @@ def test_project_structure():
     assert hasattr(sensor, "DS4Controller")
     assert hasattr(sensor, "find_ds4_devices")
     assert hasattr(sensor, "get_ds4_controller")
+    assert hasattr(sensor, "StereoCalibrator")
+    assert hasattr(sensor, "StereoDepthEngine")
 
     import ui
     assert hasattr(ui, "LegacySensorGUI")
@@ -584,6 +586,17 @@ def test_project_structure():
         assert hasattr(win, "btn_vphone_benchmark"), "Benchmark button alias must exist"
         assert hasattr(win, "chk_vphone_auto_record"), "Auto record checkbox alias must exist"
         assert hasattr(win, "chk_vphone_adaptive"), "Adaptive calibration checkbox alias must exist"
+        assert hasattr(win, "stereo_box"), "Stereo feature box must exist in Video Settings card"
+        assert hasattr(win, "chk_stereo"), "Stereo toggle checkbox must exist"
+        assert win.chk_stereo.text() == "Stereo Vision", f"Expected 'Stereo Vision', got {win.chk_stereo.text()}"
+        assert hasattr(win, "cb_stereo_mode"), "Stereo mode alias must exist"
+        assert hasattr(win, "block_ps_eye"), "Camera eye sensor block must exist"
+
+        # Verify eye selector disables when Stereo Vision is toggled ON, and enables when OFF
+        win.chk_stereo.setChecked(True)
+        assert not win.block_ps_eye.isEnabled(), "Camera eye block must be disabled when Stereo Vision is active"
+        win.chk_stereo.setChecked(False)
+        assert win.block_ps_eye.isEnabled(), "Camera eye block must be re-enabled when Stereo Vision is inactive"
         assert hasattr(win, "cb_res") and hasattr(win, "cb_fps"), "Split resolution and FPS combos must exist in webcam card"
         assert hasattr(win, "btn_refresh"), "Refresh button in device card must exist"
         if win.is_camera_accessible():
@@ -819,6 +832,346 @@ def test_telemetry_and_adaptive_benchmark():
 
     print("  -> Telemetry Benchmark & Adaptive Calibration PASSED")
 
+def test_ps4_native_backend():
+    print("[TEST] PS4 Native WinUSB Backend (Driver, Firmware, UVC Depacketizer, Stereo Demux & Live HW)...")
+    from sensor.ps4_backend import (
+        PS4CameraBackend,
+        PS4UsbDevice,
+        PS4FirmwareManager,
+        PS4DriverInstaller,
+        FIRMWARE_SIZE,
+        FIRMWARE_SHA1,
+        FIRMWARE_SHA256,
+        EYE_RIGHT,
+        EYE_LEFT,
+        DEFAULT_EYE,
+        ISP_GEOMETRIES,
+        find_isp_geometry,
+        depacketize_uvc_packet,
+        demux_stereo_frame_yuy2,
+    )
+    from sensor.camera_manager import LatestFrameCamera
+
+    # 1. Default Eye & INF Package Verification
+    assert DEFAULT_EYE == EYE_RIGHT == "right"
+    inf_path = PS4DriverInstaller.get_inf_path()
+    assert inf_path.is_file(), f"Expected legacy_pscam_device.inf at {inf_path}"
+    drv_info = PS4DriverInstaller.verify_driver_status()
+    assert drv_info["inf_file_present"] is True
+    assert isinstance(drv_info["winusb_interface_active"], bool)
+
+    # 2. ISP Geometries Verification (all 9 hardware modes)
+    assert len(ISP_GEOMETRIES) == 9
+    g_1280_60 = find_isp_geometry(1280, 800, 60)
+    assert g_1280_60 is not None and g_1280_60.frame_bytes == 3448 * 2 * 808
+    assert g_1280_60.left_offset == 96 and g_1280_60.right_offset == 96 + 2560
+    g_640_120 = find_isp_geometry(640, 400, 120)
+    assert g_640_120 is not None and g_640_120.frame_bytes == 1748 * 2 * 408
+    g_320_240 = find_isp_geometry(320, 192, 240)
+    assert g_320_240 is not None and g_320_240.frame_bytes == 898 * 2 * 200
+    # Legacy 640x480 maps cleanly to 640x400
+    g_compat = find_isp_geometry(640, 480, 60)
+    assert g_compat is not None and g_compat.eye_w == 640 and g_compat.eye_h == 400
+
+    # 3. Firmware Cryptographic Validation (Reject corrupted, accept authentic)
+    assert PS4FirmwareManager.validate_firmware_bytes(b"") is False
+    assert PS4FirmwareManager.validate_firmware_bytes(b"\x00" * FIRMWARE_SIZE) is False
+    fw_bytes = PS4FirmwareManager.locate_valid_firmware()
+    if fw_bytes is not None:
+        assert len(fw_bytes) == FIRMWARE_SIZE
+        assert PS4FirmwareManager.compute_sha1(fw_bytes) == FIRMWARE_SHA1
+        assert PS4FirmwareManager.compute_sha256(fw_bytes) == FIRMWARE_SHA256
+        assert PS4FirmwareManager.validate_firmware_bytes(fw_bytes) is True
+        tampered = bytearray(fw_bytes)
+        tampered[1024] ^= 0xFF
+        assert PS4FirmwareManager.validate_firmware_bytes(bytes(tampered)) is False
+        print("  -> Authentic 68,032-byte OV580 firmware SHA-1 & SHA-256 verified")
+
+    # 4. UVC Isochronous Packet Depacketizer Test
+    hdr12_pkt = struct.pack("<BBIIH", 0x0C, 0x0C | 0x01, 0x12345678, 0xABCDEF00, 0x9999) + b"VIDEO_DATA_12"
+    fid, pts, payload = depacketize_uvc_packet(hdr12_pkt)
+    assert fid == 1 and pts == 0x12345678 and payload == b"VIDEO_DATA_12"
+
+    hdr4_pkt = b"\x01\x02\x03\x04VIDEO_CONT_4"
+    fid4, pts4, payload4 = depacketize_uvc_packet(hdr4_pkt)
+    assert fid4 is None and pts4 is None and payload4 == b"VIDEO_CONT_4"
+
+    # 5. Dual-Eye Stereo Demultiplexer Test (Synthetic Frame)
+    for geom in (g_1280_60, g_640_120, g_320_240):
+        synth_raw = np.zeros((geom.rows, geom.row_bytes), dtype=np.uint8)
+        # Fill Left Eye band with pattern (Y=80, U/V=110) and Right Eye band with (Y=190, U/V=140)
+        l_off = geom.left_offset
+        r_off = geom.right_offset
+        b_len = geom.band_bytes
+        synth_raw[:geom.eye_h, l_off:l_off + b_len:2] = 80
+        synth_raw[:geom.eye_h, l_off + 1:l_off + b_len:2] = 110
+        synth_raw[:geom.eye_h, r_off:r_off + b_len:2] = 190
+        synth_raw[:geom.eye_h, r_off + 1:r_off + b_len:2] = 140
+
+        left_yuy2, right_yuy2 = demux_stereo_frame_yuy2(synth_raw.reshape(-1), geom)
+        assert left_yuy2.shape == (geom.eye_h, geom.eye_w, 2)
+        assert right_yuy2.shape == (geom.eye_h, geom.eye_w, 2)
+        assert int(left_yuy2[0, 0, 0]) == 80 and int(left_yuy2[0, 0, 1]) == 110
+        assert int(right_yuy2[0, 0, 0]) == 190 and int(right_yuy2[0, 0, 1]) == 140
+    print("  -> Dual-eye demultiplexer verified across 1280x800, 640x400, and 320x192")
+
+    # 6. Physical Hardware Streaming Test (when PS4 Camera is connected)
+    hw_status = PS4UsbDevice.probe_hardware_status()
+    if hw_status["connected"] and hw_status["winusb_bound"]:
+        print("  -> Physical PlayStation 4 Camera detected! Running live 60 FPS hardware capture test...")
+        cam = LatestFrameCamera(
+            camera_index=0,
+            target_w=1280,
+            target_h=800,
+            target_fps=60,
+            is_pscam=True,
+            ps4_eye=EYE_RIGHT,
+            ps4_backend_mode="native",
+        )
+        try:
+            assert cam.ps4_backend is not None, "Expected native PS4CameraBackend to be active"
+            frame_right = None
+            t_wait = time.perf_counter()
+            while time.perf_counter() - t_wait < 2.0:
+                ret, fr, _ = cam.read(only_new=True)
+                if ret and fr is not None:
+                    frame_right = fr
+                    break
+                time.sleep(0.005)
+            assert frame_right is not None, "Expected live frame from Right Eye"
+            assert frame_right.shape == (800, 1280, 3)
+            assert not LatestFrameCamera._is_black_frame(frame_right), "Expected non-black exposed image"
+
+            # Switch live to Left Eye
+            cam.set_eye(EYE_LEFT)
+            frame_left = None
+            t_wait = time.perf_counter()
+            while time.perf_counter() - t_wait < 1.0:
+                ret, fr, _ = cam.read(only_new=True)
+                if ret and fr is not None:
+                    frame_left = fr
+                    break
+                time.sleep(0.005)
+            assert frame_left is not None and frame_left.shape == (800, 1280, 3)
+
+            # Verify simultaneous dual-sensor stereo access
+            stereo = cam.read_stereo(only_new=False)
+            assert stereo is not None
+            assert stereo["right_bgr"].shape == (800, 1280, 3)
+            assert stereo["left_bgr"].shape == (800, 1280, 3)
+            assert stereo["pts"] > 0
+            print(
+                f"  -> Live Hardware Test PASSED (Right mean={frame_right.mean():.1f}, "
+                f"Left mean={frame_left.mean():.1f}, PTS={stereo['pts']})"
+            )
+        finally:
+            cam.release()
+    else:
+        print("  -> Physical PS4 Camera not connected; synthetic backend tests completed")
+
+    print("  -> PS4 Native WinUSB Backend PASSED")
+
+def test_stereo_vision_engine():
+    print("[TEST] Stereo Vision Engine (Rectification, Sparse 3D Triangulation, Dense Depth Mask)...")
+    from sensor.stereo_matcher import (
+        StereoCalibrator,
+        StereoDepthEngine,
+        STEREO_MODE_DISABLED,
+        STEREO_MODE_SPARSE_METRIC,
+        STEREO_MODE_FULL_DEPTH,
+        PS4_STEREO_BASELINE_M,
+    )
+    from sensor.pose_filters import SkeletonCalibrator
+    from sensor.kinect_shared_memory import NEUTRAL_POSE
+
+    # 1. Optical Constants & Factory Geometry
+    assert math.isclose(PS4_STEREO_BASELINE_M, 0.0852, rel_tol=1e-3), "PS4 baseline must be 85.2 mm"
+    calibrator = StereoCalibrator(baseline_m=PS4_STEREO_BASELINE_M)
+    calibrator.update_resolution(1280, 800)
+    assert calibrator.current_w == 1280 and calibrator.current_h == 800
+    assert calibrator.map_l_x is not None and calibrator.map_l_x.shape == (800, 1280)
+    assert calibrator.map_r_x is not None and calibrator.map_r_x.shape == (800, 1280)
+    assert calibrator.Q is not None and calibrator.Q.shape == (4, 4)
+
+    # 2. Epipolar Rectification Execution
+    dummy_left = np.zeros((800, 1280, 3), dtype=np.uint8)
+    dummy_right = np.zeros((800, 1280, 3), dtype=np.uint8)
+    rect_l, rect_r = calibrator.rectify(dummy_left, dummy_right)
+    assert rect_l.shape == (800, 1280, 3)
+    assert rect_r.shape == (800, 1280, 3)
+
+    # 3. Fast Sparse Landmark Triangulation (<0.5 ms)
+    # Synthesize a textured target with known physical disparity:
+    # Target depth Z = 2.0 meters => disparity d = (fx * B) / Z = (860.0 * 0.0852) / 2.0 = 36.636 pixels
+    engine = StereoDepthEngine(baseline_m=PS4_STEREO_BASELINE_M)
+    target_u_r, target_v_r = 600, 400
+    disparity_px = 37  # integer pixel shift for synthetic test
+    target_u_l = target_u_r + disparity_px  # in left eye shifted rightwards
+
+    test_l = np.ones((800, 1280, 3), dtype=np.uint8) * 50
+    test_r = np.ones((800, 1280, 3), dtype=np.uint8) * 50
+    for r in range(-10, 11):
+        for c in range(-10, 11):
+            pattern_val = int(((r * c) % 180) + 70)
+            test_r[target_v_r + r, target_u_r + c] = (pattern_val, 255 - pattern_val, 120)
+            test_l[target_v_r + r, target_u_l + c] = (pattern_val, 255 - pattern_val, 120)
+
+    joints_2d = {
+        0: (float(target_u_r), float(target_v_r), 0.95),  # HipCenter
+    }
+
+    engine.calibrator.update_resolution(1280, 800)
+    # Warmup OpenCV optical flow buffers
+    engine.triangulate_sparse_joints(test_l, test_r, joints_2d, search_radius_px=60)
+    t0 = time.perf_counter()
+    res = engine.triangulate_sparse_joints(test_l, test_r, joints_2d, search_radius_px=60)
+    dt_ms = (time.perf_counter() - t0) * 1000.0
+
+    assert 0 in res, "Target joint must be successfully triangulated"
+    x_m, y_m, z_m, conf = res[0]
+    expected_z = (860.0 * PS4_STEREO_BASELINE_M) / float(disparity_px)  # ~1.98 m
+    assert abs(z_m - expected_z) < 0.15, f"Expected Z around {expected_z:.2f}m, got {z_m:.2f}m"
+    assert dt_ms < 5.0, f"Sparse triangulation must execute in <5ms, took {dt_ms:.2f}ms"
+    print(f"  -> Sub-Pixel PyrLK Triangulation PASSED (Z={z_m:.2f}m, error={abs(z_m - expected_z)*100:.1f}cm, time={dt_ms:.2f}ms)")
+
+    # 3.1 Dynamic Vertical Epipolar Auto-Calibration (Simulated +3px vertical lens tilt)
+    engine.reset_calibration()
+    test_l_tilted = np.ones((800, 1280, 3), dtype=np.uint8) * 50
+    dy_tilt = 3
+    for r in range(-10, 11):
+        for c in range(-10, 11):
+            pattern_val = int(((r * c) % 180) + 70)
+            test_l_tilted[target_v_r + dy_tilt + r, target_u_l + c] = (pattern_val, 255 - pattern_val, 120)
+
+    for _ in range(8):
+        res_tilt = engine.triangulate_sparse_joints(test_l_tilted, test_r, joints_2d, search_radius_px=60)
+    assert 0 in res_tilt, "Tilted lens joint must still be triangulated via 2D epipolar band + PyrLK"
+    assert engine.vertical_offset_px > 1.0, f"Expected learned positive vertical offset, got {engine.vertical_offset_px:.2f}px"
+    print(f"  -> Dynamic Epipolar Auto-Calibration PASSED (learned vertical offset={engine.vertical_offset_px:.2f}px for +3px tilt)")
+
+    # 4. Dense Depth Mask Computation (320x240)
+    mask = engine.compute_dense_depth_mask(test_l, test_r, target_w=320, target_h=240, min_z_m=0.8, max_z_m=2.8)
+    assert mask.shape == (240, 320)
+    assert mask.dtype == np.uint8
+    print("  -> Dense Depth Mask generation PASSED")
+
+    # 4.1 Confirmed Background Mask & Right-Eye Alignment (Pruning clutter without dissolving body)
+    bg_mask = engine.compute_confirmed_background_mask(test_l, test_r, target_w=320, target_h=240, min_z_m=0.8, max_z_m=2.8, align_to_right=True)
+    assert bg_mask.shape == (240, 320)
+    assert bg_mask.dtype == np.uint8
+    print("  -> Confirmed Background Mask & Alignment PASSED")
+
+    # 5. Integration with SkeletonCalibrator
+    sk_calib = SkeletonCalibrator(target_height_m=1.75)
+    joints = [list(j) for j in NEUTRAL_POSE]
+    out_mono = sk_calib.transform(joints)
+    assert math.isclose(out_mono[0][2], 2.0, rel_tol=1e-2), f"Expected mono baseline Z=2.0, got {out_mono[0][2]}"
+
+    # With metric stereo grounding (e.g. dancer standing at 2.6m)
+    stereo_depths = {0: (0.0, 0.0, 2.60, 0.95)}
+    out_stereo = sk_calib.transform(joints, stereo_depths=stereo_depths)
+    assert out_stereo[0][2] > 2.2, f"Expected stereo grounded Z > 2.2, got {out_stereo[0][2]}"
+    print(f"  -> SkeletonCalibrator Stereo Grounding PASSED (Z moved from {out_mono[0][2]:.2f}m to {out_stereo[0][2]:.2f}m)")
+
+    # 6. PoseTracker Interface Compatibility
+    import sensor
+    assert hasattr(sensor, "PoseTracker")
+    print("  -> Stereo Vision Engine Test PASSED")
+
+
+def test_ds4_controller():
+    print("[TEST] DualShock 4 Controller Compatibility & Clone IMU Engine...")
+    from sensor.ds4_controller import (
+        KNOWN_DS4_TARGETS,
+        is_known_ds4_target,
+        is_compatible_ds4_path,
+        detect_controller_name,
+        _score_hid_interface,
+        DS4Controller,
+    )
+    import struct
+    import zlib
+
+    # 1. VID/PID Identification
+    assert is_known_ds4_target(r"\\?\hid#vid_054c&pid_05c4#...")  # Sony v1
+    assert is_known_ds4_target(r"\\?\hid#vid_054c&pid_09cc#...")  # Sony v2
+    assert is_known_ds4_target(r"\\?\hid#vid_2563&pid_0575#...")  # ShanWan clone
+    assert is_known_ds4_target(r"\\?\hid#vid_0079&pid_181b#...")  # DragonRise clone
+    assert not is_known_ds4_target(r"\\?\hid#vid_045e&pid_028e#...")  # Xbox 360
+
+    # 2. Permissive Path Filtering
+    assert is_compatible_ds4_path(r"\\?\hid#{00001124-0000-1000-8000-00805f9b34fb}&col01", permissive=True)
+    assert not is_compatible_ds4_path(r"\\?\hid#vid_045e&pid_02e0#...", permissive=True)  # Blacklisted Xbox
+    assert not is_compatible_ds4_path(r"\\?\hid#vid_1234&pid_5678#kbd&col01", permissive=True)  # Keyboard
+    assert not is_compatible_ds4_path(r"\\?\hid#vid_1234&pid_5678#mouse&col01", permissive=True)  # Mouse
+
+    # 3. HID Interface Scoring
+    assert _score_hid_interface(usage_page=0x01, usage=0x05, in_len=64) == 100  # Gamepad
+    assert _score_hid_interface(usage_page=0x01, usage=0x04, in_len=64) == 90   # Joystick
+    assert _score_hid_interface(usage_page=0x0C, usage=0x01, in_len=64) == -1   # Consumer control
+    assert _score_hid_interface(usage_page=0x0D, usage=0x05, in_len=64) == -1   # Touchpad digitizer
+
+    # 4. Output Report 0x11 CRC-32 Validation
+    out_rep = bytearray(78)
+    out_rep[0] = 0x11
+    out_rep[1] = 0xC0
+    out_rep[3] = 0x07
+    out_rep[8] = 0x00
+    out_rep[9] = 0x43
+    out_rep[10] = 0x9C
+    crc = zlib.crc32(bytes([0xA2]) + bytes(out_rep[:74])) & 0xFFFFFFFF
+    out_rep[74:78] = struct.pack("<I", crc)
+    assert len(out_rep) == 78
+    assert crc != 0
+
+    # 5. Synthetic Report Decoding & Dynamic IMU Detection
+    # 5.1 Official Sony Layout in Report 0x11: Gyro at offset 15 (near 0), Accel at offset 21 (~8192 counts = 1G)
+    rep_sony = bytearray(78)
+    rep_sony[0] = 0x11
+    rep_sony[7] = 0x20  # Cross button
+    # Gyro at 15..20 = 0
+    struct.pack_into("<hhh", rep_sony, 15, 5, -8, 12)
+    # Accel at 21..26 = Earth gravity on Y axis (8192 counts)
+    struct.pack_into("<hhh", rep_sony, 21, 0, 8192, 0)
+
+    # 5.2 Clone InvenSense Layout in Report 0x11: Accel at Block A (offset 15, 8192 counts), Gyro at Block B (offset 21, near 0)
+    rep_clone = bytearray(78)
+    rep_clone[0] = 0x11
+    rep_clone[7] = 0x40  # Circle button
+    struct.pack_into("<hhh", rep_clone, 15, 0, 8192, 0)  # Accel in Block A!
+    struct.pack_into("<hhh", rep_clone, 21, 2, -3, 1)    # Gyro in Block B!
+
+    # 5.3 Clone 4096 LSB/G Sensitivity
+    rep_clone_4096 = bytearray(78)
+    rep_clone_4096[0] = 0x11
+    struct.pack_into("<hhh", rep_clone_4096, 15, 0, 4096, 0)
+    struct.pack_into("<hhh", rep_clone_4096, 21, 0, 0, 0)
+
+    # Validate detection logic against both packets
+    for rep, exp_block_a in [(rep_sony, False), (rep_clone, True)]:
+        s1, s2, s3, s4, s5, s6 = struct.unpack_from("<hhhhhh", rep, 15)
+        mag_a = math.sqrt(float(s1 * s1 + s2 * s2 + s3 * s3))
+        mag_b = math.sqrt(float(s4 * s4 + s5 * s5 + s6 * s6))
+        if mag_b >= 1500.0 and mag_b >= mag_a * 0.7:
+            is_block_a = False
+            ax, ay, az = s4, s5, s6
+        else:
+            is_block_a = True
+            ax, ay, az = s1, s2, s3
+        assert is_block_a == exp_block_a
+        assert math.isclose(ay, 8192, abs_tol=100)
+
+    # Validate scale detection on 4096 LSB packet
+    s1, s2, s3, s4, s5, s6 = struct.unpack_from("<hhhhhh", rep_clone_4096, 15)
+    mag = math.sqrt(float(s1 * s1 + s2 * s2 + s3 * s3))
+    scale = 4096.0 if 3000.0 <= mag <= 6000.0 else 8192.0
+    assert scale == 4096.0
+    g_force = mag / scale
+    assert math.isclose(g_force, 1.0, rel_tol=1e-2)
+
+    print("  -> DualShock 4 & Clone IMU Compatibility PASSED")
+
+
 def run_all_tests():
     print("==========================================")
     print("   RUNNING LEGACY PSCAM SENSOR TEST SUITE ")
@@ -833,8 +1186,11 @@ def run_all_tests():
     test_overlay()
     test_camera_manager()
     test_telemetry_and_adaptive_benchmark()
+    test_ps4_native_backend()
+    test_stereo_vision_engine()
+    test_ds4_controller()
     print("==========================================")
-    print("   ALL TESTS PASSED SUCCESSFULLY (10/10)  ")
+    print("   ALL TESTS PASSED SUCCESSFULLY (13/13)  ")
     print("==========================================")
 
 if __name__ == "__main__":

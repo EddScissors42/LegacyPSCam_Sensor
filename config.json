@@ -1,7 +1,9 @@
 {
     "camera_mode": "webcam",
-    "camera_index": 0,
+    "camera_index": 1,
     "camera_orientation": 0,
+    "ps4_camera_backend": "native",
+    "ps4_eye": "right",
     "pscam_preset": "1280x800 @ 60 FPS",
     "webcam_preset": "640x480 @ 60 FPS",
     "mirror_horizontal": true,
@@ -42,5 +44,6 @@
     "ds4_hand": "right",
     "ds4_sensitivity": 1.0,
     "ds4_permissive_mode": true,
-    "benchmark_auto_record": false
+    "benchmark_auto_record": false,
+    "stereo_mode": "disabled"
 }

@@ -44,7 +44,7 @@ DS4_PID_V2 = 0x09CC
 
 # Target Vendor and Product IDs for Official Sony DS4, Licensed Third-Party & Known Clone Chips
 KNOWN_DS4_TARGETS: Dict[str, Tuple[str, ...]] = {
-    "054c": ("05c4", "09cc", "0ba0"),  # Official Sony DS4 v1, v2, USB Wireless Adapter
+    "054c": ("05c4", "09cc", "0ba0", "0ce6", "0df2"),  # Official Sony DS4 v1, v2, USB Wireless Adapter, DualSense
     "0f0d": ("0055", "0066", "0084", "00a0", "00ee", "011c", "00c1"),  # Hori (Onyx, Mini, Fighting Commander)
     "146b": ("0601", "0602", "0603", "0604", "0605", "0606", "0609", "0d01", "0d02", "0d08"),  # Nacon (Revolution Pro, Compact)
     "1532": ("1000", "1004", "1007", "1008", "1009", "100a"),  # Razer Raiju series (Ultimate, Tournament)
@@ -52,8 +52,15 @@ KNOWN_DS4_TARGETS: Dict[str, Tuple[str, ...]] = {
     "2e95": ("7725", "9925"),  # Scuf Gaming (Vantage / Impact)
     "2c22": ("2000", "2300", "2500"),  # Qanba PS4 controllers
     "0738": ("5252", "8250", "8384"),  # Mad Catz PS4
-    "2563": ("0575", "0555", "0523"),  # ShanWan clone chips commonly found in generic wireless DS4 replicas
-    "0079": ("181b", "181c", "181d"),  # DragonRise / Generic wireless clones
+    "2563": ("0575", "0555", "0523", "0588", "0590", "0526"),  # ShanWan clone chips commonly found in generic wireless DS4 replicas
+    "0079": ("181b", "181c", "181d", "181e", "1843", "1844", "1845", "0006"),  # DragonRise / Generic wireless clones
+    "057e": ("2009", "2006", "2007"),  # Switch Pro / Multi-protocol clones
+    "11ff": ("3331", "0511"),  # Generic PC/PS4 Gamepads
+    "0e8f": ("0003", "1008"),  # GreenAsia / PS4 clones
+    "0810": ("0001", "0003"),  # Personal Communication Systems
+    "12bd": ("d015", "c010"),  # Generic PS4 clones
+    "20bc": ("5500", "5510"),  # Generic PS4 replicas
+    "3288": ("0001", "0002"),  # Generic clone boards
 }
 
 # Blacklisted devices that should NEVER be treated as a DS4 clone (e.g. Xbox controllers without motion IMU)
@@ -113,9 +120,9 @@ def is_compatible_ds4_path(path: str, permissive: bool = True) -> bool:
 
     # 2. Permissive mode: allow unknown USB/Bluetooth HID devices with VID/PID that are not blacklisted
     if permissive:
-        if "kbd" in path_lower or "mou" in path_lower:
+        if "kbd" in path_lower or "mou" in path_lower or "mouse" in path_lower or "keyboard" in path_lower:
             return False
-        if "vid" in path_lower and "pid" in path_lower:
+        if ("vid" in path_lower and "pid" in path_lower) or "00001124" in path_lower or "bth" in path_lower or "bluetooth" in path_lower:
             return True
 
     return False
@@ -180,6 +187,20 @@ def _init_win32_apis():
         wintypes.ULONG,
     ]
 
+    hid.HidD_GetFeature.restype = wintypes.BOOL
+    hid.HidD_GetFeature.argtypes = [
+        wintypes.HANDLE,
+        ctypes.c_void_p,
+        wintypes.ULONG,
+    ]
+
+    hid.HidD_SetFeature.restype = wintypes.BOOL
+    hid.HidD_SetFeature.argtypes = [
+        wintypes.HANDLE,
+        ctypes.c_void_p,
+        wintypes.ULONG,
+    ]
+
     kernel32.CancelIoEx.restype = wintypes.BOOL
     kernel32.CancelIoEx.argtypes = [wintypes.HANDLE, ctypes.c_void_p]
 
@@ -219,10 +240,10 @@ def _init_win32_apis():
 _setupapi, _hid, _kernel32 = _init_win32_apis()
 
 
-def _probe_hid_gamepad_caps(path: str, is_known_target: bool = False) -> bool:
+def _inspect_hid_caps(path: str) -> Optional[Tuple[int, int, int, int, int]]:
     """
-    Verifies via HidD_GetPreparsedData / HidP_GetCaps whether a live Windows HID path
-    is a valid Gamepad/Joystick interface with InputReportByteLength >= 64.
+    Returns (usage_page, usage, in_len, out_len, feat_len) for a Windows HID path,
+    or None if inaccessible.
     """
     h = _kernel32.CreateFileW(
         path,
@@ -244,35 +265,81 @@ def _probe_hid_gamepad_caps(path: str, is_known_target: bool = False) -> bool:
             None,
         )
     if h == -1 or h == wintypes.HANDLE(-1).value:
-        return False
+        h = _kernel32.CreateFileW(
+            path,
+            0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            None,
+            OPEN_EXISTING,
+            0,
+            None,
+        )
+    if h == -1 or h == wintypes.HANDLE(-1).value:
+        return None
 
-    valid = False
+    info = None
     try:
         prep = ctypes.c_void_p()
         if _hid.HidD_GetPreparsedData(h, ctypes.byref(prep)):
             caps = HIDP_CAPS()
             if _hid.HidP_GetCaps(prep, ctypes.byref(caps)):
-                in_len = int(caps.InputReportByteLength)
-                usage_page = int(caps.UsagePage)
-                usage = int(caps.Usage)
-                if in_len >= 64:
-                    if is_known_target:
-                        valid = True
-                    elif usage_page == 0x01 and usage in (0x04, 0x05):
-                        valid = True
+                info = (
+                    int(caps.UsagePage),
+                    int(caps.Usage),
+                    int(caps.InputReportByteLength),
+                    int(caps.OutputReportByteLength),
+                    int(caps.FeatureReportByteLength),
+                )
             _hid.HidD_FreePreparsedData(prep)
     except Exception:
         pass
     finally:
         _kernel32.CloseHandle(h)
-    return valid
+    return info
+
+
+def _score_hid_interface(usage_page: int, usage: int, in_len: int) -> int:
+    """
+    Scores an interface to ensure Gamepad / Joystick collections are preferred
+    over vendor, audio, digitizer, keyboard, or mouse collections.
+    """
+    if usage_page != 0x01:  # Not Generic Desktop Controls (e.g. Consumer 0x0C, Touch 0x0D)
+        return -1
+    # Gamepad (Usage 0x05)
+    if usage == 0x05:
+        return 100 if in_len >= 64 else 85
+    # Joystick (Usage 0x04) or Multi-axis controller (Usage 0x08)
+    if usage in (0x04, 0x08):
+        return 90 if in_len >= 64 else 75
+    # Pointer / Generic desktop device
+    if usage == 0x01:
+        return 60 if in_len >= 8 else -1
+    # Any other Generic Desktop with valid report length
+    return 40 if in_len >= 8 else -1
+
+
+def _probe_hid_gamepad_caps(path: str, is_known_target: bool = False) -> bool:
+    """
+    Verifies via HidD_GetPreparsedData / HidP_GetCaps whether a live Windows HID path
+    is a valid Gamepad/Joystick interface.
+    """
+    info = _inspect_hid_caps(path)
+    if not info:
+        return False
+    upage, usage, in_len, _, _ = info
+    score = _score_hid_interface(upage, usage, in_len)
+    if score > 0:
+        return True
+    if is_known_target and in_len >= 8 and upage == 0x01:
+        return True
+    return False
 
 
 def find_ds4_devices(permissive: bool = True) -> List[str]:
     """
     Scans Windows PnP device interfaces for connected Sony DualShock 4 controllers,
     compatible third-party controllers (Nacon, Razer, Hori, Astro, Scuf) or clone chips.
-    Returns a list of device interface paths.
+    Returns a list of device interface paths prioritized with Gamepad interfaces first.
     """
     hid_guid = GUID()
     _hid.HidD_GetHidGuid(ctypes.byref(hid_guid))
@@ -286,7 +353,7 @@ def find_ds4_devices(permissive: bool = True) -> List[str]:
     if hdev == -1 or hdev == wintypes.HANDLE(-1).value:
         return []
 
-    ds4_paths: List[str] = []
+    scored_paths: List[Tuple[int, str]] = []
     index = 0
 
     try:
@@ -319,12 +386,23 @@ def find_ds4_devices(permissive: bool = True) -> List[str]:
                 path = detail.DevicePath
                 if is_compatible_ds4_path(path, permissive=permissive):
                     known = is_known_ds4_target(path)
-                    if _probe_hid_gamepad_caps(path, is_known_target=known):
-                        ds4_paths.append(path)
+                    info = _inspect_hid_caps(path)
+                    if info:
+                        upage, usage, in_len, _, _ = info
+                        score = _score_hid_interface(upage, usage, in_len)
+                        if score <= 0 and known and in_len >= 8 and upage == 0x01:
+                            score = 30
+                        if score > 0:
+                            # Prioritize known Sony / licensed hardware slightly
+                            if known:
+                                score += 5
+                            scored_paths.append((score, path))
     finally:
         _setupapi.SetupDiDestroyDeviceInfoList(hdev)
 
-    return ds4_paths
+    # Sort descending by score so actual Gamepad interfaces are tried first
+    scored_paths.sort(key=lambda x: x[0], reverse=True)
+    return [p for _, p in scored_paths]
 
 
 @dataclass
@@ -370,6 +448,7 @@ class DS4Controller:
         self._lock = threading.Lock()
         self._input_len: int = 64
         self._output_len: int = 32
+        self._feature_len: int = 64
         self.is_usb: bool = False
 
         # Configurable attributes
@@ -447,6 +526,7 @@ class DS4Controller:
                 # Query report lengths via HID capabilities to ensure this is the Gamepad/Motion interface
                 cand_in = 64
                 cand_out = 32
+                cand_feat = 64
                 valid_interface = False
                 try:
                     prep = ctypes.c_void_p()
@@ -455,8 +535,11 @@ class DS4Controller:
                         if _hid.HidP_GetCaps(prep, ctypes.byref(caps)):
                             cand_in = int(caps.InputReportByteLength)
                             cand_out = int(caps.OutputReportByteLength)
-                            # DS4 standard reports are >= 64 bytes (sub-interfaces are 2-16 bytes)
-                            if cand_in >= 64:
+                            cand_feat = int(caps.FeatureReportByteLength)
+                            usage_page = int(caps.UsagePage)
+                            usage = int(caps.Usage)
+                            is_gamepad = (usage_page == 0x01 and usage in (0x01, 0x04, 0x05, 0x08))
+                            if cand_in >= 8 and (cand_in >= 64 or is_gamepad or is_known_ds4_target(cand_path)):
                                 valid_interface = True
                         _hid.HidD_FreePreparsedData(prep)
                 except Exception:
@@ -467,6 +550,7 @@ class DS4Controller:
                     chosen_path = cand_path
                     in_len = cand_in
                     out_len = cand_out
+                    feat_len = cand_feat
                     break
                 else:
                     _kernel32.CloseHandle(h)
@@ -481,6 +565,7 @@ class DS4Controller:
             self._device_path = chosen_path
             self._input_len = in_len
             self._output_len = out_len
+            self._feature_len = max(feat_len, 64)
             self._stop_event.clear()
 
             # Detect USB vs Bluetooth connection & friendly controller name
@@ -494,6 +579,11 @@ class DS4Controller:
             self.state.connected = True
             self.state.controller_name = detect_controller_name(chosen_path)
             self.state.imu_frozen = False
+
+            # Trigger operational mode handshake (Feature Reports 0x02, 0x05, 0x04)
+            # Crucial for clone DualShock 4 and official controllers to unlock Report 0x11
+            # and activate the 6-axis IMU (gyroscope + accelerometer) on Bluetooth/USB.
+            self._activate_operational_mode()
 
             # Perform handshake + welcome rumble buzz
             self._send_output_report(
@@ -595,6 +685,46 @@ class DS4Controller:
 
         threading.Thread(target=_rumble_task, daemon=True).start()
 
+    def _activate_operational_mode(self) -> None:
+        """
+        Sends Feature Reports 0x02 and 0x05 (and 0x04) via HidD_GetFeature / HidD_SetFeature.
+        This is the standard Linux kernel / WebHID / DS4Windows handshake that commands
+        the DualShock 4 (both official Sony and clones/replicas) to transition from
+        power-saving basic mode (Report 0x01, no IMU) into full operational mode
+        (Report 0x11, high-frequency 6-axis IMU gyro + accel).
+        """
+        if not self._handle:
+            return
+
+        feat_len = max(getattr(self, "_feature_len", 64), 64)
+
+        # 1. Feature Report 0x02: Unlock full operational mode
+        try:
+            buf_feat2 = (ctypes.c_ubyte * feat_len)()
+            buf_feat2[0] = 0x02
+            _hid.HidD_GetFeature(self._handle, ctypes.byref(buf_feat2), feat_len)
+            _hid.HidD_SetFeature(self._handle, ctypes.byref(buf_feat2), feat_len)
+        except Exception:
+            pass
+
+        # 2. Feature Report 0x05: Query gyro/accel calibration
+        try:
+            buf_feat5 = (ctypes.c_ubyte * feat_len)()
+            buf_feat5[0] = 0x05
+            _hid.HidD_GetFeature(self._handle, ctypes.byref(buf_feat5), feat_len)
+            _hid.HidD_SetFeature(self._handle, ctypes.byref(buf_feat5), feat_len)
+        except Exception:
+            pass
+
+        # 3. Feature Report 0x04: Alternative handshake for certain clone chips
+        try:
+            buf_feat4 = (ctypes.c_ubyte * feat_len)()
+            buf_feat4[0] = 0x04
+            _hid.HidD_GetFeature(self._handle, ctypes.byref(buf_feat4), feat_len)
+            _hid.HidD_SetFeature(self._handle, ctypes.byref(buf_feat4), feat_len)
+        except Exception:
+            pass
+
     def _send_output_report(
         self,
         r: int,
@@ -655,20 +785,44 @@ class DS4Controller:
             )
             if not res or written.value == 0:
                 res = _hid.HidD_SetOutputReport(self._handle, ctypes.byref(c_buf), 78)
+
+            # If 78-byte Output Report failed on Bluetooth (typical for clones),
+            # fall back to 32-byte Output Report 0x05 which clones accept!
+            if not res:
+                out_rep_05 = bytearray(32)
+                out_rep_05[0] = 0x05
+                out_rep_05[1] = 0x07
+                out_rep_05[4] = max(0, min(255, int(rumble_small)))
+                out_rep_05[5] = max(0, min(255, int(rumble_large)))
+                out_rep_05[6] = max(0, min(255, int(r)))
+                out_rep_05[7] = max(0, min(255, int(g)))
+                out_rep_05[8] = max(0, min(255, int(b)))
+                c_buf_05 = (ctypes.c_ubyte * 32)(*out_rep_05)
+                res = _hid.HidD_SetOutputReport(self._handle, ctypes.byref(c_buf_05), 32)
+
             return bool(res)
 
     def _worker_loop(self) -> None:
-        """High-frequency background reader supporting Report 0x01 and Report 0x11."""
+        """
+        High-frequency background reader supporting Report 0x01, Report 0x11..0x19,
+        Report 0x31, and clone reports with adaptive IMU offset & scale detection.
+        """
         buf_len = max(64, self._input_len)
         buf = (ctypes.c_ubyte * buf_len)()
         bytes_read = wintypes.DWORD()
 
         vphone = get_virtual_phone()
         last_out_refresh = time.perf_counter()
+        last_wake_poke = time.perf_counter()
 
         samples_count = 0
         samples_time_start = time.perf_counter()
-        zero_accel_count = 0
+        consecutive_zero_accel = 0
+
+        # Dynamic IMU offset & LSB scale detector for clones
+        detected_imu_offset: Optional[int] = None
+        detected_accel_is_block_a: bool = False
+        detected_scale_lsb: float = 8192.0
 
         self.state.connected = True
         self.state.is_usb = self.is_usb
@@ -682,83 +836,167 @@ class DS4Controller:
                 break
 
             data = bytes(buf[: bytes_read.value])
-            if len(data) < 30:
+            if len(data) < 8:
                 continue
 
             now = time.perf_counter()
             rep_id = data[0]
 
+            # Determine button offsets and default motion offset based on report ID
             if rep_id == 0x01:
-                # Standard Report 0x01 (Windows Bluetooth default / USB)
-                gyro_x, gyro_y, gyro_z, acc_x, acc_y, acc_z = struct.unpack_from("<hhhhhh", data, 13)
-
-                dpad_val = data[5] & 0x0F
-                dpad_dict = self.DPAD_MAP.get(dpad_val, self.DPAD_MAP[8])
-
-                btn_square = bool(data[5] & 0x10)
-                btn_cross = bool(data[5] & 0x20)
-                btn_circle = bool(data[5] & 0x40)
-                btn_triangle = bool(data[5] & 0x80)
-
-                btn_l1 = bool(data[6] & 0x01)
-                btn_r1 = bool(data[6] & 0x02)
-                btn_l2 = bool(data[6] & 0x04)
-                btn_r2 = bool(data[6] & 0x08)
-                btn_share = bool(data[6] & 0x10)
-                btn_options = bool(data[6] & 0x20)
-                btn_l3 = bool(data[6] & 0x40)
-                btn_r3 = bool(data[6] & 0x80)
-
-                btn_ps = bool(data[7] & 0x01)
-                btn_touch = bool(data[7] & 0x02)
-
+                # Standard USB / Bluetooth basic report
+                dpad_byte = data[5] if len(data) > 5 else 0x08
+                btn_byte1 = data[6] if len(data) > 6 else 0
+                btn_byte2 = data[7] if len(data) > 7 else 0
                 batt_byte = data[30] if len(data) > 30 else 0
-            elif rep_id == 0x11 and len(data) >= 33:
-                # Extended Report 0x11
-                gyro_x, gyro_y, gyro_z, acc_x, acc_y, acc_z = struct.unpack_from("<hhhhhh", data, 15)
-
-                dpad_val = data[7] & 0x0F
-                dpad_dict = self.DPAD_MAP.get(dpad_val, self.DPAD_MAP[8])
-
-                btn_square = bool(data[7] & 0x10)
-                btn_cross = bool(data[7] & 0x20)
-                btn_circle = bool(data[7] & 0x40)
-                btn_triangle = bool(data[7] & 0x80)
-
-                btn_l1 = bool(data[8] & 0x01)
-                btn_r1 = bool(data[8] & 0x02)
-                btn_l2 = bool(data[8] & 0x04)
-                btn_r2 = bool(data[8] & 0x08)
-                btn_share = bool(data[8] & 0x10)
-                btn_options = bool(data[8] & 0x20)
-                btn_l3 = bool(data[8] & 0x40)
-                btn_r3 = bool(data[8] & 0x80)
-
-                btn_ps = bool(data[9] & 0x01)
-                btn_touch = bool(data[9] & 0x02)
-
+                default_offset = 13
+            elif rep_id in range(0x11, 0x20):
+                # Extended Bluetooth reports (0x11 through 0x19)
+                dpad_byte = data[7] if len(data) > 7 else 0x08
+                btn_byte1 = data[8] if len(data) > 8 else 0
+                btn_byte2 = data[9] if len(data) > 9 else 0
                 batt_byte = data[32] if len(data) > 32 else 0
+                default_offset = 15
+            elif rep_id == 0x31:
+                # DualSense / modern PS protocol
+                dpad_byte = data[8] if len(data) > 8 else 0x08
+                btn_byte1 = data[9] if len(data) > 9 else 0
+                btn_byte2 = data[10] if len(data) > 10 else 0
+                batt_byte = data[53] if len(data) > 53 else 0
+                default_offset = 16
+            elif len(data) >= 64:
+                # Raw report without Report ID (data[0] is Stick X)
+                dpad_byte = data[4] if len(data) > 4 else 0x08
+                btn_byte1 = data[5] if len(data) > 5 else 0
+                btn_byte2 = data[6] if len(data) > 6 else 0
+                batt_byte = data[29] if len(data) > 29 else 0
+                default_offset = 12
             else:
-                continue
+                # Truncated basic Bluetooth report (e.g. 9 or 10 bytes)
+                dpad_byte = data[5] if len(data) > 5 else 0x08
+                btn_byte1 = data[6] if len(data) > 6 else 0
+                btn_byte2 = data[7] if len(data) > 7 else 0
+                batt_byte = 0
+                default_offset = -1
 
-            # Hardware scaling: 8192 LSB = 1.0 G
-            raw_ax = (acc_x / 8192.0) * self.sensitivity
-            raw_ay = (acc_y / 8192.0) * self.sensitivity
-            raw_az = (acc_z / 8192.0) * self.sensitivity
+            dpad_val = dpad_byte & 0x0F
+            dpad_dict = self.DPAD_MAP.get(dpad_val, self.DPAD_MAP[8])
 
-            # Just Dance Smartphone coordinate mapping:
+            btn_square = bool(dpad_byte & 0x10)
+            btn_cross = bool(dpad_byte & 0x20)
+            btn_circle = bool(dpad_byte & 0x40)
+            btn_triangle = bool(dpad_byte & 0x80)
+
+            btn_l1 = bool(btn_byte1 & 0x01)
+            btn_r1 = bool(btn_byte1 & 0x02)
+            btn_l2 = bool(btn_byte1 & 0x04)
+            btn_r2 = bool(btn_byte1 & 0x08)
+            btn_share = bool(btn_byte1 & 0x10)
+            btn_options = bool(btn_byte1 & 0x20)
+            btn_l3 = bool(btn_byte1 & 0x40)
+            btn_r3 = bool(btn_byte1 & 0x80)
+
+            btn_ps = bool(btn_byte2 & 0x01)
+            btn_touch = bool(btn_byte2 & 0x02)
+
+            gyro_x = gyro_y = gyro_z = 0
+            acc_x = acc_y = acc_z = 0
+            active_offset = detected_imu_offset if detected_imu_offset is not None else default_offset
+
+            if active_offset >= 0 and len(data) >= active_offset + 12:
+                s1, s2, s3, s4, s5, s6 = struct.unpack_from("<hhhhhh", data, active_offset)
+                if detected_accel_is_block_a:
+                    acc_x, acc_y, acc_z = s1, s2, s3
+                    gyro_x, gyro_y, gyro_z = s4, s5, s6
+                else:
+                    gyro_x, gyro_y, gyro_z = s1, s2, s3
+                    acc_x, acc_y, acc_z = s4, s5, s6
+
+            # Smart offset & LSB scale detector for clones
+            raw_mag = math.sqrt(float(acc_x * acc_x + acc_y * acc_y + acc_z * acc_z))
+            if raw_mag < 200.0:
+                # Active offset gave near-zero readings; search candidate offsets
+                candidate_offsets = [13, 15, 12, 14, 16, 17, 19, 21, 23]
+                found_candidate = False
+                for c_off in candidate_offsets:
+                    if len(data) >= c_off + 12:
+                        cs1, cs2, cs3, cs4, cs5, cs6 = struct.unpack_from("<hhhhhh", data, c_off)
+                        mag_a = math.sqrt(float(cs1 * cs1 + cs2 * cs2 + cs3 * cs3))
+                        mag_b = math.sqrt(float(cs4 * cs4 + cs5 * cs5 + cs6 * cs6))
+                        # Check Block B first (standard Sony DS4 layout)
+                        if 1500.0 <= mag_b <= 35000.0 and mag_b >= mag_a * 0.7:
+                            detected_imu_offset = c_off
+                            detected_accel_is_block_a = False
+                            active_offset = c_off
+                            gyro_x, gyro_y, gyro_z = cs1, cs2, cs3
+                            acc_x, acc_y, acc_z = cs4, cs5, cs6
+                            raw_mag = mag_b
+                            found_candidate = True
+                            target_mag = mag_b
+                        # Check Block A (Clone InvenSense / ShanWan register layout)
+                        elif 1500.0 <= mag_a <= 35000.0:
+                            detected_imu_offset = c_off
+                            detected_accel_is_block_a = True
+                            active_offset = c_off
+                            acc_x, acc_y, acc_z = cs1, cs2, cs3
+                            gyro_x, gyro_y, gyro_z = cs4, cs5, cs6
+                            raw_mag = mag_a
+                            found_candidate = True
+                            target_mag = mag_a
+
+                        if found_candidate:
+                            if target_mag > 12000.0:
+                                detected_scale_lsb = 16384.0
+                            elif target_mag > 6000.0:
+                                detected_scale_lsb = 8192.0
+                            elif target_mag > 3000.0:
+                                detected_scale_lsb = 4096.0
+                            else:
+                                detected_scale_lsb = 2048.0
+                            break
+
+                if not found_candidate:
+                    consecutive_zero_accel += 1
+                else:
+                    consecutive_zero_accel = 0
+            else:
+                consecutive_zero_accel = 0
+                if detected_imu_offset is None and default_offset >= 0:
+                    detected_imu_offset = default_offset
+                if 1500.0 <= raw_mag <= 35000.0:
+                    if raw_mag > 12000.0:
+                        detected_scale_lsb = 16384.0
+                    elif raw_mag > 6000.0:
+                        detected_scale_lsb = 8192.0
+                    elif raw_mag > 3000.0:
+                        detected_scale_lsb = 4096.0
+                    else:
+                        detected_scale_lsb = 2048.0
+
+            # If controller is streaming zeroes (sleeping IMU on BT clone),
+            # trigger Feature Report 0x02 and output report poke every 0.8s to wake it up!
+            if consecutive_zero_accel >= 15:
+                if now - last_wake_poke > 0.8:
+                    last_wake_poke = now
+                    def _wake_poke():
+                        self._activate_operational_mode()
+                        self._send_output_report(self.led_r, self.led_g, self.led_b)
+                    threading.Thread(target=_wake_poke, daemon=True).start()
+
+            # Hardware scaling into calibrated G-forces
+            raw_ax = (acc_x / detected_scale_lsb) * self.sensitivity
+            raw_ay = (acc_y / detected_scale_lsb) * self.sensitivity
+            raw_az = (acc_z / detected_scale_lsb) * self.sensitivity
+
             phone_ax = round(raw_ax, 4)
             phone_ay = round(raw_ay, 4)
             phone_az = round(raw_az, 4)
 
-            # IMU Health check (monitors for 0.0G or frozen sensor stream common in clones on Bluetooth)
             accel_mag = math.sqrt(phone_ax * phone_ax + phone_ay * phone_ay + phone_az * phone_az)
             if accel_mag < 0.05:
-                zero_accel_count += 1
-                if zero_accel_count >= 50 and not self.state.imu_frozen:
+                if consecutive_zero_accel >= 40 and not self.state.imu_frozen:
                     self.state.imu_frozen = True
             else:
-                zero_accel_count = 0
                 if self.state.imu_frozen:
                     self.state.imu_frozen = False
 

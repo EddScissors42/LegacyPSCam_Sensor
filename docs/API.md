@@ -207,11 +207,30 @@ python main.py [--start] [--mode {pscam,webcam,ds4}] [--camera <int>]
 
 Para desenvolvedores que importam os módulos internamente:
 
-### `camera_manager.CameraManager`
-- `CameraManager.is_pscam_installed() -> bool`: Retorna se o executável do driver `PSCam4Win` está presente no disco.
-- `CameraManager.is_pscam_running() -> bool`: Retorna se o processo `PSCam4WinTray.exe` está ativo na lista de tarefas.
-- `CameraManager.launch_pscam_tray() -> Tuple[bool, str]`: Inicia o processo do driver em segundo plano de forma desanexada.
-- `CameraManager.enumerate_cameras(max_probe: int = 6) -> List[CameraInfo]`: Retorna a lista de câmeras conectadas cruzando índices com nomes PnP do Windows.
+### `camera_manager.CameraManager` & `LatestFrameCamera`
+- `CameraManager.is_pscam_installed() -> bool`: Retorna se o driver WinUSB da PS4 Camera está instalado/ativo (ou fallback legado).
+- `CameraManager.is_pscam_running() -> bool`: Retorna se o backend nativo WinUSB está operacional.
+- `CameraManager.initialize_ps4_camera() -> Tuple[bool, str]`: Verifica/instala o pacote INF WinUSB e faz o upload automático do firmware OV580 caso a câmera esteja em modo bootloader (`05A9:0580`).
+- `CameraManager.enumerate_cameras(max_probe: int = 6) -> List[CameraInfo]`: Retorna a lista de câmeras conectadas cruzando índices com nomes PnP e interfaces WinUSB.
+- `LatestFrameCamera(camera_index, target_w=640, target_h=480, target_fps=30, mirror=True, is_pscam=False, orientation=0, ps4_eye="right", ps4_backend_mode="native")`: Capturador assíncrono que utiliza `PS4CameraBackend` nativo quando `is_pscam=True`.
+- `LatestFrameCamera.set_eye(eye: str)`: Alterna em tempo real entre `"right"` (Olho Direito, padrão) e `"left"` (Olho Esquerdo).
+- `LatestFrameCamera.read_stereo(only_new: bool = False) -> Optional[dict]`: Retorna simultaneamente os frames BGR e YUY2 de ambos os olhos (`right_bgr`, `left_bgr`, `right_yuy2`, `left_yuy2`, `pts`, `timestamp_ms`, `seq`).
+
+### `sensor.ps4_backend` — Backend Nativo WinUSB para PlayStation 4 Camera
+- `PS4FirmwareManager`:
+  - `locate_valid_firmware() -> Optional[bytes]`: Localiza e valida criptograficamente `firmware.bin` (`68.032` bytes, SHA-1 `8b8a6621d358f6782c2e3b31aac2cdfb25102c00`, SHA-256 `09513d10...`) em `%ProgramData%\LegacySensor\Firmware\`.
+  - `ensure_firmware(allow_download: bool = True) -> Optional[bytes]`: Garante a presença do firmware validado em disco, baixando via HTTPS caso ausente.
+  - `upload_to_bootloader_device(allow_download: bool = True, wait_reenumerate_s: float = 6.0) -> Tuple[bool, str]`: Envia o firmware em blocos de 512B ao dispositivo `05A9:0580`, dispara o comando de reboot (`0x5B`) e aguarda a re-enumeração como `05A9:058B`.
+- `PS4UsbDevice`:
+  - `probe_hardware_status() -> dict`: Inspeciona o estado PnP e WinUSB da câmera (`READY`, `BOOTLOADER_UPLOADING`, `DRIVER_MISSING`, `DISCONNECTED`).
+  - `open(target_w=1280, target_h=800, target_fps=60) -> bool`: Abre as interfaces WinUSB 0 (VideoControl) e 1 (VideoStreaming Alt 1), negocia Probe/Commit UVC YUY2 e ativa Auto-Exposure (`CT_AE_MODE_CONTROL = 0x02`) e Anti-Flicker 60Hz.
+- `PS4CameraBackend`:
+  - `start() -> bool` / `stop() -> None`: Inicia e encerra o anel isócrono de 8 URBs Overlapped (`WinUsb_ReadIsochPipeAsap`) no endpoint `0x81`.
+  - `read_frame(only_new: bool = False) -> Optional[np.ndarray]`: Retorna o frame BGR do olho selecionado (`"right"` por padrão).
+  - `read_stereo_frames(only_new: bool = False) -> Optional[dict]`: Retorna ambos os fluxos ópticos sincronizados.
+- `PS4DriverInstaller`:
+  - `verify_driver_status() -> dict`: Verifica sem elevação UAC se `legacy_pscam_device.inf` está instalado e associado ao `WinUSB.sys`.
+  - `install_or_repair_driver(force_reinstall: bool = False) -> Tuple[bool, str]`: Solicita elevação pontual via `pnputil.exe` apenas quando necessário.
 
 ### `pose_tracker.PoseTracker`
 - `PoseTracker(model_path=None, detection_confidence=0.5, smoothing_alpha=0.55, target_height_m=1.75, cfg=None, model_variant=None)`: Construtor do motor de IA (`model_variant` aceita `"lite"`, `"full"` ou `"heavy"`).
@@ -243,6 +262,8 @@ As preferências do usuário são persistidas em `config.json` via `ConfigManage
 {
   "camera_mode": "pscam",
   "camera_index": 0,
+  "ps4_camera_backend": "native",
+  "ps4_eye": "right",
   "pscam_preset": "1280x800 @ 60 FPS",
   "webcam_preset": "640x480 @ 30 FPS",
   "mirror_horizontal": true,
@@ -257,6 +278,8 @@ As preferências do usuário são persistidas em `config.json` via `ConfigManage
 }
 ```
 
+- `ps4_camera_backend`: Backend de captura para a PlayStation 4 Camera (`"native"` para WinUSB direto, `"pscam4win"` para fallback legado).
+- `ps4_eye`: Sensor óptico ativo da PlayStation 4 Camera (`"right"` como padrão para o Olho Direito, `"left"` para o Olho Esquerdo).
 - `tracking_preset`: Perfil ativo selecionado no menu (`"balanced"`, `"competitive"`, `"stable"` ou `"custom"`).
 - `smoothing_alpha`: Coeficiente de suavização EMA (0.20 a 0.85).
 - `detection_confidence`: Limiar mínimo de confiança da IA MediaPipe (0.30 a 0.80).
@@ -358,3 +381,24 @@ O módulo `sensor.virtual_phone` gerencia a comunicação com o Just Dance atrav
   - **Escala de Forca G Calibrada:** Ganho calibrado contra ground truth de controle fisico DualShock 4 (Smalltown Boy).
   - **Teto Vetorial 3D:** Clamping de magnitude Euclidiana a 7.0G maximo.
   - **Convencao de Eixos:** Screen-relative (+Y ao longo do antebraco, +Z em direcao ao dancarino).
+
+---
+
+## 10. Motor de Visão Estéreo (`sensor.stereo_matcher`)
+
+O pacote `sensor.stereo_matcher` implementa o pipeline óptico de visão estéreo para a PlayStation 4 Camera (sensores dual OV9713 e ponte OV580):
+
+### 10.1 Constantes Ópticas
+- `PS4_STEREO_BASELINE_M = 0.0852`: Distância física entre centros ópticos (85.2 mm).
+- `NOMINAL_FOCAL_AT_1280 = 860.0`: Distância focal de referência em pixels a 1280x800 (HFOV ~73°).
+- `STEREO_MODES`: `("disabled", "sparse_metric", "full_depth")`.
+
+### 10.2 Classes Principais
+- `StereoCalibrator(baseline_m=0.0852)`:
+  - `update_resolution(w, h)`: Computa matrizes intrínsecas $K_1, K_2$, rotação $R$, translação $T = [B, 0, 0]^T$ e look-up tables `cv2.initUndistortRectifyMap`.
+  - `rectify(left, right) -> (rect_left, rect_right)`: Aplica `cv2.remap` em $<0.8\text{ ms}$.
+- `StereoDepthEngine(baseline_m=0.0852)`:
+  - `triangulate_sparse_joints(rect_left, rect_right, joints_2d, search_radius_px=40) -> Dict[joint_id, (X, Y, Z, conf)]`:
+    Executa busca 1D epipolar ($y_L = y_R$) no canal verde com `cv2.matchTemplate` em $<0.3\text{ ms}$, computando profundidade métrica $Z = \frac{f \cdot B}{d}$.
+  - `compute_dense_depth_mask(rect_left, rect_right, target_w=320, target_h=240, min_z_m=0.8, max_z_m=2.8) -> np.ndarray`:
+    Calcula mapa de disparidade a 320x200 via `cv2.StereoSGBM_3WAY` (~3ms), gerando máscara binária uint8 (255 = zona do jogador, 0 = fundo/fora).

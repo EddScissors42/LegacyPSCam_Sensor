@@ -11,11 +11,23 @@ O sistema é baseado em uma **arquitetura modular em pacotes**, onde cada etapa 
 ```
 LegacyPSCam_Sensor/
 ├── main.py                     # Ponto de entrada (CLI dispatcher e inicializador)
-├── test_suite.py               # Suíte de testes automatizados (10/10 suítes integradas)
+├── test_suite.py               # Suíte de testes automatizados (12/12 suítes integradas)
 ├── config.json                 # Gerenciamento e persistência das configurações locais
+├── THIRD_PARTY_NOTICES.md      # Avisos de direitos autorais, licenças e separação de IP do firmware
+├── driver/
+│   └── legacy_pscam_device.inf # Pacote INF associando o WinUSB.sys nativo da Microsoft à PS4 Camera
 ├── sensor/                     # Pacote do Motor de Rastreamento e Visão Computacional
 │   ├── __init__.py             # Exports unificados da API do sensor
-│   ├── camera_manager.py       # Descoberta, negociação DirectShow/MSMF e captura assíncrona
+│   ├── ps4_backend/            # Backend Próprio em Espaço de Usuário (WinUSB) para PlayStation 4 Camera
+│   │   ├── __init__.py         # Exports públicos do backend nativo
+│   │   ├── constants.py        # IDs USB (0580/058A/058B), hashes SHA-1/SHA-256 e geometrias ISP
+│   │   ├── winusb_bindings.py  # Bindings ctypes para winusb.dll, cfgmgr32.dll e Overlapped I/O
+│   │   ├── firmware_manager.py # Cache, download HTTPS, validação SHA-1/SHA-256 e upload USB de 512B
+│   │   ├── usb_device.py       # Ciclo de vida USB (Interfaces 0 e 1, Probe/Commit UVC, Auto-Exposure)
+│   │   ├── frame_streamer.py   # Anel isócrono de 8 URBs (EP 0x81), depacketizer e demux de olhos
+│   │   └── driver_installer.py # Verificação PnP e instalação/reparo via pnputil com UAC sob demanda
+│   ├── camera_manager.py       # Descoberta, negociação DirectShow/WinUSB e captura assíncrona
+│   ├── stereo_matcher.py       # Motor de Visão Estéreo (Retificação, Triangulação Esparsa 3D e Máscara Densa)
 │   ├── pose_tracker.py         # Motor MediaPipe Pose e máscara anatômica 320x240
 │   ├── pose_filters.py         # Filtros cinemáticos (HandAnchor, AdaptiveSmoother, SkeletonCalibrator, PTZ)
 │   ├── virtual_phone.py        # Cliente WebSocket UbiArt (/smartphone), Calibrador Adaptativo e Acelerômetro 3D
@@ -49,13 +61,13 @@ flowchart TD
     subgraph HARDWARE_LAYER["Camada de Entrada (Hardware)"]
         PS4CAM["PlayStation 4 Camera\n(OV580 Stereo @ 60 FPS)"]
         WEBCAM["Webcam USB / Integrada\n(UVC DirectShow)"]
-        PSCAM_DRIVER["Driver PSCam4Win\n(WinUSB + Câmera Virtual)"]
-        PS4CAM --> PSCAM_DRIVER
+        NATIVE_BACKEND["sensor.ps4_backend\n(Native WinUSB User-Space Engine)"]
+        PS4CAM -->|USB 3.0 Isoch EP 0x81| NATIVE_BACKEND
     end
 
     subgraph INGESTION_LAYER["Camada de Ingestão e Captura (sensor/camera_manager.py)"]
         CAM_MGR["sensor.CameraManager\n(LatestFrameCamera)"]
-        PSCAM_DRIVER -->|YUY2 / NV12| CAM_MGR
+        NATIVE_BACKEND -->|YUY2 -> BGR (Olho Direito Padrão)| CAM_MGR
         WEBCAM -->|BGR / DirectShow| CAM_MGR
     end
 
@@ -195,24 +207,28 @@ flowchart TD
 
 ---
 
-## 🎮 Integração de Hardware: PlayStation 4 Camera (OV580)
+## 🎮 Integração de Hardware: PlayStation 4 Camera (OV580 — Backend Nativo WinUSB)
 
-A PlayStation 4 Camera (modelos CUH-ZEY1 e CUH-ZEY2) utiliza o processador de imagem **OmniVision OV580** acoplado a dois sensores estéreo **OmniVision OV9713**.
+A PlayStation 4 Camera (incluindo a versão **PlayStation 4 Camera Slim** CUH-ZEY2 e CUH-ZEY1) utiliza o controlador **OmniVision OV580** acoplado a dois sensores estéreo **OmniVision OV9713**.
 
 ```
 [ PS4 Camera (USB 3.0) ]
         │
         ▼ (VID: 0x05A9, PID: 0x0580 - Bootloader sem firmware)
-[ PSCam4WinTray.exe ]
-        │  1. Injeta firmware.bin via USB Bulk Transfer
-        ▼ (VID: 0x05A9, PID: 0x058B - Dispositivo Ativo)
-[ PSCam4Win.dll (Windows Camera Frame Server) ]
-        │  2. Expõe Câmera Virtual DirectShow no Windows
+[ sensor.ps4_backend.PS4FirmwareManager ]
+        │  1. Valida SHA-1/SHA-256 (%ProgramData%\LegacySensor\Firmware\firmware.bin)
+        │  2. Envia 68.032 bytes em blocos de 512B via WinUsb_ControlTransfer + Reboot (0x5B)
+        ▼ (VID: 0x05A9, PID: 0x058B - Composite Video MI_00)
+[ sensor.ps4_backend.PS4UsbDevice + PS4CameraBackend ]
+        │  3. Abre Interfaces 0 (VideoControl) e 1 (VideoStreaming Alt 1)
+        │  4. Executa UVC Probe/Commit (YUY2 1280x800 @ 60 FPS) + Auto-Exposure (CT_AE_MODE=0x02)
+        │  5. Mantém anel isócrono de 8 URBs (WinUsb_ReadIsochPipeAsap) no Endpoint 0x81
+        │  6. Desempacota linhas de 3448 px e separa Olho Esquerdo (@96B) e Olho Direito (@2656B)
         ▼
-[ LegacySensor_Lite (cv2.VideoCapture) ]
-        │  3. Captura YUY2 estéreo em 1280x800 @ 60 FPS
+[ LatestFrameCamera (sensor/camera_manager.py) ]
+        │  7. Entrega o Olho Direito por padrão (ou Olho Esquerdo) em BGR ao PoseTracker
 ```
 
-1. **Upload de Firmware:** A câmera não possui firmware em ROM persistente. Ao ser plugada, o serviço `PSCam4WinTray.exe` carrega o microcódigo do chip OV580 pela porta USB 3.0.
-2. **Câmera Virtual DirectShow:** O driver expõe a câmera como `"PS4 Camera"` no Windows Media Foundation / DirectShow.
-3. **Consumo Otimizado:** O `camera_manager.py` acessa o dispositivo em **1280x800 a 60 FPS** em formato YUY2, permitindo que a IA MediaPipe rastreie passos de dança em tempo real com o dobro da taxa de quadros de webcams normais de 30 FPS.
+1. **Autossuficiência em Espaço de Usuário:** O `LegacyPSCam_Sensor` gerencia todo o ciclo de vida da câmera diretamente sobre o driver oficial `WinUSB.sys` da Microsoft via `winusb.dll`, sem depender de processos externos, aplicativos de bandeja ou câmeras virtuais.
+2. **Gerenciamento Criptográfico de Firmware:** O arquivo `firmware.bin` (68.032 bytes, SHA-1 `8b8a6621d358f6782c2e3b31aac2cdfb25102c00`) é armazenado em `%ProgramData%\LegacySensor\Firmware\` e carregado automaticamente a cada nova conexão física.
+3. **Seleção de Olho e Preparação Estéreo:** Ambos os sensores OV9713 (Esquerdo e Direito) são extraídos e mantidos sincronizados com seus timestamps PTS de hardware, entregando o **Olho Direito** por padrão ao pipeline de tracking e permitindo alternância em tempo real para o Olho Esquerdo.

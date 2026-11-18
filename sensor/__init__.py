@@ -14,6 +14,18 @@ except Exception:
     pass
 
 from .camera_manager import CameraManager, LatestFrameCamera, FrameBusReader
+from .ps4_backend import (
+    PS4CameraBackend,
+    PS4UsbDevice,
+    PS4FirmwareManager,
+    PS4DriverInstaller,
+    EYE_RIGHT,
+    EYE_LEFT,
+    DEFAULT_EYE,
+    IspGeometry,
+    ISP_GEOMETRIES,
+    find_isp_geometry,
+)
 from .pose_filters import (
     HandAnchorFilter, AdaptiveSmoother, SkeletonCalibrator,
     CameraSpaceXTracker, apply_camera_space_translation, apply_slot_snap,
@@ -24,6 +36,15 @@ from .kinect_shared_memory import (
     KinectBridge, KinectSharedMemory, KinectMultiPoseSharedMemory, KinectImageSharedMemory, KinectCoachXSharedMemory,
     SHARED_NAME, SHARED_SIZE, MULTI_SHARED_NAME, MULTI_SHARED_SIZE, IMAGE_SHARED_NAME, IMAGE_SHARED_SIZE,
     COACHX_SHARED_NAME, COACHX_SHARED_SIZE, NEUTRAL_POSE, JOINT_NAMES
+)
+from .stereo_matcher import (
+    StereoCalibrator,
+    StereoDepthEngine,
+    STEREO_MODE_DISABLED,
+    STEREO_MODE_SPARSE_METRIC,
+    STEREO_MODE_FULL_DEPTH,
+    STEREO_MODES,
+    PS4_STEREO_BASELINE_M,
 )
 from .tracking_session import run_tracking_session
 from .tracking_overlay import TrackingOverlay
@@ -39,6 +60,16 @@ __all__ = [
     "CameraManager",
     "LatestFrameCamera",
     "FrameBusReader",
+    "PS4CameraBackend",
+    "PS4UsbDevice",
+    "PS4FirmwareManager",
+    "PS4DriverInstaller",
+    "EYE_RIGHT",
+    "EYE_LEFT",
+    "DEFAULT_EYE",
+    "IspGeometry",
+    "ISP_GEOMETRIES",
+    "find_isp_geometry",
     "PoseTracker",
     "HandAnchorFilter",
     "AdaptiveSmoother",
@@ -82,4 +113,11 @@ __all__ = [
     "parse_telemetry_csv",
     "compare_telemetries",
     "find_available_benchmarks",
+    "StereoCalibrator",
+    "StereoDepthEngine",
+    "STEREO_MODE_DISABLED",
+    "STEREO_MODE_SPARSE_METRIC",
+    "STEREO_MODE_FULL_DEPTH",
+    "STEREO_MODES",
+    "PS4_STEREO_BASELINE_M",
 ]

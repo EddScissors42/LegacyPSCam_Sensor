@@ -310,12 +310,14 @@ class SkeletonCalibrator:
         self.calibration_tier = "none"  # "full_body", "flexible_torso", "upper_body"
         self.scale = 1.15               # Default human proportion scale
         self.origin = [0.0, 0.0, 0.0]
+        self.stereo_baseline_z = None   # Smoothed metric baseline Z from stereo triangulation
 
     def reset(self):
         self.is_calibrated = False
         self.calibration_tier = "none"
         self.scale = 1.15
         self.origin = [0.0, 0.0, 0.0]
+        self.stereo_baseline_z = None
 
     def calibrate(self, joints, legs_visible=True, hips_visible=True):
         # joints: list of 20 (x, y, z, conf)
@@ -400,7 +402,7 @@ class SkeletonCalibrator:
 
         return False
 
-    def transform(self, joints):
+    def transform(self, joints, stereo_depths=None):
         out = []
         hip = joints[0]
         if self.is_calibrated:
@@ -414,13 +416,35 @@ class SkeletonCalibrator:
         baseline_z = float(self.cfg.get('baseline_z_m', 2.0))
         depth_gain = float(self.cfg.get('depth_gain', 0.65))
 
-        for j in joints:
+        # Ground baseline Z to true physical stereo depth if available for torso/hip
+        if stereo_depths:
+            ref_z = None
+            for j_cand in (0, 2, 1):
+                if j_cand in stereo_depths and stereo_depths[j_cand][3] > 0.25:
+                    ref_z = stereo_depths[j_cand][2]
+                    break
+            if ref_z is not None and 0.8 <= ref_z <= 4.5:
+                if self.stereo_baseline_z is None:
+                    self.stereo_baseline_z = ref_z
+                else:
+                    self.stereo_baseline_z = 0.85 * self.stereo_baseline_z + 0.15 * ref_z
+                baseline_z = self.stereo_baseline_z
+
+        for idx, j in enumerate(joints):
             x, y, z, conf = j
             # Invert X: MediaPipe world X (positive to person's left) -> Kinect camera X (positive to sensor right)
             # Invert Y: MediaPipe Y down -> Kinect Y up + human hip height baseline
             k_x = -(x - origin_x) * scale
             k_y = -(y - origin_y) * scale + hip_h
             k_z = baseline_z + (z - origin_z) * scale * depth_gain
+
+            # Optional joint-level metric grounding if stereo triangulation is confident
+            if stereo_depths and idx in stereo_depths:
+                s_x, s_y, s_z, s_conf = stereo_depths[idx]
+                if s_conf > 0.4 and 0.8 <= s_z <= 4.5:
+                    blend_w = min(0.6, s_conf * 0.7)
+                    k_z = (1.0 - blend_w) * k_z + blend_w * s_z
+
             out.append((k_x, k_y, k_z, conf))
         return out
 

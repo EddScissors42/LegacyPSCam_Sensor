@@ -15,6 +15,7 @@ added_datas = [
     ('assets', 'assets'),
     ('tools/Kinect10.dll', 'tools'),
     ('tools/get_cameras.ps1', 'tools'),
+    ('driver/legacy_pscam_device.inf', 'driver'),
 ] + mp_datas
 
 if Path('tools/PSCam4Win-Setup.exe').exists():
@@ -33,6 +34,8 @@ a = Analysis(
         'PySide6.QtWidgets',
         'PySide6.QtSvg',
         'sensor',
+        'sensor.ps4_backend',
+        'sensor.stereo_matcher',
         'ui',
         'ui.widgets',
         'ui.benchmark_dialog',

@@ -1,7 +1,7 @@
 """
 Camera Manager for Legacy PSCam Sensor.
-Handles device discovery (Webcams & PlayStation Camera via PSCam4Win),
-preset negotiation, buffer control, and zero-latency frame streaming.
+Handles device discovery (Webcams & PlayStation 4 Camera via Native WinUSB Backend),
+preset negotiation, buffer control, eye selection, and zero-latency frame streaming.
 """
 import json
 import os
@@ -12,6 +12,17 @@ import threading
 import time
 from pathlib import Path
 import cv2
+
+from .ps4_backend import (
+    PS4CameraBackend,
+    PS4UsbDevice,
+    PS4FirmwareManager,
+    PS4DriverInstaller,
+    DEFAULT_EYE,
+    EYE_RIGHT,
+    EYE_LEFT,
+    find_ps4_device_paths,
+)
 
 PSCAM_TRAY_PATH = Path(r"C:\Program Files\PSCam4Win\PSCam4WinTray.exe")
 
@@ -26,16 +37,27 @@ class CameraInfo:
         return f"[{self.index}] {self.name}{ps_tag}"
 
 class CameraManager:
+    _fw_upload_lock = threading.Lock()
+    _fw_uploading = False
+
     @staticmethod
-    def is_pscam_installed():
+    def is_legacy_pscam4win_installed():
         return PSCAM_TRAY_PATH.exists()
 
     @staticmethod
-    def is_pscam_running():
+    def is_pscam_installed():
         """
-        Fast, zero-overhead process check via Win32 Toolhelp API.
-        Detects PSCam4WinTray.exe or any pscam background process.
-        Falls back to tasklist if ctypes snapshot fails.
+        Returns True if the Native WinUSB driver package is installed/active
+        or if the legacy PSCam4Win fallback is present.
+        """
+        if os.name == 'nt' and PS4DriverInstaller.is_driver_installed():
+            return True
+        return PSCAM_TRAY_PATH.exists()
+
+    @staticmethod
+    def is_legacy_pscam4win_running():
+        """
+        Fast, zero-overhead process check via Win32 Toolhelp API for legacy PSCam4WinTray.exe.
         """
         if os.name == 'nt':
             try:
@@ -88,6 +110,15 @@ class CameraManager:
             return False
 
     @staticmethod
+    def is_pscam_running():
+        """
+        Returns True when the Native WinUSB backend is ready or when the legacy tray is running.
+        """
+        if os.name == 'nt' and PS4DriverInstaller.is_driver_installed():
+            return True
+        return CameraManager.is_legacy_pscam4win_running()
+
+    @staticmethod
     def get_hardware_snapshot():
         """
         Returns a sorted tuple of all currently present USB and Virtual Camera device instance IDs.
@@ -120,6 +151,30 @@ class CameraManager:
             return ()
 
     @staticmethod
+    def _auto_upload_firmware_async():
+        """
+        Triggers a non-blocking background firmware upload when the PS4 Camera is detected
+        in bootloader mode (05A9:0580) with WinUSB bound.
+        """
+        with CameraManager._fw_upload_lock:
+            if CameraManager._fw_uploading:
+                return
+            CameraManager._fw_uploading = True
+
+        def _worker():
+            try:
+                PS4FirmwareManager.upload_to_bootloader_device(
+                    allow_download=True, wait_reenumerate_s=6.0
+                )
+            except Exception as e:
+                print(f"[CAMERA] Auto firmware upload error: {e}")
+            finally:
+                with CameraManager._fw_upload_lock:
+                    CameraManager._fw_uploading = False
+
+        threading.Thread(target=_worker, daemon=True, name="PS4AutoFirmwareThread").start()
+
+    @staticmethod
     def get_ps4_camera_state():
         """
         Evaluates the multi-stage hardware and driver lifecycle of the PS4 Camera.
@@ -128,25 +183,38 @@ class CameraManager:
         - 'installed': bool
         - 'running': bool
         - 'bootloader': bool (VID_05A9&PID_0580 detected)
-        - 'active_hw': bool (VID_05A9&PID_058B detected)
+        - 'active_hw': bool (VID_05A9&PID_058B or 058A detected)
         - 'vcam_count': int (SWD\\VCAMDEVAPI instances present)
+        - 'winusb_bound': bool
+        - 'backend': 'native'
         """
         installed = CameraManager.is_pscam_installed()
         running = CameraManager.is_pscam_running()
         snapshot = CameraManager.get_hardware_snapshot()
 
         bootloader = any('05A9&PID_0580' in d for d in snapshot)
-        active_hw = any('05A9&PID_058B' in d for d in snapshot) or any('OV580' in d for d in snapshot)
+        active_hw = (
+            any('05A9&PID_058B' in d for d in snapshot)
+            or any('05A9&PID_058A' in d for d in snapshot)
+            or any('OV580' in d for d in snapshot)
+        )
         vcam_count = sum(1 for d in snapshot if 'VCAMDEVAPI' in d)
+        winusb_paths = find_ps4_device_paths() if os.name == 'nt' else []
+        winusb_bound = len(winusb_paths) > 0
 
-        if not installed:
+        if not installed and not winusb_bound:
             state = "NOT_INSTALLED"
         elif not active_hw and not bootloader:
             state = "DISCONNECTED"
-        elif not running:
+        elif (active_hw or bootloader) and not winusb_bound and not CameraManager.is_legacy_pscam4win_running():
             state = "DRIVER_STOPPED"
         elif bootloader:
             state = "BOOTLOADER_UPLOADING"
+            if winusb_bound:
+                CameraManager._auto_upload_firmware_async()
+        elif active_hw and winusb_bound:
+            # Native WinUSB backend streams directly from the hardware without requiring a virtual camera
+            state = "READY"
         elif active_hw and vcam_count == 0:
             state = "WAITING_VCAM"
         else:
@@ -154,31 +222,71 @@ class CameraManager:
 
         return {
             'state': state,
-            'installed': installed,
-            'running': running,
+            'installed': bool(installed or winusb_bound),
+            'running': bool(running or winusb_bound),
             'bootloader': bootloader,
             'active_hw': active_hw,
-            'vcam_count': vcam_count
+            'vcam_count': vcam_count,
+            'winusb_bound': winusb_bound,
+            'backend': 'native',
         }
 
     @staticmethod
     def is_ps4_hardware_connected():
         """
         Checks if the physical PlayStation 4 Camera (Sony / OmniVision OV580)
-        is plugged into an active USB port (either active PID 058B or bootloader PID 0580).
+        is plugged into an active USB port (either active PID 058B/058A or bootloader PID 0580).
         """
         st = CameraManager.get_ps4_camera_state()
         return st['active_hw'] or st['bootloader']
 
     @staticmethod
-    def launch_pscam_tray():
-        if not CameraManager.is_pscam_installed():
-            return False, "PSCam4Win is not installed in C:\\Program Files\\PSCam4Win."
-        if CameraManager.is_pscam_running():
-            return True, "PSCam4Win is already running."
+    def initialize_ps4_camera():
+        """
+        Ensures the PlayStation 4 Camera WinUSB driver is installed and uploads OV580 firmware
+        if the camera is currently in bootloader mode (05A9:0580).
+        """
+        if os.name != 'nt':
+            return False, "PlayStation 4 Camera WinUSB backend requires Windows."
 
-        # Strategy 1: Launch with RunAsInvoker to bypass embedded UAC manifest requirement
-        # without requiring Legacy PSCam Sensor to run as Administrator
+        drv_status = PS4DriverInstaller.verify_driver_status()
+        if not drv_status["winusb_interface_active"] and not drv_status["driver_store_staged"]:
+            ok_drv, msg_drv = PS4DriverInstaller.install_or_repair_driver()
+            if not ok_drv:
+                return False, msg_drv
+
+        hw_status = PS4UsbDevice.probe_hardware_status()
+        if hw_status["state"] == "READY":
+            return True, "PlayStation 4 Camera (Native WinUSB) is initialized and ready!"
+
+        if hw_status["bootloader"]:
+            ok_fw, msg_fw = PS4FirmwareManager.upload_to_bootloader_device(
+                allow_download=True, wait_reenumerate_s=6.5
+            )
+            return ok_fw, msg_fw
+
+        if not hw_status["connected"]:
+            return True, "PlayStation 4 Camera WinUSB driver is ready. Connect the camera to USB 3.0."
+
+        return True, "PlayStation 4 Camera driver verified."
+
+    @staticmethod
+    def launch_pscam_tray():
+        """
+        Initializes the Native PlayStation 4 Camera WinUSB backend (driver verification + firmware upload).
+        Falls back to legacy PSCam4WinTray.exe only if native driver initialization fails and legacy is present.
+        """
+        if os.name == 'nt':
+            ok_native, msg_native = CameraManager.initialize_ps4_camera()
+            if ok_native:
+                return True, msg_native
+
+        if not CameraManager.is_legacy_pscam4win_installed():
+            return False, "PlayStation 4 Camera driver is not installed."
+        if CameraManager.is_legacy_pscam4win_running():
+            return True, "PlayStation 4 Camera driver is already active."
+
+        # Legacy fallback strategy
         try:
             env = os.environ.copy()
             env['__COMPAT_LAYER'] = 'RunAsInvoker'
@@ -189,13 +297,11 @@ class CameraManager:
                 creationflags=subprocess.DETACHED_PROCESS if os.name == 'nt' else 0
             )
             time.sleep(1.0)
-            if CameraManager.is_pscam_running():
+            if CameraManager.is_legacy_pscam4win_running():
                 return True, "PSCam4Win Tray started successfully!"
         except Exception:
             pass
 
-        # Strategy 2: Fallback to ShellExecuteW with 'runas' verb
-        # Windows prompts UAC elevation ONLY for the driver, leaving the app un-elevated
         if os.name == 'nt':
             try:
                 import ctypes
@@ -205,7 +311,7 @@ class CameraManager:
                     str(PSCAM_TRAY_PATH),
                     None,
                     str(PSCAM_TRAY_PATH.parent),
-                    1  # SW_SHOWNORMAL
+                    1
                 )
                 if ret > 32:
                     time.sleep(1.0)
@@ -213,11 +319,11 @@ class CameraManager:
                 elif ret == 5:
                     return False, "Launch cancelled: Administrator elevation was denied in Windows UAC."
                 else:
-                    return False, f"Failed to start PSCam4Win (ShellExecute code {ret})."
+                    return False, f"Failed to start driver (ShellExecute code {ret})."
             except Exception as e:
-                return False, f"Failed to start PSCam4Win: {e}"
+                return False, f"Failed to start driver: {e}"
 
-        return False, "Failed to start PSCam4Win: elevation required."
+        return False, "Failed to initialize PlayStation 4 Camera driver."
 
     @staticmethod
     def get_windows_camera_names():
@@ -296,11 +402,15 @@ class CameraManager:
                     display_res = "1280x800" if is_ps else (f"{w}x{h}" if w > 0 and h > 0 else "640x480")
                     cameras.append(CameraInfo(idx, f"{name} ({display_res})", is_pscam=is_ps))
 
-        # Ensure PS4 Camera is listed if PSCam4Win driver/FrameBus is active even without VCam DirectShow
+        # Ensure PS4 Camera is listed if Native WinUSB backend (or legacy fallback) detects hardware
         if not any(c.is_pscam for c in cameras) and os.name == 'nt':
             ps4_state = CameraManager.get_ps4_camera_state()
-            if ps4_state.get("state") in ("READY", "WAITING_VCAM") and ps4_state.get("running"):
-                cameras.append(CameraInfo(len(cameras), "PlayStation 4 Camera [FrameBus Direct] (1280x800)", is_pscam=True))
+            if ps4_state.get("state") in ("READY", "BOOTLOADER_UPLOADING", "WAITING_VCAM") and (
+                ps4_state.get("winusb_bound") or ps4_state.get("running")
+            ):
+                cameras.append(
+                    CameraInfo(len(cameras), "PlayStation 4 Camera [Native WinUSB] (1280x800)", is_pscam=True)
+                )
 
         if not cameras:
             cameras.append(CameraInfo(0, "Default Camera (Index 0)", False))
@@ -420,12 +530,23 @@ class FrameBusReader:
 class LatestFrameCamera:
     """
     Zero-latency threaded camera grabber.
-    Continually reads from OpenCV VideoCapture (or directly from PSCam4Win FrameBus)
-    on a background thread so the internal OpenCV frame queue never buffers stale frames.
-    Handles black-frame recovery and automatic Side-by-Side stereo cropping.
+    Continually reads from Native PS4CameraBackend (for PlayStation 4 Camera) or OpenCV VideoCapture
+    on a background thread so the internal frame queue never buffers stale frames.
+    Handles black-frame recovery, eye selection (Right Eye default), and orientation rotation.
     Always delivers pristine, un-mirrored frames to the pose tracker.
     """
-    def __init__(self, camera_index, target_w=640, target_h=480, target_fps=30, mirror=True, is_pscam=False, orientation=0):
+    def __init__(
+        self,
+        camera_index,
+        target_w=640,
+        target_h=480,
+        target_fps=30,
+        mirror=True,
+        is_pscam=False,
+        orientation=0,
+        ps4_eye=DEFAULT_EYE,
+        ps4_backend_mode="native",
+    ):
         self.camera_index = camera_index
         self.target_w = target_w
         self.target_h = target_h
@@ -433,9 +554,12 @@ class LatestFrameCamera:
         self.mirror = mirror
         self.is_pscam = is_pscam
         self.orientation = int(orientation)
+        self.ps4_eye = str(ps4_eye or DEFAULT_EYE).strip().lower()
+        self.ps4_backend_mode = str(ps4_backend_mode or "native").strip().lower()
 
         self.cap = None
-        self.fb_reader = FrameBusReader() if (self.is_pscam and os.name == 'nt') else None
+        self.ps4_backend = None
+        self.fb_reader = None
         self.running = False
         self.thread = None
         self.lock = threading.Lock()
@@ -455,33 +579,69 @@ class LatestFrameCamera:
         self._open_and_negotiate()
 
     def _open_and_negotiate(self):
+        # 1. Native WinUSB Backend for PlayStation 4 Camera (Primary Path)
+        if self.is_pscam and os.name == 'nt' and self.ps4_backend_mode != "pscam4win":
+            backend = PS4CameraBackend(
+                target_w=self.target_w,
+                target_h=self.target_h,
+                target_fps=self.target_fps,
+                eye=self.ps4_eye,
+                auto_reconnect=True,
+            )
+            if backend.start():
+                self.ps4_backend = backend
+                self.actual_w = backend.actual_width
+                self.actual_h = backend.actual_height
+                self.actual_fps = float(backend.actual_fps)
+                print(
+                    f"[CAMERA] PlayStation 4 Camera [Native WinUSB] inicializada: "
+                    f"{self.actual_w}x{self.actual_h}@{self.actual_fps:.0f}fps (Olho: {self.ps4_eye})"
+                )
+                self.running = True
+                self.thread = threading.Thread(
+                    target=self._capture_loop, daemon=True, name="CameraCaptureThread"
+                )
+                self.thread.start()
+                return
+            else:
+                print("[CAMERA] Native WinUSB PS4 backend unavailable; attempting fallback...")
+
+        # 2. Legacy FrameBus / DirectShow Fallback
+        if self.is_pscam and os.name == 'nt':
+            self.fb_reader = FrameBusReader()
+
         # Prefer CAP_DSHOW on Windows for fast startup and mode control
         self.cap = cv2.VideoCapture(self.camera_index, cv2.CAP_DSHOW)
         if not self.cap.isOpened():
             self.cap = cv2.VideoCapture(self.camera_index)
 
         if not self.cap.isOpened():
-            raise RuntimeError(f"Não foi possível abrir a câmera índice {self.camera_index}.")
+            if self.fb_reader and self.fb_reader.is_connected:
+                self.actual_w = self.target_w
+                self.actual_h = self.target_h
+                self.actual_fps = float(self.target_fps)
+            else:
+                raise RuntimeError(f"Não foi possível abrir a câmera índice {self.camera_index}.")
+        else:
+            # Request resolution & FPS
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.target_w)
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.target_h)
+            self.cap.set(cv2.CAP_PROP_FPS, self.target_fps)
 
-        # Request resolution & FPS
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.target_w)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.target_h)
-        self.cap.set(cv2.CAP_PROP_FPS, self.target_fps)
+            # For USB webcams needing MJPG for high FPS (PSCam uses native YUY2/NV12)
+            if not self.is_pscam and self.target_fps >= 50:
+                self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
 
-        # For USB webcams needing MJPG for high FPS (PSCam uses native YUY2/NV12)
-        if not self.is_pscam and self.target_fps >= 50:
-            self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+            # Minimize buffer size to 1 frame to eliminate latency
+            try:
+                self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            except Exception:
+                pass
 
-        # Minimize buffer size to 1 frame to eliminate latency
-        try:
-            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        except Exception:
-            pass
-
-        self.actual_w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or self.target_w
-        self.actual_h = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or self.target_h
-        prop_fps = self.cap.get(cv2.CAP_PROP_FPS)
-        self.actual_fps = prop_fps if prop_fps and prop_fps > 0 else self.target_fps
+            self.actual_w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or self.target_w
+            self.actual_h = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or self.target_h
+            prop_fps = self.cap.get(cv2.CAP_PROP_FPS)
+            self.actual_fps = prop_fps if prop_fps and prop_fps > 0 else self.target_fps
 
         print(f"[CAMERA] Aberta câmera {self.camera_index}: Solicitado {self.target_w}x{self.target_h}@{self.target_fps}fps | "
               f"Obtido: {self.actual_w}x{self.actual_h}@{self.actual_fps:.1f}fps")
@@ -498,41 +658,54 @@ class LatestFrameCamera:
         return float(frame[::16, ::16].mean()) < 1.0
 
     def _capture_loop(self):
-        while self.running and self.cap and self.cap.isOpened():
+        while self.running:
             ret = False
             frame = None
 
-            # 1. PS Camera Primary Path: Zero-latency direct FrameBus IPC reader
-            # Reads directly from PSCam4Win shared memory without blocking on DirectShow
-            # or re-converting unchanged frames.
-            if self.is_pscam and self.fb_reader is not None:
+            # 1. Native WinUSB PS4 Camera Backend (Primary Path)
+            if self.ps4_backend is not None:
+                ps_frame = self.ps4_backend.read_frame(only_new=True)
+                if ps_frame is not None and not self._is_black_frame(ps_frame):
+                    frame = ps_frame
+                    ret = True
+                else:
+                    time.sleep(0.0015)
+                    continue
+
+            # 2. Legacy FrameBus IPC reader fallback
+            elif self.is_pscam and self.fb_reader is not None:
                 fb_frame = self.fb_reader.read_frame(only_new=True)
                 if fb_frame is not None and not self._is_black_frame(fb_frame):
                     frame = fb_frame
                     ret = True
                 elif self.fb_reader.is_connected and (time.perf_counter() - self.fb_reader.last_frame_time) < 0.15:
-                    # FrameBus is actively streaming; wait briefly for the next 60 Hz hardware tick
                     time.sleep(0.0015)
                     continue
 
-            # 2. Standard DirectShow Path (or fallback if FrameBus is inactive)
+            # 3. Standard DirectShow Path
             if not ret or frame is None:
-                ret, frame = self.cap.read()
-                if self.is_pscam and (not ret or self._is_black_frame(frame)) and self.fb_reader is not None:
-                    fb_frame = self.fb_reader.read_frame(only_new=False)
-                    if fb_frame is not None and not self._is_black_frame(fb_frame):
-                        frame = fb_frame
-                        ret = True
+                if self.cap and self.cap.isOpened():
+                    ret, frame = self.cap.read()
+                    if self.is_pscam and (not ret or self._is_black_frame(frame)) and self.fb_reader is not None:
+                        fb_frame = self.fb_reader.read_frame(only_new=False)
+                        if fb_frame is not None and not self._is_black_frame(fb_frame):
+                            frame = fb_frame
+                            ret = True
+                else:
+                    time.sleep(0.003)
+                    continue
 
             if not ret or frame is None:
                 time.sleep(0.003)
                 continue
 
-            # Auto-crop Side-by-Side stereo mode to Left Sensor (primary dancer view)
-            # PS4 camera defaults to 2560x800 or 1280x400 stereo on first initialization
+            # Auto-crop Side-by-Side stereo mode if coming from a legacy SBS source
             h, w = frame.shape[:2]
             if w >= int(1.8 * h):
-                frame = frame[:, :w // 2]
+                if self.ps4_eye == EYE_LEFT:
+                    frame = frame[:, :w // 2]
+                else:
+                    frame = frame[:, w // 2:]
 
             # Apply camera orientation rotation if configured
             if self.orientation == 90:
@@ -570,6 +743,22 @@ class LatestFrameCamera:
                 return self.latest_ret, self.latest_frame, self.measured_fps
             return False, None, 0.0
 
+    def read_stereo(self, only_new=False):
+        """
+        Returns dual-sensor (Left + Right eye) frame dictionary when running on Native PS4CameraBackend.
+        """
+        if self.ps4_backend is not None:
+            return self.ps4_backend.read_stereo_frames(only_new=only_new)
+        return None
+
+    def set_eye(self, eye: str):
+        """
+        Switches the active PS4 Camera eye ("right" or "left") live.
+        """
+        self.ps4_eye = str(eye or DEFAULT_EYE).strip().lower()
+        if self.ps4_backend is not None:
+            self.ps4_backend.set_eye(self.ps4_eye)
+
     def set_mirror(self, mirror):
         self.mirror = mirror
 
@@ -580,7 +769,13 @@ class LatestFrameCamera:
     def release(self):
         self.running = False
         if self.thread and self.thread.is_alive():
-            self.thread.join(timeout=1.0)
+            self.thread.join(timeout=1.5)
+        if self.ps4_backend:
+            try:
+                self.ps4_backend.stop()
+            except Exception:
+                pass
+            self.ps4_backend = None
         if self.fb_reader:
             try:
                 self.fb_reader.close()

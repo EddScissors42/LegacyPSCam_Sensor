@@ -11,6 +11,8 @@ DEFAULT_CONFIG = {
     "camera_mode": "pscam",  # "pscam", "webcam", or "ds4"
     "camera_index": 0,
     "camera_orientation": 0,
+    "ps4_camera_backend": "native",  # "native" (WinUSB direct) or "pscam4win" (legacy fallback)
+    "ps4_eye": "right",              # "right" (default) or "left"
     "pscam_preset": "1280x800 @ 60 FPS",
     "webcam_preset": "640x480 @ 30 FPS",
     "mirror_horizontal": True,
@@ -51,14 +53,21 @@ DEFAULT_CONFIG = {
     "ds4_hand": "right",
     "ds4_sensitivity": 1.0,
     "ds4_permissive_mode": True,
-    "benchmark_auto_record": False
+    "benchmark_auto_record": False,
+    "stereo_mode": "disabled"
 }
 
 PRESETS_PSCAM = [
     "1280x800 @ 60 FPS",
-    "640x480 @ 60 FPS",
-    "640x400 @ 60 FPS",
     "1280x800 @ 30 FPS",
+    "1280x800 @ 15 FPS",
+    "640x400 @ 120 FPS",
+    "640x400 @ 60 FPS",
+    "640x400 @ 30 FPS",
+    "320x192 @ 240 FPS",
+    "320x192 @ 120 FPS",
+    "320x192 @ 60 FPS",
+    "640x480 @ 60 FPS",
     "640x480 @ 30 FPS"
 ]
 
