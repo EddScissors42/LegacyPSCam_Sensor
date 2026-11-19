@@ -112,13 +112,13 @@ O `Kinect10.dll` implementa suporte duplo e busca primeiro o canal **V2 (`JMI2`)
 
 - **Identificador (Tag):** `Local\LegacyWebcamKinectCoachX`
 - **Tamanho Total:** **28 bytes**
-- **Estrutura do Cabeçalho:** `<IIIIQfI`
+- **Estrutura do Cabeçalho:** `<IIIIfQ`
   - `magic` (uint32): `0x3143584A` (`'JXC1'`)
   - `version` (uint32): `1`
   - `seq` (uint32): Sequência seqlock
   - `enabled` (uint32): `1` se ativo, `0` se desligado
-  - `timestamp_ms` (uint64): Timestamp Unix
   - `coachX` (float32): Coordenada horizontal relativa do coach
+  - `timestamp_ms` (uint64): Timestamp Unix em milissegundos
 
 > [!NOTE]
 > No modo de rastreamento ao vivo, o campo `enabled` é mantido como `0` (`False`) porque o esqueleto gravado em `JDP1` e `JDP2` já contém o deslocamento lateral $X$ de seleção de dançarino. Ativar `enabled = 1` faria o `Kinect10.dll` somar `coachX` novamente via rotina `0x1020`, duplicando artificialmente o deslocamento lateral do jogador e projetando a cabeça para fora do enquadramento.
@@ -214,7 +214,8 @@ Para desenvolvedores que importam os módulos internamente:
 - `CameraManager.enumerate_cameras(max_probe: int = 6) -> List[CameraInfo]`: Retorna a lista de câmeras conectadas cruzando índices com nomes PnP e interfaces WinUSB.
 - `LatestFrameCamera(camera_index, target_w=640, target_h=480, target_fps=30, mirror=True, is_pscam=False, orientation=0, ps4_eye="right", ps4_backend_mode="native")`: Capturador assíncrono que utiliza `PS4CameraBackend` nativo quando `is_pscam=True`.
 - `LatestFrameCamera.set_eye(eye: str)`: Alterna em tempo real entre `"right"` (Olho Direito, padrão) e `"left"` (Olho Esquerdo).
-- `LatestFrameCamera.read_stereo(only_new: bool = False) -> Optional[dict]`: Retorna simultaneamente os frames BGR e YUY2 de ambos os olhos (`right_bgr`, `left_bgr`, `right_yuy2`, `left_yuy2`, `pts`, `timestamp_ms`, `seq`).
+- `LatestFrameCamera.read_left_eye() -> Optional[np.ndarray]`: Retorna o frame BGR sincronizado do Olho Esquerdo (com rotação de orientação aplicada) sem reconverter o Olho Direito a partir de YUY2.
+- `LatestFrameCamera.read_stereo(only_new: bool = False) -> Optional[dict]`: Retorna simultaneamente os frames BGR e YUY2 de ambos os olhos (`right_bgr`, `left_bgr`, `right_yuy2`, `left_yuy2`, `pts`, `timestamp_ms`, `seq`), reutilizando o buffer BGR já convertido do olho ativo.
 
 ### `sensor.ps4_backend` — Backend Nativo WinUSB para PlayStation 4 Camera
 - `PS4FirmwareManager`:
@@ -227,10 +228,12 @@ Para desenvolvedores que importam os módulos internamente:
 - `PS4CameraBackend`:
   - `start() -> bool` / `stop() -> None`: Inicia e encerra o anel isócrono de 8 URBs Overlapped (`WinUsb_ReadIsochPipeAsap`) no endpoint `0x81`.
   - `read_frame(only_new: bool = False) -> Optional[np.ndarray]`: Retorna o frame BGR do olho selecionado (`"right"` por padrão).
-  - `read_stereo_frames(only_new: bool = False) -> Optional[dict]`: Retorna ambos os fluxos ópticos sincronizados.
+  - `read_left_frame() -> Optional[np.ndarray]`: Converte sob demanda apenas o plano YUY2 do Olho Esquerdo para BGR (eliminando conversão duplicada do Olho Direito no modo de Visão Estéreo).
+  - `read_stereo_frames(only_new: bool = False) -> Optional[dict]`: Retorna ambos os fluxos ópticos sincronizados reutilizando o buffer `_selected_bgr` do olho ativo.
 - `PS4DriverInstaller`:
-  - `verify_driver_status() -> dict`: Verifica sem elevação UAC se `legacy_pscam_device.inf` está instalado e associado ao `WinUSB.sys`.
-  - `install_or_repair_driver(force_reinstall: bool = False) -> Tuple[bool, str]`: Solicita elevação pontual via `pnputil.exe` apenas quando necessário.
+  - `verify_driver_status() -> dict`: Verifica sem elevação UAC se `legacy_pscam_device.inf` está instalado e associado ao `WinUSB.sys` (incluindo disponibilidade do instalador de fallback assinado `fallback_installer_present`).
+  - `get_fallback_installer_path() -> Optional[Path]`: Localiza o instalador assinado de fallback `tools/PSCam4Win-Setup.exe`.
+  - `install_or_repair_driver(force_reinstall: bool = False, allow_fallback_installer: bool = True) -> Tuple[bool, str]`: Solicita elevação pontual via `pnputil.exe` apenas quando necessário e aciona automaticamente o instalador de fallback caso a política de assinatura digital do Windows rejeite um catálogo INF não assinado.
 
 ### `pose_tracker.PoseTracker`
 - `PoseTracker(model_path=None, detection_confidence=0.5, smoothing_alpha=0.55, target_height_m=1.75, cfg=None, model_variant=None)`: Construtor do motor de IA (`model_variant` aceita `"lite"`, `"full"` ou `"heavy"`).
@@ -305,11 +308,12 @@ python main.py [-h] [--start] [--mode {pscam,webcam,ds4}] [--camera CAMERA]
 
 ## 7. Pacote de Interface Gráfica (`ui`)
 
-O pacote `ui` expõe uma interface modular baseada em **PySide6 (Qt 6)**:
+O pacote `ui` expõe uma interface modular baseada exclusivamente em **PySide6 (Qt 6)**:
 
 - `ui.launch_app() -> int`: Inicializador principal da interface gráfica Qt 6 (`PySide6`).
 - `ui.LegacySensorQtGUI`: Janela principal baseada em PySide6 / Qt 6, com detecção de hotplug por sinais Qt e balão contextual de estado de hardware.
 - `ui.LegacySensorGUI`: Alias padrão para `LegacySensorQtGUI`.
+- `ui.pages`: Exporta `UIPagesMixin` com os construtores declarativos das 4 páginas (`_build_video_view`, `_build_calib_view`, `_build_exp_view`, `_build_ds4_view`).
 - `ui.widgets`: Exporta `pil_to_qpixmap`, `SlidingStackedWidget`, `DeviceNavCard` e `CalibPresetCard`.
 - `ui.benchmark_dialog`: Exporta `TelemetryBenchmarkChart` e `TelemetryBenchmarkDialog`.
 - `ui.HAS_QT -> bool`: Booleano que indica se o PySide6 está instalado e operacional.
@@ -372,8 +376,8 @@ O módulo `sensor.virtual_phone` gerencia a comunicação com o Just Dance atrav
 
 ### Funções de Auto-Detecção de Processo e Música Ativa
 - `find_just_dance_pids() -> List[int]`: Enumera os processos em execução via `CreateToolhelp32Snapshot` Win32 buscando instâncias de `jd2022.exe`, `jd2021.exe`, `jd2020.exe`, `jd2019.exe`, `jd2018.exe`, `jd2017.exe`, `justdance.exe` (latência ~0.5ms).
-- `detect_active_song_from_game_process() -> str`: Varre a memória virtual do processo Just Dance localizando a stream ativa `/map/<MapName>/...webm` (latência ~2.8ms). Converte o identificador do mapa (ex: `SmalltownBoy`) no título formatado da música (`Smalltown Boy`).
-- `VirtualPhoneController.current_song`: Propriedade que retorna o nome da música ativa, executando a busca em memória sob demanda caso o pacote WebSocket `setupData` não contenha o campo `mapName`.
+- `detect_active_song_from_game_process() -> str`: Varre páginas de dados privadas (`MEM_COMMIT`, ignorando `MEM_IMAGE` e páginas executáveis) do processo Just Dance com um buffer reutilizável pré-alocado de 1 MB para localizar a stream ativa `/map/<MapName>/...webm`. Converte o identificador do mapa (ex: `SmalltownBoy`) no título formatado da música (`Smalltown Boy`).
+- `VirtualPhoneController.current_song`: Propriedade que retorna o nome da música ativa, executando a busca em memória sob demanda apenas quando a gravação de telemetria ou benchmark automático estiverem ativos (`auto_record_enabled` ou `_logging_enabled`), com intervalo mínimo de 2.5s.
 
 ### `sensor.virtual_phone.HandAccelerometer`
 - `HandAccelerometer(hand="right", sensitivity=1.0)`: Converte as 20 articulacoes do Kinect em aceleracao 3D [ax, ay, az] compativel com o protocolo de pontuacao de smartphone do Just Dance.
@@ -398,7 +402,9 @@ O pacote `sensor.stereo_matcher` implementa o pipeline óptico de visão estére
   - `update_resolution(w, h)`: Computa matrizes intrínsecas $K_1, K_2$, rotação $R$, translação $T = [B, 0, 0]^T$ e look-up tables `cv2.initUndistortRectifyMap`.
   - `rectify(left, right) -> (rect_left, rect_right)`: Aplica `cv2.remap` em $<0.8\text{ ms}$.
 - `StereoDepthEngine(baseline_m=0.0852)`:
-  - `triangulate_sparse_joints(rect_left, rect_right, joints_2d, search_radius_px=40) -> Dict[joint_id, (X, Y, Z, conf)]`:
-    Executa busca 1D epipolar ($y_L = y_R$) no canal verde com `cv2.matchTemplate` em $<0.3\text{ ms}$, computando profundidade métrica $Z = \frac{f \cdot B}{d}$.
-  - `compute_dense_depth_mask(rect_left, rect_right, target_w=320, target_h=240, min_z_m=0.8, max_z_m=2.8) -> np.ndarray`:
-    Calcula mapa de disparidade a 320x200 via `cv2.StereoSGBM_3WAY` (~3ms), gerando máscara binária uint8 (255 = zona do jogador, 0 = fundo/fora).
+  - `triangulate_sparse_joints(rect_left, rect_right, joints_2d, search_radius_px=48, patch_half_size=6, vertical_tol_px=4) -> Dict[joint_id, (X, Y, Z, conf)]`:
+    Executa busca em banda epipolar 2D no canal verde (`cv2.matchTemplate` com interpolação parabólica 2D) seguida de refinamento sub-pixel por Fluxo Óptico Piramidal Lucas-Kanade (`cv2.calcOpticalFlowPyrLK` em ROIs locais) em $<0.8\text{ ms}$, computando profundidade métrica $Z = \frac{f \cdot B}{d}$ e auto-calibrando dinamicamente o desalinhamento vertical entre as lentes (`vertical_offset_px`).
+  - `compute_dense_depth_mask(rect_left, rect_right, target_w=320, target_h=240, min_z_m=0.8, max_z_m=2.8, align_to_right=True) -> np.ndarray`:
+    Calcula mapa de disparidade a 320x200 via `cv2.StereoSGBM_3WAY` (~2.5ms), gerando máscara binária uint8 (255 = zona do jogador, 0 = fundo/fora).
+  - `compute_confirmed_background_mask(rect_left, rect_right, target_w=320, target_h=240, min_z_m=0.8, max_z_m=2.8, align_to_right=True) -> np.ndarray`:
+    Identifica regiões positivamente confirmadas fora do envelope de profundidade do dançarino ($Z > \text{max\_z\_m}$ ou $Z < \text{min\_z\_m}$), alinhadas à lente direita.

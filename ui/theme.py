@@ -139,21 +139,5 @@ def load_custom_fonts_qt() -> dict:
 
 
 def get_font_family() -> str:
-    """Detects available modern sans-serif fonts for Tkinter."""
-    load_custom_fonts_win32()
-    try:
-        import tkinter.font as tkfont
-        families = [f.lower() for f in tkfont.families()]
-        for pref in ("inter tight", "national park", "kanit", "montserrat", "poppins", "segoe ui", "helvetica", "arial"):
-            for f in families:
-                if pref in f:
-                    if pref == "inter tight":
-                        return "Inter Tight"
-                    if pref == "national park":
-                        return "National Park"
-                    if pref == "kanit":
-                        return "Kanit"
-                    return "Segoe UI" if pref == "segoe ui" else pref.title()
-    except Exception:
-        pass
-    return "Segoe UI"
+    """Returns the primary body font family for the Qt 6 interface."""
+    return load_custom_fonts_qt().get("body", FONT_BODY)

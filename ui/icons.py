@@ -1,20 +1,16 @@
 """
 High-Resolution Anti-Aliased Icon and Pill Generators for Legacy PSCam Sensor UI.
-Renders supersampled Pillow graphics for sidebar navigation, top tabs, and rounded buttons.
-Supports both pure PIL.Image outputs (for Qt6 / PySide6) and ImageTk.PhotoImage outputs (for Tkinter).
+Renders supersampled Pillow graphics for sidebar navigation, top tabs, and rounded buttons
+for Qt 6 / PySide6.
 Loads custom user SVG icons for 'settings' (Video Settings) and 'sliders' (Calibration) with vector fallback.
 """
 import math
 from pathlib import Path
 from PIL import Image, ImageDraw
-try:
-    from PIL import ImageTk
-except ImportError:
-    ImageTk = None
 
 
 def make_pill_image(w: int, h: int, fill, outline=None, radius: int = 12):
-    """Generates an anti-aliased rounded rectangle pill image for Tkinter."""
+    """Generates an anti-aliased rounded rectangle pill PIL.Image."""
     scale = 4
     img = Image.new("RGBA", (w * scale, h * scale), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
@@ -25,7 +21,7 @@ def make_pill_image(w: int, h: int, fill, outline=None, radius: int = 12):
         outline=outline,
         width=1 * scale
     )
-    return ImageTk.PhotoImage(img.resize((w, h), Image.Resampling.LANCZOS))
+    return img.resize((w, h), Image.Resampling.LANCZOS)
 
 
 def load_pscam_file_icon(png_path: Path, target_box=(38, 26), color=(255, 255, 255), scale: int = 4):
@@ -299,15 +295,9 @@ def generate_icons_pil(target_box=(38, 26), scale: int = 4):
     return ps_file_act, ps_file_inact, web_act_pil, web_inact_pil
 
 
-def generate_icons():
-    """Returns ImageTk.PhotoImage variants for Tkinter sidebar navigation."""
-    ps_act, ps_inact, web_act, web_inact = generate_icons_pil(scale=1)
-    return (
-        ImageTk.PhotoImage(ps_act),
-        ImageTk.PhotoImage(ps_inact),
-        ImageTk.PhotoImage(web_act),
-        ImageTk.PhotoImage(web_inact),
-    )
+def generate_icons(target_box=(38, 26), scale: int = 4):
+    """Alias for generate_icons_pil returning supersampled PIL.Image icons."""
+    return generate_icons_pil(target_box=target_box, scale=scale)
 
 
 def render_svg_icon_pil(svg_path: Path, size: tuple = (18, 18), color_hex: str = "#0F172A", scale: int = 4):
@@ -503,17 +493,9 @@ def generate_tab_icons_pil(size=(18, 18), scale: int = 4):
     return set_act, set_inact, slid_act, slid_inact, slid_dis, lab_act, lab_inact
 
 
-def generate_tab_icons():
-    """Returns ImageTk.PhotoImage pairs for Tkinter top navigation tabs."""
-    g_act, g_inact, s_act, s_inact, _, l_act, l_inact = generate_tab_icons_pil(scale=1)
-    return (
-        ImageTk.PhotoImage(g_act),
-        ImageTk.PhotoImage(g_inact),
-        ImageTk.PhotoImage(s_act),
-        ImageTk.PhotoImage(s_inact),
-        ImageTk.PhotoImage(l_act),
-        ImageTk.PhotoImage(l_inact),
-    )
+def generate_tab_icons(size=(18, 18), scale: int = 4):
+    """Alias for generate_tab_icons_pil returning supersampled PIL.Image tab icons."""
+    return generate_tab_icons_pil(size=size, scale=scale)
 
 
 def generate_mode_icons_pil(size=(15, 15), scale: int = 4):
@@ -619,13 +601,9 @@ def generate_mode_icons_pil(size=(15, 15), scale: int = 4):
     }
 
 
-def generate_mode_icons(size=(15, 15)):
-    """Returns {pid: (act_photo, inact_photo)} for Tkinter."""
-    pil_dict = generate_mode_icons_pil(size=size, scale=1)
-    return {
-        pid: (ImageTk.PhotoImage(act), ImageTk.PhotoImage(inact))
-        for pid, (act, inact) in pil_dict.items()
-    }
+def generate_mode_icons(size=(15, 15), scale: int = 4):
+    """Alias for generate_mode_icons_pil returning {pid: (pil_act, pil_inact)}."""
+    return generate_mode_icons_pil(size=size, scale=scale)
 
 
 def generate_status_icons_pil(size=(38, 38), scale: int = 4):
@@ -684,11 +662,6 @@ def generate_status_icons_pil(size=(38, 38), scale: int = 4):
     return pil_err, pil_ok, pil_warn
 
 
-def generate_status_icons(size=(38, 38)):
-    """Returns ImageTk.PhotoImage status badges for Tkinter."""
-    p_err, p_ok, p_warn = generate_status_icons_pil(size=size, scale=1)
-    return (
-        ImageTk.PhotoImage(p_err),
-        ImageTk.PhotoImage(p_ok),
-        ImageTk.PhotoImage(p_warn),
-    )
+def generate_status_icons(size=(38, 38), scale: int = 4):
+    """Alias for generate_status_icons_pil returning supersampled PIL.Image status badges."""
+    return generate_status_icons_pil(size=size, scale=scale)

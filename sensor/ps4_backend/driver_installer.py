@@ -58,6 +58,28 @@ class PS4DriverInstaller:
         return candidates[-1]
 
     @staticmethod
+    def get_fallback_installer_path() -> Optional[Path]:
+        """
+        Locates the signed fallback driver installer (`tools/PSCam4Win-Setup.exe`)
+        in case Windows Driver Signature Enforcement rejects an unsigned INF catalog.
+        """
+        candidates: list[Path] = []
+        if getattr(sys, "frozen", False):
+            exe_dir = Path(sys.executable).resolve().parent
+            candidates.append(exe_dir / "tools" / "PSCam4Win-Setup.exe")
+            if hasattr(sys, "_MEIPASS"):
+                candidates.append(Path(sys._MEIPASS) / "tools" / "PSCam4Win-Setup.exe")
+
+        pkg_root = Path(__file__).resolve().parent.parent.parent
+        candidates.append(pkg_root / "tools" / "PSCam4Win-Setup.exe")
+        candidates.append(pkg_root.parent / "tools" / "PSCam4Win-Setup.exe")
+
+        for c in candidates:
+            if c.is_file():
+                return c
+        return None
+
+    @staticmethod
     def query_published_inf_packages() -> list[dict]:
         """
         Queries `pnputil.exe /enum-drivers` (non-elevated) and returns matching published
@@ -167,6 +189,7 @@ class PS4DriverInstaller:
         winusb_paths = find_ps4_device_paths()
         packages = PS4DriverInstaller.query_published_inf_packages()
         inf_path = PS4DriverInstaller.get_inf_path()
+        fallback_installer = PS4DriverInstaller.get_fallback_installer_path()
 
         return {
             "hardware_connected": hw_present,
@@ -175,6 +198,8 @@ class PS4DriverInstaller:
             "published_packages": packages,
             "inf_file_present": inf_path.is_file(),
             "inf_path": str(inf_path),
+            "fallback_installer_present": fallback_installer is not None,
+            "fallback_installer_path": str(fallback_installer) if fallback_installer else "",
             "needs_install": hw_present and not winusb_paths and not packages,
         }
 
@@ -247,10 +272,15 @@ class PS4DriverInstaller:
         return True, "Administrative helper executed."
 
     @staticmethod
-    def install_or_repair_driver(force_reinstall: bool = False) -> tuple[bool, str]:
+    def install_or_repair_driver(
+        force_reinstall: bool = False,
+        allow_fallback_installer: bool = True,
+    ) -> tuple[bool, str]:
         """
         Ensures WinUSB is associated with the PlayStation 4 Camera.
         If already active and `force_reinstall=False`, returns immediately without UAC prompt.
+        If `pnputil` fails due to Windows Driver Signature Enforcement on an unsigned INF catalog,
+        automatically falls back to `tools/PSCam4Win-Setup.exe` when available.
         """
         status = PS4DriverInstaller.verify_driver_status()
         if not force_reinstall and (status["winusb_interface_active"] or status["driver_store_staged"]):
@@ -261,7 +291,25 @@ class PS4DriverInstaller:
             return False, f"Driver INF file not found at {inf_path}."
 
         args = f'/add-driver "{inf_path}" /install'
-        return PS4DriverInstaller._run_pnputil_elevated(args)
+        ok, msg = PS4DriverInstaller._run_pnputil_elevated(args)
+        if ok or PS4DriverInstaller.is_driver_installed():
+            return True, msg
+
+        # Fallback to signed PSCam4Win-Setup.exe installer if pnputil rejected unsigned catalog
+        if allow_fallback_installer and "cancelled" not in msg.lower():
+            fallback_exe = PS4DriverInstaller.get_fallback_installer_path()
+            if fallback_exe is not None and fallback_exe.is_file():
+                try:
+                    os.startfile(str(fallback_exe))
+                    return (
+                        False,
+                        f"{msg}\n\nLaunched signed fallback driver installer ({fallback_exe.name}). "
+                        "Complete the setup wizard and click Start Tracking again.",
+                    )
+                except Exception as exc:
+                    return False, f"{msg} (Fallback installer launch failed: {exc})"
+
+        return ok, msg
 
     @staticmethod
     def uninstall_own_driver() -> tuple[bool, str]:

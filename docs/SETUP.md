@@ -37,10 +37,11 @@ A PlayStation 4 Camera (modelos CUH-ZEY1 e **PlayStation 4 Camera Slim** CUH-ZEY
 1. Conecte a PS4 Camera em uma porta **USB 3.0** nativa do computador.
 2. Ao ser conectada fisicamente, a câmera inicia em seu modo de bootloader volátil (`USB\VID_05A9&PID_0580`).
 
-### Passo 2.2 — Associação Automática ao WinUSB (`legacy_pscam_device.inf`)
+### Passo 2.2 — Associação Automática ao WinUSB (`legacy_pscam_device.inf` & Fallback Assinado)
 1. Ao abrir o **Legacy PSCam Sensor**, o módulo `PS4DriverInstaller` verifica automaticamente se o driver de sistema `WinUSB.sys` da Microsoft já está associado às interfaces da câmera (`VID_05A9&PID_0580` e `VID_05A9&PID_058B&MI_00`).
 2. Caso o pacote INF ainda não esteja registrado no repositório de drivers do Windows, clique no botão de inicialização na interface. Uma única confirmação UAC será solicitada para registrar `driver/legacy_pscam_device.inf` via `pnputil.exe`.
-3. Nas execuções seguintes, nenhuma elevação UAC é solicitada.
+3. **Fallback Automático Assinado:** Em instalações do Windows 10/11 onde a política de *Driver Signature Enforcement* exija um catálogo `.cat` assinado e rejeite o registro via `pnputil`, o `PS4DriverInstaller` aciona automaticamente o instalador assinado de fallback `tools/PSCam4Win-Setup.exe` (quando presente).
+4. Nas execuções seguintes, nenhuma elevação UAC é solicitada.
 
 ### Passo 2.3 — Gerenciamento Automático de Firmware OV580 (Online e Offline)
 - O controlador OV580 armazena seu firmware em memória RAM volátil, exigindo o envio do `firmware.bin` (`68.032` bytes, SHA-1 `8b8a6621d358f6782c2e3b31aac2cdfb25102c00`) a cada reconexão física.

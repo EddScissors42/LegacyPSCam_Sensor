@@ -95,6 +95,8 @@ class PoseTracker:
     # Native Kinect player segmentation mask resolution (320x240)
     MASK_INTERNAL_W = 320
     MASK_INTERNAL_H = 240
+    # Maximum width fed into MediaPipe RGB conversion & segmentation tensor (aspect-preserving)
+    INFER_MAX_W = 640
     _MORPH_KERNEL_SMALL = np.ones((3, 3), np.uint8)
     _MORPH_KERNEL_LARGE = np.ones((7, 7), np.uint8)
 
@@ -125,6 +127,10 @@ class PoseTracker:
         self.frame_index = 0
         self.last_timestamp_ms = 0
         self.last_infer_perf = None
+        self._infer_bgr = None
+        self._infer_rgb = None
+        self._warned_stereo_err = False
+        self._warned_seg_err = False
 
     def _init_detector(self):
         base_options = python.BaseOptions(model_asset_path=str(self.model_path))
@@ -324,8 +330,25 @@ class PoseTracker:
             frame_bgr = frame_bgr[0]
 
         h, w = frame_bgr.shape[:2]
-        frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_rgb)
+
+        # Pre-downscale high-resolution frames (>640px wide, e.g. 1280x800 PS4 Camera or 1080p Webcam)
+        # using pre-allocated buffers before MediaPipe inference. Preserves exact aspect ratio while
+        # reducing RGB conversion and MediaPipe segmentation mask tensor allocation by up to 4x.
+        # Full-resolution `frame_bgr` and `frame_left` are preserved for sub-pixel stereo triangulation.
+        if w > self.INFER_MAX_W:
+            infer_w = self.INFER_MAX_W
+            infer_h = max(180, (int(round(h * (infer_w / float(w)))) // 2) * 2)
+            if self._infer_bgr is None or self._infer_bgr.shape[:2] != (infer_h, infer_w):
+                self._infer_bgr = np.empty((infer_h, infer_w, 3), dtype=np.uint8)
+                self._infer_rgb = np.empty((infer_h, infer_w, 3), dtype=np.uint8)
+            cv2.resize(frame_bgr, (infer_w, infer_h), dst=self._infer_bgr, interpolation=cv2.INTER_LINEAR)
+            cv2.cvtColor(self._infer_bgr, cv2.COLOR_BGR2RGB, dst=self._infer_rgb)
+        else:
+            if self._infer_rgb is None or self._infer_rgb.shape[:2] != (h, w):
+                self._infer_rgb = np.empty((h, w, 3), dtype=np.uint8)
+            cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB, dst=self._infer_rgb)
+
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=self._infer_rgb)
 
         # Milliseconds strictly monotonic timestamp for VIDEO running mode
         self.frame_index += 1
@@ -468,7 +491,10 @@ class PoseTracker:
                 stereo_depths = self.stereo_engine.triangulate_sparse_joints(
                     rect_left_frame, rect_right_frame, joints_2d
                 )
-            except Exception:
+            except Exception as exc:
+                if not self._warned_stereo_err:
+                    print(f"[WARN] Stereo triangulation fallback to mono: {exc}")
+                    self._warned_stereo_err = True
                 stereo_depths = None
 
         # 4. Transform to Kinect v1 camera coordinate space (with hip height +1.0m)
@@ -565,7 +591,10 @@ class PoseTracker:
                     cv2.addWeighted(prob_small, 0.65, self._seg_prob_ema, 0.35, 0.0, dst=self._seg_prob_ema)
 
                 neural_mask = (self._seg_prob_ema > 0.24).astype(np.uint8) * 255
-            except Exception:
+            except Exception as exc:
+                if not self._warned_seg_err:
+                    print(f"[WARN] Neural segmentation mask fallback to anatomical mask: {exc}")
+                    self._warned_seg_err = True
                 neural_mask = None
 
         anatomical_mask = self.build_body_mask(norm_lm, mw, mh)

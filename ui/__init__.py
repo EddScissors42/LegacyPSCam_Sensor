@@ -32,6 +32,7 @@ from .icons import (
 # PySide6 modern Qt 6 GUI
 try:
     from .gui_qt import LegacySensorQtGUI
+    from .pages import UIPagesMixin
     from .widgets import (
         pil_to_qpixmap,
         SlidingStackedWidget,
@@ -46,6 +47,7 @@ try:
 except ImportError:
     HAS_QT = False
     LegacySensorQtGUI = None
+    UIPagesMixin = None
     pil_to_qpixmap = None
     SlidingStackedWidget = None
     DeviceNavCard = None
@@ -75,6 +77,7 @@ def launch_app() -> int:
 __all__ = [
     "LegacySensorGUI",
     "LegacySensorQtGUI",
+    "UIPagesMixin",
     "pil_to_qpixmap",
     "SlidingStackedWidget",
     "DeviceNavCard",

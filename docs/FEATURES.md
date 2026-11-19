@@ -22,7 +22,7 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
 | **Filtro Hand Anchor** | ✅ Totalmente Implementado | `pose_tracker.py` | Extrapolação do vetor de antebraço para mãos velozes. |
 | **Suavização EMA Adaptativa** | ✅ Totalmente Implementado | `pose_tracker.py` | Filtro dinâmico sensível à velocidade (anti-jitter). |
 | **Calibração de Escala e Eixos** | ✅ Totalmente Implementado | `pose_tracker.py` | Centralização dos quadris e conversão de eixos para o Just Dance. |
-| **Interface Gráfica PlayStation 5 (Qt 6 / PySide6)** | ✅ Totalmente Implementado | `ui/gui_qt.py` | UI inspirada no console PlayStation 5 com animações fluidas de deslizamento horizontal entre abas (`SlidingStackedWidget` com curvas cúbicas), cartões com sombras e cantos arredondados, painel sensível a estado e fallback para Tkinter. |
+| **Interface Gráfica PlayStation 5 (Qt 6 / PySide6)** | ✅ Totalmente Implementado | `ui/gui_qt.py` / `ui/pages.py` | UI inspirada no console PlayStation 5 com animações fluidas de deslizamento horizontal entre abas (`SlidingStackedWidget` com curvas cúbicas), cartões com sombras e cantos arredondados e painel sensível a estado. |
 | **Painel Sensível a Estado (Balão de Desconexão Único)** | ✅ Totalmente Implementado | `ui/gui_qt.py` / `icons.py` | Quando desconectado, o balão com 'X' grande e botão contextual é o **único elemento exibido**. Ao conectar, transita automaticamente para os controles de vídeo e opções adicionais. |
 | **Perfis Simplificados e Auto-Altura** | ✅ Totalmente Implementado | `ui/gui_qt.py` / `config_manager.py` | 3 perfis estilo console (Equilibrado, Competitivo, Ultra Estável) e calibração de altura 100% automática. |
 | **HUD de Jogo e Overlay OpenCV** | ✅ Totalmente Implementado | `tracking_overlay.py` | Renderização do esqueleto, silhueta e contadores reais de FPS. |
@@ -62,10 +62,9 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
   - **Triangulação 3D Sub-Pixel (`PyrLK` + Banda Epipolar 2D):** Realiza busca em banda 2D com interpolação parabólica seguida de refinamento por Fluxo Óptico Piramidal Lucas-Kanade (`cv2.calcOpticalFlowPyrLK`) nas 20 articulações corporais (< 0.5 ms). Substitui a profundidade estática $Z \approx 2.0\text{m}$ por medição métrica física real ($Z = \frac{f \cdot B}{d}$).
   - **Auto-Calibração Epipolar Vertical Dinâmica (`vertical_offset_px`):** Mede e compensa automaticamente em background pequenas diferenças de inclinação vertical ($\Delta y$) entre a lente esquerda e a direita da unidade física da câmera, dispensando calibração com tabuleiro de xadrez.
   - **Suavização Temporal EMA na Silhueta (`_seg_prob_ema`):** Suaviza temporalmente o tensor de probabilidade da máscara de segmentação do MediaPipe antes da binarização, eliminando tremulações de ruído ISO em 60 FPS sem usar `StereoSGBM` denso.
-- **Controle na UI (Aba Video Settings):**
-  - Posicionado diretamente abaixo do seletor de lente (*Camera Sensor Eye*).
-  - Quando o **Stereo Vision** é ativado via checkbox, o seletor de lente é automaticamente desabilitado na interface gráfica, pois ambos os sensores ópticos (esquerdo e direito) passam a ser processados de forma simultânea e sincronizada a 60 FPS.
-  - Ao desativar, o seletor de lente volta a ficar habilitado para rastreamento monocular com custo zero de processamento adicional.
+- **Modos Disponíveis (Aba Experimental da UI):**
+  - **`Desativado` (Padrão):** Opera em modo monocular clássico com custo zero de CPU adicional.
+  - **`Ativado (Sub-Pixel PyrLK 3D)`:** Ativa a triangulação 3D sub-pixel com auto-alinhamento das lentes, mantendo 60 FPS estáveis.
 
 ### 4. Filtro Hand Anchor (Extrapolação Anatômica)
 - **Problema resolvido:** Em coreografias de dança com giros rápidos ou mãos próximas ao tronco, as redes neurais de detecção de pose frequentemente perdem a visibilidade dos dedos (`INDEX` e `WRIST`), fazendo a mão "pular" para coordenadas inválidas e gerando notas `MISS` ou `OK`.
@@ -412,21 +411,6 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
   - Todo o motor matemático de parsing de CSVs, interpolação temporal, correlação cruzada e ganho sugerido (`sensor/telemetry_benchmark.py`), bem como a janela de renderização gráfica vetorial (`ui/benchmark_dialog.py`), permanecem 100% íntegros, testados e funcionais no repositório.
   - Os objetos continuam instanciados e conectados internamente no controlador Qt, permitindo que o recurso seja reativado no futuro sem necessidade de reimplementação.
 
-
-### 30. Compatibilidade Total com Controles Clones e Réplicas DualShock 4 (v0.5.7 Alpha)
-- **Desbloqueio de Modo Operacional (Handshake Feature Reports 0x02, 0x05 e 0x04):**
-  - No Windows via Bluetooth, controles DualShock 4 (originais e cópias) iniciam por padrão em modo básico restrito de economia de energia (Relatório de Entrada `0x01`), onde os sensores de movimento (giroscópio e acelerômetro) permanecem inativos ou zerados.
-  - O driver agora envia os relatórios de recursos (`HidD_GetFeature` e `HidD_SetFeature`) correspondentes aos relatórios `0x02` (desbloqueio operacional de 37 bytes), `0x05` (calibração de 41 bytes) e `0x04` (handshake específico de microcontroladores genéricos), forçando o hardware a iniciar a transmissão contínua em alta taxa do fluxo IMU.
-- **Detecção Inteligente de Ordem de Blocos IMU (Layout Sony vs. InvenSense/Clone):**
-  - No padrão proprietário da Sony, o giroscópio localiza-se nos primeiros 6 bytes (Bloco A) e o acelerômetro nos 6 bytes seguintes (Bloco B).
-  - Em sensores MEMS genéricos (InvenSense MPU-6050, BMI160) amplamente usados em réplicas chinesas, o acelerômetro localiza-se no Bloco A e o giroscópio no Bloco B.
-  - O motor analisa a presença do vetor de gravidade terrestre ($\approx 1.0G$ / 1500 a 35000 contagens) em ambos os blocos e estabelece dinamicamente se o acelerômetro reside no Bloco A ou B, prevenindo leituras zeradas em repouso.
-- **Detecção Dinâmica de Escala LSB/G:**
-  - Identifica e calibra automaticamente a sensibilidade do acelerômetro de acordo com o ADC do clone ($16384, 8192, 4096$ ou $2048\text{ LSB/G}$), garantindo aceleração física consistente em $1.0G$.
-- **Priorização de Interfaces HID (Gamepad vs. Áudio/Consumer Control):**
-  - Implementado algoritmo de pontuação de interfaces (`_score_hid_interface`) que prioriza coleções de *Gamepad / Joystick* (`UsagePage 0x01`, `Usage 0x05 / 0x04`) e rejeita coleções multimídia de áudio (`UsagePage 0x0C`) ou touchpads (`UsagePage 0x0D`) frequentemente expostas em primeira ordem por drivers Bluetooth genéricos.
-- **Mecanismo Ativo de Auto-Wakeup:**
-  - Caso um controle clone adormeça ou transmita leituras nulas durante a sessão Bluetooth, o driver despacha pulsos periódicos de reativação a cada 0.8s para reanimar o chipset IMU sem interrupção para o usuário.
 
 ---
 

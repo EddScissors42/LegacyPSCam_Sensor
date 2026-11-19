@@ -416,12 +416,14 @@ def test_pose_tracker():
         assert tracked is False
         assert body_mask is None
 
-    # Also test high-resolution 1280x800 frame pre-downscaling path
+    # Also test high-resolution 1280x800 frame pre-downscaling path (640x400 aspect-preserved inference buffer)
     dummy_hd = np.zeros((800, 1280, 3), dtype=np.uint8)
     for _ in range(3):
         tracked, kinect_joints, px_joints, body_mask = tracker.process_frame(dummy_hd)
         assert tracked is False
         assert body_mask is None
+    assert tracker._infer_bgr is not None and tracker._infer_bgr.shape == (400, 640, 3)
+    assert tracker._infer_rgb is not None and tracker._infer_rgb.shape == (400, 640, 3)
 
     tracker.close()
     print("  -> PoseTracker PASSED (Monotonic timestamp & FaceFollowPTZ validated)")
@@ -506,6 +508,7 @@ def test_project_structure():
     assert (BASE_DIR / "sensor").is_dir(), "Directory sensor/ must exist"
     assert (BASE_DIR / "sensor" / "pose_filters.py").exists(), "sensor/pose_filters.py must exist"
     assert (BASE_DIR / "ui").is_dir(), "Directory ui/ must exist"
+    assert (BASE_DIR / "ui" / "pages.py").exists(), "ui/pages.py must exist"
     assert (BASE_DIR / "ui" / "theme.py").exists(), "ui/theme.py must exist"
     assert (BASE_DIR / "ui" / "icons.py").exists(), "ui/icons.py must exist"
     assert (BASE_DIR / "assets").is_dir(), "Directory assets/ must exist"
@@ -537,6 +540,7 @@ def test_project_structure():
     import ui
     assert hasattr(ui, "LegacySensorGUI")
     assert hasattr(ui, "LegacySensorQtGUI")
+    assert hasattr(ui, "UIPagesMixin")
     assert hasattr(ui, "launch_app")
     assert hasattr(ui, "PALETTE")
     assert hasattr(ui, "CALIB_PRESETS")
@@ -859,6 +863,9 @@ def test_ps4_native_backend():
     drv_info = PS4DriverInstaller.verify_driver_status()
     assert drv_info["inf_file_present"] is True
     assert isinstance(drv_info["winusb_interface_active"], bool)
+    assert "fallback_installer_present" in drv_info
+    assert isinstance(drv_info["fallback_installer_present"], bool)
+    assert hasattr(PS4DriverInstaller, "get_fallback_installer_path")
 
     # 2. ISP Geometries Verification (all 9 hardware modes)
     assert len(ISP_GEOMETRIES) == 9

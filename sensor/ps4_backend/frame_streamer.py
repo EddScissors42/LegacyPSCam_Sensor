@@ -231,10 +231,23 @@ class PS4CameraBackend:
             self._last_consumed_seq = self._frame_seq
             return self._selected_bgr
 
+    def read_left_frame(self) -> Optional[np.ndarray]:
+        """
+        Returns the latest synchronized Left Eye BGR frame without re-converting the Right Eye.
+        Used by Stereo Vision when the Right Eye was already read via `read_frame()`.
+        """
+        with self.lock:
+            if self._left_yuy2 is None:
+                return None
+            if self.eye == EYE_LEFT and self._selected_bgr is not None:
+                return self._selected_bgr
+            left_copy = self._left_yuy2.copy()
+        return yuy2_to_bgr(left_copy)
+
     def read_stereo_frames(self, only_new: bool = False) -> Optional[dict]:
         """
         Returns both Left and Right sensor frames along with hardware PTS and host timestamp
-        for future dual-sensor / 3D stereo processing modules:
+        for dual-sensor / 3D stereo processing modules:
             {
                 "right_bgr": np.ndarray,
                 "left_bgr": np.ndarray,
@@ -244,6 +257,8 @@ class PS4CameraBackend:
                 "timestamp_ms": int,
                 "seq": int,
             }
+        Reuses the pre-converted `_selected_bgr` buffer for the active eye to eliminate
+        redundant YUY2->BGR conversion at 60 FPS.
         """
         with self.lock:
             if self._left_yuy2 is None or self._right_yuy2 is None:
@@ -253,13 +268,25 @@ class PS4CameraBackend:
             self._last_consumed_seq = self._frame_seq
             left_copy = self._left_yuy2.copy()
             right_copy = self._right_yuy2.copy()
+            active_eye = self.eye
+            cached_bgr = self._selected_bgr
             pts = self._hardware_pts
             ts_ms = self._timestamp_ms
             seq = self._frame_seq
 
+        if active_eye == EYE_RIGHT and cached_bgr is not None:
+            right_bgr = cached_bgr
+            left_bgr = yuy2_to_bgr(left_copy)
+        elif active_eye == EYE_LEFT and cached_bgr is not None:
+            left_bgr = cached_bgr
+            right_bgr = yuy2_to_bgr(right_copy)
+        else:
+            right_bgr = yuy2_to_bgr(right_copy)
+            left_bgr = yuy2_to_bgr(left_copy)
+
         return {
-            "right_bgr": yuy2_to_bgr(right_copy),
-            "left_bgr": yuy2_to_bgr(left_copy),
+            "right_bgr": right_bgr,
+            "left_bgr": left_bgr,
             "right_yuy2": right_copy,
             "left_yuy2": left_copy,
             "pts": pts,

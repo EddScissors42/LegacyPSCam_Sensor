@@ -11,7 +11,7 @@ O sistema é baseado em uma **arquitetura modular em pacotes**, onde cada etapa 
 ```
 LegacyPSCam_Sensor/
 ├── main.py                     # Ponto de entrada (CLI dispatcher e inicializador)
-├── test_suite.py               # Suíte de testes automatizados (12/12 suítes integradas)
+├── test_suite.py               # Suíte de testes automatizados (13/13 suítes integradas)
 ├── config.json                 # Gerenciamento e persistência das configurações locais
 ├── THIRD_PARTY_NOTICES.md      # Avisos de direitos autorais, licenças e separação de IP do firmware
 ├── driver/
@@ -38,8 +38,9 @@ LegacyPSCam_Sensor/
 │   ├── tracking_overlay.py     # Renderização visual do esqueleto, silhueta sombreada e HUD
 │   └── config_manager.py       # Gerenciamento e persistência das configurações (config.json)
 ├── ui/                         # Pacote da Interface Gráfica
-│   ├── __init__.py             # Exporta LegacySensorGUI, widgets reutilizáveis e launch_app
-│   ├── gui_qt.py               # Janela principal moderna estilo PlayStation em PySide6 / Qt 6
+│   ├── __init__.py             # Exporta LegacySensorGUI, UIPagesMixin, widgets reutilizáveis e launch_app
+│   ├── gui_qt.py               # Janela principal e controlador de eventos em PySide6 / Qt 6
+│   ├── pages.py                # Construtores declarativos das 4 páginas Qt 6 (UIPagesMixin)
 │   ├── widgets.py              # Componentes Qt 6 reutilizáveis (SlidingStackedWidget, DeviceNavCard, CalibPresetCard)
 │   ├── benchmark_dialog.py     # Diálogo e gráfico 2D QPainter de benchmark comparativo (Câmera vs DS4)
 │   ├── theme.py                # Paleta de cores, tipografia e presets
@@ -127,8 +128,8 @@ flowchart TD
 - **Responsabilidade:** Inicialização da aplicação, parsing de parâmetros da linha de comando (`--start`, `--mode`, `--camera`) e carregamento da GUI ou da sessão de rastreamento direto.
 - **Relações:** Instancia `ConfigManager` e aciona `ui.launch_app()` ou `tracking_session.py`.
 
-### 2. `gui_qt.py` — Interface do Usuário (Painel de Controle PlayStation 6)
-- **Responsabilidade:** Interface visual moderna desenvolvida em **PySide6 (Qt 6)** com animações fluidas de transição entre abas (`SlidingStackedWidget`), layout dividido com barra lateral estilizada de seleção de câmera (PlayStation 4 Camera vs Webcam Padrão), abas superiores centralizadas ("Video Settings", "Calibration", "Experimental"), paleta oficial PlayStation Blue (`#00439C`), cards com sombras suaves e ícones vetoriais anti-aliased. Permite selecionar perfis de rastreamento (**Equilibrado**, **Competitivo**, **Ultra Estável**), conta com calibração automática e ajustes experimentais de Auto-Framing (FaceFollow PTZ).
+### 2. `gui_qt.py` e `pages.py` — Interface do Usuário (Painel de Controle PlayStation em Qt 6)
+- **Responsabilidade:** Interface visual moderna desenvolvida em **PySide6 (Qt 6)**, dividida entre o controlador principal de janela/eventos (`gui_qt.py`) e os construtores declarativos das 4 páginas de navegação (`pages.py` / `UIPagesMixin`). Conta com animações fluidas de transição entre abas (`SlidingStackedWidget`), layout dividido com barra lateral estilizada de seleção de dispositivo (PlayStation 4 Camera, Webcam Padrão e DualShock 4), abas superiores centralizadas ("Video Settings", "Calibration", "Controller Settings", "Experimental"), paleta oficial PlayStation Blue (`#00439C`), cards com sombras suaves e ícones vetoriais anti-aliased. Permite selecionar perfis de rastreamento (**Equilibrado**, **Competitivo**, **Ultra Estável**), conta com calibração automática e ajustes experimentais de Auto-Framing (FaceFollow PTZ) e Celular Virtual.
 - **Ciclo de Vida do Driver e Hotplug Reativo:** Monitora a cada 1.0 segundo o hardware PnP e o ciclo de vida da PS4 Camera (`NOT_INSTALLED`, `DISCONNECTED`, `DRIVER_STOPPED`, `BOOTLOADER_UPLOADING`, `WAITING_VCAM`, `READY`).
 - **Threading Não-Bloqueante:** Tanto a enumeração de câmeras do OpenCV quanto a sessão de rastreamento executam em threads assíncronas dedicadas, mantendo a janela do Qt 6 totalmente fluida a 60 FPS e sem congelamentos na UI.
 
@@ -141,7 +142,8 @@ flowchart TD
 - **Enumeração de Dispositivos:** Cruza os índices do OpenCV com a lista de dispositivos PnP do Windows (`Get-PnpDevice -Class Camera`) para exibir nomes amigáveis na interface.
 
 ### 4. `pose_tracker.py` e `pose_filters.py` — Motor de Pose e Cinemática
-- **`PoseTracker`:** Inicializa e gerencia a rede neural `vision.PoseLandmarker` do Google MediaPipe no modo contínuo de vídeo (`RunningMode.VIDEO`), preservando as proporções nativas de aspecto da câmera e operando com limiares otimizados para o modelo Lite (`det_c <= 0.45`, `pres_c <= 0.35`) para garantir detecção contínua e sem perda de rastreamento.
+- **`PoseTracker`:** Inicializa e gerencia a rede neural `vision.PoseLandmarker` do Google MediaPipe no modo contínuo de vídeo (`RunningMode.VIDEO`), preservando as proporções nativas de aspecto da câmera e operando com limiares otimizados (`det_c <= 0.45`, `pres_c <= 0.35`) para garantir detecção contínua e sem perda de rastreamento.
+- **Pré-Downscaling In-Place para Quadros de Alta Resolução (`>640px`):** Para streams HD como `1280x800` (PS4 Camera) ou `1920x1080` (Webcams Full HD), redimensiona in-place em buffers pré-alocados (`_infer_bgr` e `_infer_rgb`, ex.: `640x400` ou `640x360`) antes de enviar ao MediaPipe, reduzindo em 4x o custo de conversão RGB e de alocação da máscara de segmentação neural, enquanto mantém os quadros originais em resolução total (`1280x800`) para a triangulação estéreo sub-pixel (`StereoDepthEngine`).
 - **Garantia de Monotonicidade:** Força que `timestamp_ms` seja estritamente incremental a cada frame (`timestamp_ms = max(now_ms, last_ms + 1)`), prevenindo quebras em 60 FPS estáveis.
 - **Sintetizador de Membros Inferiores:** Quando o jogador está diante de uma mesa ou notebook e a câmera não enquadra quadris ou pernas, sintetiza quadris com confiança >= 0.45 (`TRACKED`) e pernas naturais eretas com confiança 0.35 (`INFERRED`), impedindo que o `Kinect10.dll` perca o jogador.
 - **`HandAnchorFilter`:** Detecta quando a mão perde confiança e extrapola a posição ao longo do vetor anatômico do antebraço (`cotovelo -> pulso`), garantindo que giros de mão não percam pontos nas coreografias.

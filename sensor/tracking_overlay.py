@@ -23,6 +23,7 @@ COLOR_SILHOUETTE = (70, 235, 90)  # Neon Lime (Player 1 Silhouette & Contour)
 class TrackingOverlay:
     def __init__(self, show_hud=True):
         self.show_hud = show_hud
+        self._warned_silhouette_err = False
 
     def toggle_hud(self):
         self.show_hud = not self.show_hud
@@ -86,8 +87,10 @@ class TrackingOverlay:
 
             # 2. Crisp neon outline contour around the player
             cv2.drawContours(frame, contours, -1, color, 2, cv2.LINE_AA)
-        except Exception:
-            pass
+        except Exception as exc:
+            if not self._warned_silhouette_err:
+                print(f"[WARN] Silhouette overlay rendering error: {exc}")
+                self._warned_silhouette_err = True
         return frame
 
     def draw_skeleton(self, frame, pixel_joints):

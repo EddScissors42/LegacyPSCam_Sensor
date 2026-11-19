@@ -192,11 +192,15 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
                 continue
 
             # If stereo vision is active on PS4 Camera, retrieve synchronous Left Eye frame
+            # without re-converting the Right Eye from YUY2 to BGR.
             frame_left = None
             if getattr(tracker, "stereo_mode", "disabled") != "disabled":
-                st_data = camera.read_stereo(only_new=False)
-                if st_data:
-                    frame_left = st_data.get("left_bgr")
+                if hasattr(camera, "read_left_eye"):
+                    frame_left = camera.read_left_eye()
+                if frame_left is None:
+                    st_data = camera.read_stereo(only_new=False)
+                    if st_data:
+                        frame_left = st_data.get("left_bgr")
 
             # Process Pose on pristine RAW frame with MediaPipe (guarantees correct anatomical limbs)
             is_tracked, kinect_joints, px_joints, body_mask = tracker.process_frame(frame, frame_left=frame_left)
@@ -217,7 +221,7 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
                 display_mask = cv2.flip(body_mask, 1) if body_mask is not None else None
                 display_px = [(fw - 1 - p[0], p[1], p[2]) for p in px_joints] if px_joints else None
             else:
-                display_frame = frame.copy()
+                display_frame = frame
                 display_mask = body_mask
                 display_px = px_joints
 

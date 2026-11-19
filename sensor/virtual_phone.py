@@ -698,25 +698,44 @@ def find_just_dance_pids() -> List[int]:
     return pids
 
 
+_RPM_LOCK = threading.Lock()
+_RPM_CHUNK_SIZE = 1024 * 1024  # 1 MB reusable scratch buffer (zero per-scan heap allocation)
+_RPM_SHARED_BUF = None
+
+
 def detect_active_song_from_game_process() -> str:
     """
-    Scans committed memory regions of any running Just Dance process
+    Scans committed private data memory regions of any running Just Dance process
     to locate the actively loaded map video stream (/map/<MapName>/...webm).
+    Uses a single reusable 1 MB scratch buffer and skips MEM_IMAGE / executable code pages
+    to eliminate multi-megabyte heap allocations and micro-stutters.
     Returns formatted human-friendly song title (e.g. 'Smalltown Boy') or empty string.
     """
+    global _RPM_SHARED_BUF
     if sys.platform != "win32":
         return ""
     pids = find_just_dance_pids()
     if not pids:
         return ""
 
+    if not _RPM_LOCK.acquire(blocking=False):
+        return ""
+
     try:
         import ctypes
         from ctypes import wintypes
 
+        if _RPM_SHARED_BUF is None:
+            _RPM_SHARED_BUF = ctypes.create_string_buffer(_RPM_CHUNK_SIZE)
+
         kernel32 = ctypes.windll.kernel32
         PROCESS_VM_READ = 0x0010
         PROCESS_QUERY_INFORMATION = 0x0400
+        MEM_COMMIT = 0x1000
+        MEM_IMAGE = 0x1000000
+        PAGE_NOACCESS = 0x01
+        PAGE_GUARD = 0x100
+        PAGE_EXECUTE_MASK = 0xF0  # Skip executable code pages
 
         if ctypes.sizeof(ctypes.c_void_p) == 8:
             class MBI(ctypes.Structure):
@@ -764,27 +783,44 @@ def detect_active_song_from_game_process() -> str:
             found_map = ""
             try:
                 while kernel32.VirtualQueryEx(h, ctypes.c_void_p(addr), ctypes.byref(mbi), ctypes.sizeof(mbi)):
-                    if mbi.State == 0x1000 and (mbi.Protect & 0x01 == 0):
+                    prot = int(mbi.Protect)
+                    if (
+                        mbi.State == MEM_COMMIT
+                        and mbi.Type != MEM_IMAGE
+                        and (prot & (PAGE_NOACCESS | PAGE_GUARD | PAGE_EXECUTE_MASK)) == 0
+                    ):
                         sz = int(mbi.RegionSize)
                         if 4096 <= sz <= 8 * 1024 * 1024:
-                            buf = ctypes.create_string_buffer(sz)
-                            br = ctypes.c_size_t(0)
-                            if kernel32.ReadProcessMemory(h, ctypes.c_void_p(mbi.BaseAddress), buf, sz, ctypes.byref(br)):
-                                m = pattern_webm.search(buf.raw[:br.value])
-                                if m:
-                                    found_map = m.group(1).decode("latin1", errors="ignore")
-                                    break
+                            offset = 0
+                            while offset < sz:
+                                chunk_len = min(_RPM_CHUNK_SIZE, sz - offset)
+                                br = ctypes.c_size_t(0)
+                                if kernel32.ReadProcessMemory(
+                                    h,
+                                    ctypes.c_void_p(int(mbi.BaseAddress) + offset),
+                                    _RPM_SHARED_BUF,
+                                    chunk_len,
+                                    ctypes.byref(br),
+                                ):
+                                    m = pattern_webm.search(_RPM_SHARED_BUF.raw[:br.value])
+                                    if m:
+                                        found_map = m.group(1).decode("latin1", errors="ignore")
+                                        break
+                                offset += chunk_len
+                            if found_map:
+                                break
                     addr += mbi.RegionSize
             finally:
                 kernel32.CloseHandle(h)
 
             if found_map:
-                # Format into human-friendly song title
                 title = re.sub(r"([a-z])([A-Z])", r"\1 \2", found_map)
                 title = title.replace("ALT", " (Alternate)").replace("DLC", " (DLC)")
                 return title
     except Exception:
         pass
+    finally:
+        _RPM_LOCK.release()
     return ""
 
 
@@ -890,9 +926,15 @@ class VirtualPhoneController:
 
     @property
     def current_song(self) -> str:
-        if not self.current_map_name and self.connected:
+        # Only fall back to external process memory inspection when telemetry recording or
+        # auto-record benchmark is explicitly active, throttled to 2.5s intervals.
+        if (
+            not self.current_map_name
+            and self.connected
+            and (self.auto_record_enabled or self._logging_enabled)
+        ):
             now = time.perf_counter()
-            if (now - self._last_song_query_ts) >= 0.8:
+            if (now - self._last_song_query_ts) >= 2.5:
                 self._last_song_query_ts = now
                 detected = detect_active_song_from_game_process()
                 if detected:

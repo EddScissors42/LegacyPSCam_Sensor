@@ -58,8 +58,8 @@ All non-essential overhead has been removed while perfecting the core components
 ```
 LegacyPSCam_Sensor/
 ├── main.py                     # CLI launcher and entry point
-├── version.py                  # Official versioning & build metadata (v0.6.0 Alpha)
-├── test_suite.py               # 11 complete automated test suites (11/11 PASSED)
+├── version.py                  # Official versioning & build metadata (v0.7.0 Alpha)
+├── test_suite.py               # 13 complete automated test suites (13/13 PASSED)
 ├── config.json                 # Saved user preferences
 ├── THIRD_PARTY_NOTICES.md      # Licensing & third-party attribution notices
 ├── driver/
@@ -67,6 +67,7 @@ LegacyPSCam_Sensor/
 ├── sensor/                     # Tracking Engine and AI package
 │   ├── ps4_backend/            # Native WinUSB PlayStation 4 Camera Backend
 │   ├── camera_manager.py       # Camera discovery and async capture
+│   ├── stereo_matcher.py       # Stereo Vision Engine (Rectification, Sub-Pixel PyrLK 3D, Depth Mask)
 │   ├── pose_tracker.py         # MediaPipe engine, Hand Anchor, Calibrator & EMA
 │   ├── pose_filters.py         # Kinematic filters (HandAnchor, AdaptiveSmoother, SkeletonCalibrator, PTZ)
 │   ├── virtual_phone.py        # UbiArt Smartphone WebSocket client & 3D Hand Accelerometer
@@ -77,7 +78,8 @@ LegacyPSCam_Sensor/
 │   ├── kinect_shared_memory.py # Windows shared memory IPC driver (JDP1, JDP2, JMI1/2, JXC1)
 │   └── config_manager.py       # config.json persistence
 ├── ui/                         # User Interface package
-│   ├── gui_qt.py               # Primary PlayStation-themed window (PySide6 / Qt 6)
+│   ├── gui_qt.py               # Primary PlayStation-themed window controller (PySide6 / Qt 6)
+│   ├── pages.py                # Declarative Qt 6 page builders (Video, Calibration, Experimental, DS4)
 │   ├── widgets.py              # Reusable Qt 6 widgets (SlidingStackedWidget, DeviceNavCard, CalibPresetCard)
 │   ├── benchmark_dialog.py     # Telemetry Benchmark & Calibration Comparator dialog & 2D chart
 │   ├── theme.py                # Palette, fonts, and calibration presets

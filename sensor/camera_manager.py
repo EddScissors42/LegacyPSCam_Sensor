@@ -743,12 +743,37 @@ class LatestFrameCamera:
                 return self.latest_ret, self.latest_frame, self.measured_fps
             return False, None, 0.0
 
+    def _apply_orientation(self, frame):
+        if frame is None or self.orientation == 0:
+            return frame
+        if self.orientation == 90:
+            return cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+        if self.orientation == 180:
+            return cv2.rotate(frame, cv2.ROTATE_180)
+        if self.orientation == 270:
+            return cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
+        return frame
+
+    def read_left_eye(self):
+        """
+        Returns the synchronized Left Eye BGR frame when running on Native PS4CameraBackend,
+        avoiding redundant conversion of the Right Eye in Stereo Vision mode.
+        """
+        if self.ps4_backend is not None:
+            left_bgr = self.ps4_backend.read_left_frame()
+            return self._apply_orientation(left_bgr)
+        return None
+
     def read_stereo(self, only_new=False):
         """
         Returns dual-sensor (Left + Right eye) frame dictionary when running on Native PS4CameraBackend.
         """
         if self.ps4_backend is not None:
-            return self.ps4_backend.read_stereo_frames(only_new=only_new)
+            st = self.ps4_backend.read_stereo_frames(only_new=only_new)
+            if st is not None and self.orientation != 0:
+                st["left_bgr"] = self._apply_orientation(st.get("left_bgr"))
+                st["right_bgr"] = self._apply_orientation(st.get("right_bgr"))
+            return st
         return None
 
     def set_eye(self, eye: str):
