@@ -39,6 +39,7 @@ All non-essential overhead has been removed while perfecting the core components
 | Responsive Scroll & Anti-Collision | Transparent QScrollArea with minimum card heights preventing widget overlap on compact window sizes. | Implemented |
 | Virtual Phone Controller ("Celular Virtual") | Emulates the Just Dance Smartphone Controller over WebSocket for Just Dance 2017-2022 (`/smartphone`), converting 3D camera hand tracking into 3-axis accelerometer scoring data and menu navigation commands. | Implemented |
 | DualShock 4 & Clones (Level A) | Native Bluetooth/USB HID driver supporting official DS4, licensed pads (Hori, Nacon, Razer, Astro, Scuf) and clone chips (ShanWan, DragonRise) with automatic IMU frozen (0G) diagnostic. | Implemented |
+| Emulate Kinect (Zero-File-Replacement) | Emulates Kinect directly in game memory via process detection; keeps original Kinect10.dll on disk intact. | Implemented |
 | High-Resolution Windows Timer (1ms) | Python timer synchronization ensuring `Sleep(33)` in `Kinect10.dll` delivers solid 30 FPS. | Implemented |
 
 ---
@@ -58,8 +59,8 @@ All non-essential overhead has been removed while perfecting the core components
 ```
 LegacyPSCam_Sensor/
 ├── main.py                     # CLI launcher and entry point
-├── version.py                  # Official versioning & build metadata (v0.7.0 Alpha)
-├── test_suite.py               # 13 complete automated test suites (13/13 PASSED)
+├── version.py                  # Official versioning & build metadata (v0.7.3 Alpha)
+├── test_suite.py               # 14 complete automated test suites (14/14 PASSED)
 ├── config.json                 # Saved user preferences
 ├── THIRD_PARTY_NOTICES.md      # Licensing & third-party attribution notices
 ├── driver/

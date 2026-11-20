@@ -14,6 +14,7 @@ added_datas = [
     ('models/pose_landmarker_heavy.task', 'models'),
     ('assets', 'assets'),
     ('tools/Kinect10.dll', 'tools'),
+    ('tools/Legacy10.dll', 'tools'),
     ('tools/get_cameras.ps1', 'tools'),
     ('driver/legacy_pscam_device.inf', 'driver'),
 ] + mp_datas

@@ -10,8 +10,6 @@ import ctypes
 import numpy as np
 from sensor.camera_manager import LatestFrameCamera, CameraManager
 from sensor.kinect_shared_memory import KinectBridge
-from sensor.pose_tracker import PoseTracker
-from sensor.tracking_overlay import TrackingOverlay
 from sensor.config_manager import parse_preset
 from sensor.virtual_phone import get_virtual_phone
 
@@ -85,6 +83,13 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
     # 1. Initialize IPC Shared Memory Bridge (Pose, Image & CoachX)
     bridge = KinectBridge()
 
+    # 1.1 Ensure KinectEmulatorDaemon is running if enabled (supports direct CLI --start mode)
+    local_kinect_emulator = None
+    if bool(config.get("emulate_kinect_enabled", False)):
+        from sensor.kinect_emulator import KinectEmulatorDaemon
+        local_kinect_emulator = KinectEmulatorDaemon(config)
+        local_kinect_emulator.start()
+
     # 2. Initialize Camera Grabber (pristine raw frames to tracker)
     try:
         camera = LatestFrameCamera(
@@ -105,7 +110,10 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
             on_close_callback()
         return False
 
-    # 3. Initialize Pose Tracker
+    # 3. Initialize Pose Tracker (lazy-imported so GUI startup & DS4 mode never wait on MediaPipe)
+    from sensor.pose_tracker import PoseTracker
+    from sensor.tracking_overlay import TrackingOverlay
+
     preset_model_map = {"balanced": "full", "competitive": "lite", "stable": "heavy"}
     pose_model = str(config.get("pose_model", "")).strip().lower()
     if pose_model not in ("lite", "full", "heavy"):
@@ -225,9 +233,13 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
                 display_mask = body_mask
                 display_px = px_joints
 
-            # Apply dynamic Face Follow (PTZ Auto-framing) for dancer selection avatar
+            # Apply dynamic Face Follow (PTZ Auto-framing & Frustum-Aligned Face Square) for dancer selection avatar
             if is_tracked and tracker.last_norm_landmarks:
-                tracker.face_ptz.update_from_norm(tracker.last_norm_landmarks, mirrored=mirror)
+                tracker.face_ptz.update_from_norm(
+                    tracker.last_norm_landmarks,
+                    mirrored=mirror,
+                    kinect_joints=kinect_joints,
+                )
                 kinect_frame, kinect_mask = tracker.face_ptz.apply(display_frame, display_mask)
             else:
                 tracker.face_ptz.reset()
@@ -299,6 +311,8 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
         print(f"[ERROR] Exception in tracking loop: {e}")
     finally:
         set_high_resolution_timer(False)
+        if local_kinect_emulator is not None:
+            local_kinect_emulator.stop()
         bridge.write_empty()
         bridge.close()
         camera.release()

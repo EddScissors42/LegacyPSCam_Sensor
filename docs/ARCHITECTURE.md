@@ -11,7 +11,7 @@ O sistema é baseado em uma **arquitetura modular em pacotes**, onde cada etapa 
 ```
 LegacyPSCam_Sensor/
 ├── main.py                     # Ponto de entrada (CLI dispatcher e inicializador)
-├── test_suite.py               # Suíte de testes automatizados (13/13 suítes integradas)
+├── test_suite.py               # Suíte de testes automatizados (14/14 suítes integradas)
 ├── config.json                 # Gerenciamento e persistência das configurações locais
 ├── THIRD_PARTY_NOTICES.md      # Avisos de direitos autorais, licenças e separação de IP do firmware
 ├── driver/
@@ -33,6 +33,7 @@ LegacyPSCam_Sensor/
 │   ├── virtual_phone.py        # Cliente WebSocket UbiArt (/smartphone), Calibrador Adaptativo e Acelerômetro 3D
 │   ├── telemetry_benchmark.py  # Benchmark comparativo de telemetria (Câmera vs DS4), alinhamento temporal e ganho
 │   ├── ds4_controller.py       # Driver Bluetooth/USB HID nativo DualShock 4 (500+ Hz, IMU, botões e vibração)
+│   ├── kinect_emulator.py      # Emulador de Kinect na memória (detecção de processos e hot-patching IAT)
 │   ├── kinect_shared_memory.py # Driver IPC com KinectBridge (JDP1 344B + JDP2 664B + JMI1/2 1.3MB + JXC1 28B)
 │   ├── tracking_session.py     # Orquestrador do loop de rastreamento e eventos de teclado
 │   ├── tracking_overlay.py     # Renderização visual do esqueleto, silhueta sombreada e HUD

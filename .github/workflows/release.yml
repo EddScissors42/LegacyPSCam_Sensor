@@ -42,33 +42,17 @@ jobs:
         run: |
           pyinstaller --noconfirm legacy_pscam_sensor.spec
 
-      - name: Package Standalone Release (.zip)
+      - name: Set Release Metadata
         shell: pwsh
         run: |
           $ver = python -c "from version import __version__; print(__version__)"
-          $zipName = "LegacyPSCam_Sensor-v${ver}.zip"
-          Write-Host "Creating release bundle: $zipName"
-
-          New-Item -ItemType Directory -Path "release_staging" -Force
-          Copy-Item "dist/LegacyPSCam_Sensor.exe" -Destination "release_staging/"
-
-          Compress-Archive -Path "release_staging/*" -DestinationPath $zipName -Force
-          Write-Host "Release archive created successfully: $zipName"
-          echo "ZIP_NAME=$zipName" >> $env:GITHUB_ENV
           echo "APP_VER=v$ver" >> $env:GITHUB_ENV
 
       - name: Upload Artifact (Accessible on all workflow runs)
         uses: actions/upload-artifact@v4
         with:
           name: LegacyPSCam_Sensor-Windows
-          path: release_staging/
-          if-no-files-found: error
-
-      - name: Upload Release Archive (.zip)
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.ZIP_NAME }}
-          path: ${{ env.ZIP_NAME }}
+          path: dist/LegacyPSCam_Sensor.exe
           if-no-files-found: error
 
       - name: Create or Update GitHub Release
@@ -76,7 +60,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            ${{ env.ZIP_NAME }}
             dist/LegacyPSCam_Sensor.exe
           name: Legacy PSCam Sensor ${{ env.APP_VER }} (Alpha)
           body: ""

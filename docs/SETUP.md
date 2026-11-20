@@ -53,8 +53,15 @@ A PlayStation 4 Camera (modelos CUH-ZEY1 e **PlayStation 4 Camera Slim** CUH-ZEY
 
 ## 3. Configuração do Just Dance PC (Kinect Bridge)
 
-Para que o jogo Just Dance PC consiga ler os movimentos gerados pelo simulador:
+Para que o jogo Just Dance PC consiga ler os movimentos gerados pelo sensor, você pode optar por dois métodos:
 
+### Método A — Emulate Kinect (Recomendado — Sem Substituir Arquivos)
+1. Abra o **Legacy PSCam Sensor** e vá para a aba **Experimental**.
+2. Marque a opção **"Emulate Kinect"**.
+3. Inicie o Just Dance normalmente (`Legacy.exe`, `JustDance.exe` ou `jd2022.exe`).
+4. O sensor detecta a instância do jogo aberta e redireciona a API do Kinect diretamente na memória RAM, sem precisar colar ou substituir nenhum arquivo na pasta do jogo. O `Kinect10.dll` original permanece 100% intacto no disco!
+
+### Método B — Substituição Manual de DLL (Legado)
 1. Localize a pasta `tools/` dentro de `LegacyPSCam_Sensor/`.
 2. Copie o arquivo **`Kinect10.dll`**.
 3. Abra a pasta raiz da sua instalação do **Just Dance PC** (onde fica o executável do jogo, por exemplo `JustDance.exe` ou a pasta do Legacy Offline).

@@ -185,14 +185,18 @@ def test_shared_memory():
     print("  -> KinectBridge (Unified IPC) PASSED")
 
     # Verify Kinect10.dll pacer byte (33ms / 30 FPS standard for Just Dance scoring compatibility)
-    dll_path = BASE_DIR / "tools" / "Kinect10.dll"
-    if dll_path.exists():
-        dll_bytes = dll_path.read_bytes()
-        assert len(dll_bytes) == 121344, f"Unexpected Kinect10.dll size: {len(dll_bytes)}"
-        assert dll_bytes[0x1746] == 0x6A, f"Expected push opcode 0x6A at 0x1746, got {dll_bytes[0x1746]:#x}"
-        assert dll_bytes[0x1747] == 0x21, f"Expected 33ms pacer byte 0x21 at 0x1747 (30 FPS standard), got {dll_bytes[0x1747]:#x}"
-        assert dll_bytes[0x1748:0x174A] == b"\xff\xd3", "Expected call ebx (Sleep) at 0x1748"
-        print("  -> Kinect10.dll Pacer Byte (33ms / 30 FPS Kinect standard) PASSED")
+    # and Ordinal 9 (NuiImageGetColorPixelCoordinatesFromDepthPixel) 320x240 -> 640x480 2x scaling
+    for dll_name in ("Kinect10.dll", "Legacy10.dll"):
+        dll_path = BASE_DIR / "tools" / dll_name
+        if dll_path.exists():
+            dll_bytes = dll_path.read_bytes()
+            assert len(dll_bytes) == 121344, f"Unexpected {dll_name} size: {len(dll_bytes)}"
+            assert dll_bytes[0x1746] == 0x6A, f"Expected push opcode 0x6A at 0x1746, got {dll_bytes[0x1746]:#x}"
+            assert dll_bytes[0x1747] == 0x21, f"Expected 33ms pacer byte 0x21 at 0x1747 (30 FPS standard), got {dll_bytes[0x1747]:#x}"
+            assert dll_bytes[0x1748:0x174A] == b"\xff\xd3", "Expected call ebx (Sleep) at 0x1748"
+            assert dll_bytes[0x19AC:0x19AE] == b"\xd1\xe0", f"Expected shl eax, 1 (0xd1 0xe0) for lColorX in {dll_name} Ordinal 9"
+            assert dll_bytes[0x19BC:0x19BE] == b"\xd1\xe0", f"Expected shl eax, 1 (0xd1 0xe0) for lColorY in {dll_name} Ordinal 9"
+    print("  -> Kinect10.dll & Legacy10.dll Pacer Byte (30 FPS) + Ordinal 9 (2x Depth->Color Scale) PASSED")
 
 def test_hand_anchor():
     print("[TEST] HandAnchorFilter (3D and 2D)...")
@@ -455,9 +459,14 @@ def test_camera_manager():
     assert isinstance(snapshot, tuple)
     print(f"  Hardware snapshot devices: {len(snapshot)} (query latency: {elapsed_ms:.2f}ms)")
 
-    # Test PS4 Camera multi-stage state machine
+    # Test PS4 Camera multi-stage state machine and fast cached query (< 25ms)
     ps4_info = CameraManager.get_ps4_camera_state()
+    t_st = time.perf_counter()
+    ps4_info_cached = CameraManager.get_ps4_camera_state()
+    st_ms = (time.perf_counter() - t_st) * 1000.0
     assert isinstance(ps4_info, dict)
+    assert ps4_info_cached["state"] == ps4_info["state"]
+    assert st_ms < 25.0, f"Cached get_ps4_camera_state() took too long ({st_ms:.2f}ms)"
     assert "state" in ps4_info
     valid_states = {"NOT_INSTALLED", "DISCONNECTED", "DRIVER_STOPPED", "BOOTLOADER_UPLOADING", "WAITING_VCAM", "READY"}
     assert ps4_info["state"] in valid_states
@@ -466,11 +475,14 @@ def test_camera_manager():
     assert isinstance(ps4_info["bootloader"], bool)
     assert isinstance(ps4_info["active_hw"], bool)
     assert isinstance(ps4_info["vcam_count"], int)
-    print(f"  PS4 Camera lifecycle state: {ps4_info['state']} (HW active: {ps4_info['active_hw']}, VCAMs: {ps4_info['vcam_count']})")
+    print(f"  PS4 Camera lifecycle state: {ps4_info['state']} (HW active: {ps4_info['active_hw']}, VCAMs: {ps4_info['vcam_count']}, cached query: {st_ms:.2f}ms)")
 
+    t_enum = time.perf_counter()
     cams = CameraManager.enumerate_cameras(max_probe=2)
+    enum_ms = (time.perf_counter() - t_enum) * 1000.0
     assert len(cams) > 0
-    print(f"  Cameras found: {[str(c) for c in cams]}")
+    assert hasattr(CameraManager, "_get_windows_camera_names_win32")
+    print(f"  Cameras found: {[str(c) for c in cams]} (enumeration latency: {enum_ms:.2f}ms)")
 
     # Test FrameBusReader lifecycle and only_new parameter
     fb = FrameBusReader()
@@ -658,9 +670,36 @@ def test_project_structure():
         assert not win.chk_vphone_enabled.isEnabled(), "Virtual phone checkbox must be disabled/locked in ds4 mode"
         assert not win.vphone_details_frame.isHidden(), "Virtual phone telemetry details must not be hidden in ds4 mode"
         assert win.auto_frame_box.isHidden(), "Auto-frame box must be hidden in ds4 mode"
+        assert win.emulate_kinect_box.isHidden(), "Emulate Kinect box must be hidden in ds4 mode"
         win._switch_tab("exp")
         assert win.active_tab == "exp", "Should be able to switch to experimental tab in ds4 mode"
         assert win.btn_tab_exp.isEnabled(), "Experimental tab must be enabled in ds4 mode"
+
+        # Verify Emulate Kinect & Virtual Phone Controller mutual exclusion
+        assert hasattr(win, "lbl_vphone_kinect_conflict"), "Conflict label must exist"
+        win._set_mode("webcam")
+        assert not win.emulate_kinect_box.isHidden(), "Emulate Kinect box must be visible in webcam mode"
+        win.chk_emulate_kinect.setChecked(True)
+        assert not win.chk_vphone_enabled.isEnabled(), "vphone must be disabled when Emulate Kinect is ON"
+        assert not win.chk_vphone_enabled.isChecked(), "vphone must be unchecked when Emulate Kinect is ON"
+        assert not win.lbl_vphone_kinect_conflict.isHidden(), "vphone conflict label must be visible when Emulate Kinect is ON"
+
+        # In ds4 mode, vphone is used as DS4 bridge and conflict label is hidden
+        win._set_mode("ds4")
+        assert win.chk_vphone_enabled.isChecked(), "vphone must be checked in ds4 mode"
+        assert win.lbl_vphone_kinect_conflict.isHidden(), "conflict label must be hidden in ds4 mode"
+
+        # Switching back to webcam maintains lock if Emulate Kinect is still ON
+        win._set_mode("webcam")
+        assert not win.chk_vphone_enabled.isEnabled(), "vphone must remain disabled when Emulate Kinect is ON"
+        assert not win.chk_vphone_enabled.isChecked(), "vphone must remain unchecked"
+        assert not win.lbl_vphone_kinect_conflict.isHidden(), "conflict label must be visible again"
+
+        # Turning Emulate Kinect OFF reverts and re-enables vphone
+        win.chk_emulate_kinect.setChecked(False)
+        assert win.chk_vphone_enabled.isEnabled(), "vphone must be re-enabled when Emulate Kinect is OFF"
+        assert win.lbl_vphone_kinect_conflict.isHidden(), "conflict label must be hidden when Emulate Kinect is OFF"
+
         win._set_mode("webcam")
 
         # Calibration & Experimental tab gating when camera is not connected
@@ -866,6 +905,9 @@ def test_ps4_native_backend():
     assert "fallback_installer_present" in drv_info
     assert isinstance(drv_info["fallback_installer_present"], bool)
     assert hasattr(PS4DriverInstaller, "get_fallback_installer_path")
+    assert hasattr(PS4DriverInstaller, "has_driver_store_package_fast")
+    assert hasattr(PS4DriverInstaller, "invalidate_cache")
+    assert isinstance(PS4DriverInstaller.has_driver_store_package_fast(use_cache=True), bool)
 
     # 2. ISP Geometries Verification (all 9 hardware modes)
     assert len(ISP_GEOMETRIES) == 9
@@ -1179,6 +1221,72 @@ def test_ds4_controller():
     print("  -> DualShock 4 & Clone IMU Compatibility PASSED")
 
 
+def test_kinect_emulator():
+    """Validates the in-memory Kinect Emulator daemon, binary proxy, and config persistence."""
+    print("Testing Kinect In-Memory Emulator (Zero-File-Replacement)...")
+    from sensor.kinect_emulator import KinectEmulatorDaemon, KINECT_ORDINALS_ORDER, TARGET_PROCESS_NAMES
+    from sensor.config_manager import ConfigManager
+
+    # 1. Test Config persistence
+    cm = ConfigManager()
+    assert "emulate_kinect_enabled" in cm.config
+    assert isinstance(cm.config["emulate_kinect_enabled"], bool)
+
+    # 2. Test Proxy DLL Presence & Validity
+    base_dir = Path(__file__).parent
+    proxy_path = base_dir / "tools" / "Legacy10.dll"
+    assert proxy_path.exists(), f"Legacy10.dll not found at {proxy_path}"
+    assert proxy_path.stat().st_size == 121344, f"Legacy10.dll unexpected size: {proxy_path.stat().st_size}"
+
+    with open(proxy_path, "rb") as f:
+        data = f.read()
+    assert data[:2] == b"MZ", "Legacy10.dll is not a valid PE binary"
+
+    # 3. Test Ordinal and target definitions
+    assert KINECT_ORDINALS_ORDER == [16, 5, 6, 21, 22, 9, 17, 26]
+    assert "legacy.exe" in TARGET_PROCESS_NAMES
+    assert "justdance.exe" in TARGET_PROCESS_NAMES
+    assert "jd2022.exe" in TARGET_PROCESS_NAMES
+
+    # 4. Test Daemon Instantiation & Lifecycle
+    daemon = KinectEmulatorDaemon({"emulate_kinect_enabled": False})
+    assert not daemon.enabled
+    status = daemon.get_status()
+    assert status["enabled"] is False
+    assert status["connected"] is False
+
+    callback_called = []
+    def on_status(conn, name, pid):
+        callback_called.append((conn, name, pid))
+
+    daemon.register_status_callback(on_status)
+    daemon._notify_status(True, "TestGame.exe", 9999)
+    assert len(callback_called) == 1
+    assert callback_called[0] == (True, "TestGame.exe", 9999)
+
+    # 5. Test fast Toolhelp32 process scanner & 32-bit WoW64 architecture check
+    import os
+    import ctypes
+    t_scan = time.perf_counter()
+    scan_res = daemon._scan_for_game_process()
+    scan_ms = (time.perf_counter() - t_scan) * 1000.0
+    assert scan_res is None or isinstance(scan_res, dict)
+    assert scan_ms < 50.0, f"Toolhelp32 process scan took too long ({scan_ms:.2f}ms)"
+    is_cur_32 = daemon._is_target_32bit(os.getpid())
+    assert isinstance(is_cur_32, bool)
+    assert is_cur_32 is (ctypes.sizeof(ctypes.c_void_p) == 4)
+
+    # 6. Test Daemon start / stop
+    daemon.enabled = True
+    daemon.start()
+    assert daemon._running is True
+    time.sleep(0.1)
+    daemon.stop()
+    assert daemon._running is False
+
+    print("  -> Kinect In-Memory Emulator & Auto-Detector PASSED")
+
+
 def run_all_tests():
     print("==========================================")
     print("   RUNNING LEGACY PSCAM SENSOR TEST SUITE ")
@@ -1196,8 +1304,9 @@ def run_all_tests():
     test_ps4_native_backend()
     test_stereo_vision_engine()
     test_ds4_controller()
+    test_kinect_emulator()
     print("==========================================")
-    print("   ALL TESTS PASSED SUCCESSFULLY (13/13)  ")
+    print("   ALL TESTS PASSED SUCCESSFULLY (14/14)  ")
     print("==========================================")
 
 if __name__ == "__main__":

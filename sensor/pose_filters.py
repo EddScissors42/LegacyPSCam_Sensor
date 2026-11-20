@@ -559,23 +559,28 @@ def apply_slot_snap(joints, cfg=None):
 
 class FaceFollowPTZ:
     """
-    Software Pan-Tilt-Zoom (PTZ) auto-framing filter.
-    Smoothly tracks the player's face landmarks and centers/zooms the video frame
-    and player segmentation mask sent to Just Dance via shared memory (Local\\LegacyWebcamKinectImage).
-    Ensures the player's face avatar on the dancer selection screen is crisp, focused, and centered.
+    Software Pan-Tilt-Zoom (PTZ) auto-framing & Frustum-Aligned Face Square Filter.
+    Smoothly tracks the player's face landmarks and shifts/zooms the video frame
+    and player segmentation mask sent to Just Dance via shared memory (Local\\LegacyWebcamKinectImage)
+    so the player's face is placed at the exact 2D frustum UV coordinate where Just Dance PC
+    projects the 3D Head(3) and ShoulderCenter(2) joints for the dancer avatar box ("quadradinho").
     """
     def __init__(self, cfg=None):
         self.cfg = cfg or {}
         self.cx = 0.5
         self.cy = 0.38
+        self.target_u = 0.5
+        self.target_v = 0.25
         self.valid = False
 
     def reset(self):
         self.cx = 0.5
         self.cy = 0.38
+        self.target_u = 0.5
+        self.target_v = 0.25
         self.valid = False
 
-    def update_from_norm(self, norm_landmarks, mirrored=True):
+    def update_from_norm(self, norm_landmarks, mirrored=True, kinect_joints=None):
         if not norm_landmarks:
             return
         candidates = []
@@ -604,6 +609,29 @@ class FaceFollowPTZ:
                 self.cx = self.cx * (1.0 - a) + tx * a
                 self.cy = self.cy * (1.0 - a) + ty * a
 
+        # Compute exact 2D frustum UV coordinate where Just Dance PC samples the 3D Head(3) joint
+        # NuiTransformSkeletonToDepthImage (320x240):
+        #   u = 0.5 + (285.63 / 320.0) * (X / Z)
+        #   v = 0.5 - (285.63 / 240.0) * (Y_frustum / Z)
+        # Just Dance Legacy lowers skeleton Y by the adaptive floor offset (~0.97m) so Head Y_frustum ~ 0.565m.
+        if kinect_joints and len(kinect_joints) > 3:
+            hx, hy, hz, _ = kinect_joints[3]
+            hip_y = float(kinect_joints[0][1])
+            z_safe = max(0.8, float(hz))
+            # Relative head height above hip in calibrated skeleton (~0.56m..0.72m),
+            # matching Just Dance Legacy's internal floor-relative frustum projection
+            y_frustum = max(0.15, min(0.75, float(hy) - max(0.0, hip_y - 0.05)))
+            tu = 0.5 + (285.63 / 320.0) * (float(hx) / z_safe)
+            tv = 0.5 - (285.63 / 240.0) * (y_frustum / z_safe)
+            tu = float(np.clip(tu, 0.15, 0.85))
+            tv = float(np.clip(tv, 0.14, 0.65))
+            a_t = float(np.clip(float(self.cfg.get('face_follow_smoothing', 0.20)), 0.05, 1.0))
+            self.target_u = self.target_u * (1.0 - a_t) + tu * a_t
+            self.target_v = self.target_v * (1.0 - a_t) + tv * a_t
+        else:
+            self.target_u = 0.5
+            self.target_v = 0.25
+
     def apply(self, frame, mask=None):
         if not self.cfg.get('face_follow_enabled', True):
             return frame, mask
@@ -611,33 +639,30 @@ class FaceFollowPTZ:
             return frame, mask
         h, w = frame.shape[:2]
         zoom = max(1.0, float(self.cfg.get('face_follow_zoom', 1.22)))
-        if abs(zoom - 1.0) < 0.01:
-            return frame, mask
-        crop_w = max(160, int(w / zoom))
-        crop_h = max(120, int(h / zoom))
-        center_x = int(self.cx * w)
-        center_y = int(self.cy * h)
-        x0 = int(np.clip(center_x - crop_w // 2, 0, w - crop_w))
-        y0 = int(np.clip(center_y - crop_h // 2, 0, h - crop_h))
-        x1 = x0 + crop_w
-        y1 = y0 + crop_h
 
-        out_frame = cv2.resize(frame[y0:y1, x0:x1], (w, h), interpolation=cv2.INTER_LINEAR)
+        # Place detected face (self.cx, self.cy) at the exact frustum UV (self.target_u, self.target_v)
+        # where Just Dance PC crops the player avatar square ("quadradinho").
+        # Using warpAffine with BORDER_REPLICATE guarantees exact alignment even near frame edges.
+        M = np.array([
+            [zoom, 0.0, (self.target_u - zoom * self.cx) * w],
+            [0.0, zoom, (self.target_v - zoom * self.cy) * h],
+        ], dtype=np.float32)
+        out_frame = cv2.warpAffine(
+            frame, M, (w, h),
+            flags=cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_REPLICATE
+        )
         out_mask = None
         if mask is not None:
             mh, mw = mask.shape[:2]
-            if mh == h and mw == w:
-                mx0, my0, mx1, my1 = x0, y0, x1, y1
-            else:
-                sx = mw / float(w)
-                sy = mh / float(h)
-                mcrop_w = max(40, int(round(crop_w * sx)))
-                mcrop_h = max(30, int(round(crop_h * sy)))
-                mcenter_x = int(self.cx * mw)
-                mcenter_y = int(self.cy * mh)
-                mx0 = int(np.clip(mcenter_x - mcrop_w // 2, 0, mw - mcrop_w))
-                my0 = int(np.clip(mcenter_y - mcrop_h // 2, 0, mh - mcrop_h))
-                mx1 = mx0 + mcrop_w
-                my1 = my0 + mcrop_h
-            out_mask = cv2.resize(mask[my0:my1, mx0:mx1], (mw, mh), interpolation=cv2.INTER_NEAREST)
+            M_mask = np.array([
+                [zoom, 0.0, (self.target_u - zoom * self.cx) * mw],
+                [0.0, zoom, (self.target_v - zoom * self.cy) * mh],
+            ], dtype=np.float32)
+            out_mask = cv2.warpAffine(
+                mask, M_mask, (mw, mh),
+                flags=cv2.INTER_NEAREST,
+                borderMode=cv2.BORDER_CONSTANT,
+                borderValue=0
+            )
         return out_frame, out_mask

@@ -211,7 +211,8 @@ Para desenvolvedores que importam os módulos internamente:
 - `CameraManager.is_pscam_installed() -> bool`: Retorna se o driver WinUSB da PS4 Camera está instalado/ativo (ou fallback legado).
 - `CameraManager.is_pscam_running() -> bool`: Retorna se o backend nativo WinUSB está operacional.
 - `CameraManager.initialize_ps4_camera() -> Tuple[bool, str]`: Verifica/instala o pacote INF WinUSB e faz o upload automático do firmware OV580 caso a câmera esteja em modo bootloader (`05A9:0580`).
-- `CameraManager.enumerate_cameras(max_probe: int = 6) -> List[CameraInfo]`: Retorna a lista de câmeras conectadas cruzando índices com nomes PnP e interfaces WinUSB.
+- `CameraManager.get_windows_camera_names() -> List[str]`: Enumera os nomes amigáveis das câmeras ativas via Win32 `setupapi.dll` (`KSCATEGORY_VIDEO_CAMERA` e `GUID_DEVCLASS_CAMERA` com `DIGCF_PRESENT`) em ~3-5ms in-process (com fallback para WinRT/PowerShell apenas se necessário).
+- `CameraManager.enumerate_cameras(max_probe: Optional[int] = None, probe_hardware: bool = False) -> List[CameraInfo]`: Retorna a lista de câmeras conectadas cruzando dispositivos PnP ativos e interfaces WinUSB em ~4ms sem ligar fisicamente o sensor da webcam durante a listagem da UI (`probe_hardware=False`).
 - `LatestFrameCamera(camera_index, target_w=640, target_h=480, target_fps=30, mirror=True, is_pscam=False, orientation=0, ps4_eye="right", ps4_backend_mode="native")`: Capturador assíncrono que utiliza `PS4CameraBackend` nativo quando `is_pscam=True`.
 - `LatestFrameCamera.set_eye(eye: str)`: Alterna em tempo real entre `"right"` (Olho Direito, padrão) e `"left"` (Olho Esquerdo).
 - `LatestFrameCamera.read_left_eye() -> Optional[np.ndarray]`: Retorna o frame BGR sincronizado do Olho Esquerdo (com rotação de orientação aplicada) sem reconverter o Olho Direito a partir de YUY2.
@@ -231,6 +232,8 @@ Para desenvolvedores que importam os módulos internamente:
   - `read_left_frame() -> Optional[np.ndarray]`: Converte sob demanda apenas o plano YUY2 do Olho Esquerdo para BGR (eliminando conversão duplicada do Olho Direito no modo de Visão Estéreo).
   - `read_stereo_frames(only_new: bool = False) -> Optional[dict]`: Retorna ambos os fluxos ópticos sincronizados reutilizando o buffer `_selected_bgr` do olho ativo.
 - `PS4DriverInstaller`:
+  - `has_driver_store_package_fast(use_cache: bool = True) -> bool`: Consulta em ~1.0ms (e ~0.001ms em cache) o `DriverStore\FileRepository` via Win32 `FindFirstFileW` (busca prefixada B-tree no NTFS) sem invocar `pnputil.exe`.
+  - `invalidate_cache() -> None`: Invalida o cache em memória do DriverStore e de pacotes `oemXX.inf` publicados.
   - `verify_driver_status() -> dict`: Verifica sem elevação UAC se `legacy_pscam_device.inf` está instalado e associado ao `WinUSB.sys` (incluindo disponibilidade do instalador de fallback assinado `fallback_installer_present`).
   - `get_fallback_installer_path() -> Optional[Path]`: Localiza o instalador assinado de fallback `tools/PSCam4Win-Setup.exe`.
   - `install_or_repair_driver(force_reinstall: bool = False, allow_fallback_installer: bool = True) -> Tuple[bool, str]`: Solicita elevação pontual via `pnputil.exe` apenas quando necessário e aciona automaticamente o instalador de fallback caso a política de assinatura digital do Windows rejeite um catálogo INF não assinado.
@@ -408,3 +411,18 @@ O pacote `sensor.stereo_matcher` implementa o pipeline óptico de visão estére
     Calcula mapa de disparidade a 320x200 via `cv2.StereoSGBM_3WAY` (~2.5ms), gerando máscara binária uint8 (255 = zona do jogador, 0 = fundo/fora).
   - `compute_confirmed_background_mask(rect_left, rect_right, target_w=320, target_h=240, min_z_m=0.8, max_z_m=2.8, align_to_right=True) -> np.ndarray`:
     Identifica regiões positivamente confirmadas fora do envelope de profundidade do dançarino ($Z > \text{max\_z\_m}$ ou $Z < \text{min\_z\_m}$), alinhadas à lente direita.
+
+---
+
+## 11. Emulador de Kinect em Memória (`sensor.kinect_emulator`)
+
+O módulo `sensor.kinect_emulator` emula o sensor Kinect diretamente na memória RAM do Just Dance PC (modo *Zero-File-Replacement*), sem exigir a substituição manual do arquivo `Kinect10.dll` na pasta do jogo:
+
+- `KINECT_ORDINALS_ORDER = [16, 5, 6, 21, 22, 9, 17, 26]`: Ordem dos 8 ordinais da API NUI do `Kinect10.dll` mapeados na tabela IAT do `Legacy.exe`.
+- `TARGET_PROCESS_NAMES = ["legacy.exe", "justdance.exe", "jd2022.exe"]`: Executáveis monitorados pelo daemon.
+- `KinectEmulatorDaemon(cfg=None)`:
+  - `start() -> None` / `stop() -> None`: Inicia e encerra a thread daemon de monitoramento de processos (`KinectEmulatorDaemon`).
+  - `get_status() -> Dict[str, Any]`: Retorna o estado atual (`enabled`, `running`, `connected`, `game_name`, `pid`, `mode` `"iat_hook"` ou `"aiwebcam"`).
+  - `register_status_callback(cb: Callable[[bool, str, int], None]) -> None`: Registra callback acionado ao conectar ou desconectar do processo do jogo.
+  - `_scan_for_game_process() -> Optional[Dict[str, Any]]`: Varre processos ativos em $<0.5\text{ ms}$ via snapshot de kernel `CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)` sem abrir processos do sistema com `PROCESS_VM_READ`.
+  - `_is_target_32bit(pid: int) -> bool`: Verifica via `IsWow64Process` e cabeçalho PE (`Magic == 0x10B`) se o processo alvo é 32-bit (WoW64 / PE32) antes de aplicar a injeção de `tools/Legacy10.dll` e o hot-patching IAT.

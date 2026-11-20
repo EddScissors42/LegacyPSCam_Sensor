@@ -54,7 +54,8 @@ DEFAULT_CONFIG = {
     "ds4_sensitivity": 1.0,
     "ds4_permissive_mode": True,
     "benchmark_auto_record": False,
-    "stereo_mode": "disabled"
+    "stereo_mode": "disabled",
+    "emulate_kinect_enabled": False
 }
 
 PRESETS_PSCAM = [

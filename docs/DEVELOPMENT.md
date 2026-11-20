@@ -24,7 +24,7 @@ O projeto segue estritamente as convenções padrão do ecossistema Python (PEP 
 O projeto adota uma convenção estrita de versionamento semântico pragmático centralizada em `version.py`:
 
 ```python
-__version__ = "0.7.0"
+__version__ = "0.7.3"
 STAGE = "Alpha"
 VERSION_STRING = f"v{__version__} ({STAGE})"
 WINDOW_TITLE = f"Legacy PSCam Sensor {VERSION_STRING}"
@@ -34,7 +34,7 @@ WINDOW_TITLE = f"Legacy PSCam Sensor {VERSION_STRING}"
 1. **Mudanças Pequenas (Bugfixes, ajustes de UI, novos assets/ícones):** Altere estritamente o **terceiro dígito** (`0.1.1` ➔ `0.1.2`).
 2. **Grandes Mudanças / Refatorações Significativas:** Altere o **segundo dígito** (`0.1.2` ➔ `0.2.0`).
 3. **Sempre atualizar:** Sempre que fizer uma modificação, incremente a versão em `version.py`.
-4. **Título da Janela e Rodapé:** O título da janela principal (Qt 6) deve obrigatoriamente exibir o número da versão acompanhado de `(Alpha)` (ex.: `"Legacy PSCam Sensor v0.7.0 (Alpha)"`).
+4. **Título da Janela e Rodapé:** O título da janela principal (Qt 6) deve obrigatoriamente exibir o número da versão acompanhado de `(Alpha)` (ex.: `"Legacy PSCam Sensor v0.7.3 (Alpha)"`).
 
 ---
 
@@ -82,11 +82,11 @@ Antes de aprovar qualquer modificação de código, execute a suíte de testes i
 python LegacyPSCam_Sensor/test_suite.py
 ```
 
-A suíte cobre 13 áreas fundamentais:
+A suíte cobre 14 áreas fundamentais:
 
 | Teste | Módulo Testado | Critério de Sucesso |
 |---|---|---|
-| `test_project_structure` | `sensor/`, `ui/`, `assets/` | Integridade da estrutura modular, interface Qt 6 (`LegacySensorQtGUI`, `UIPagesMixin`), `launch_app`, assets e instanciação offscreen Qt6. |
+| `test_project_structure` | `sensor/`, `ui/`, `assets/` | Integridade da estrutura modular, interface Qt 6 (`LegacySensorQtGUI`, `UIPagesMixin`), `launch_app`, assets, exclusão mútua entre Emulate Kinect e Virtual Phone Controller, e instanciação offscreen Qt6. |
 | `test_config` | `sensor/config_manager.py` | Leitura, escrita, persistência e parsing de presets de resolução/FPS. |
 | `test_shared_memory` | `sensor/kinect_shared_memory.py` | Tamanho exato de 344 bytes (JDP1) e 664 bytes (JDP2), paridade seqlock, máscara JMI1/JMI2 e pacer de 33ms do Kinect10.dll. |
 | `test_hand_anchor` | `sensor/pose_filters.py` | Extrapolação correta do antebraço em coordenadas 3D e 2D. |
@@ -99,6 +99,7 @@ A suíte cobre 13 áreas fundamentais:
 | `test_ps4_native_backend` | `sensor/ps4_backend/` | Verificação de pacote INF, validação SHA-1/SHA-256 do firmware OV580, depacketizer UVC, demultiplexação independente dos dois sensores (Olho Direito e Esquerdo) e captura ao vivo em hardware físico a 60 FPS. |
 | `test_stereo_vision_engine` | `sensor/stereo_matcher.py` | Calibração de fábrica rígida ($B=85.2\text{ mm}$), retificação epipolar via `cv2.remap`, triangulação sub-pixel `PyrLK` + auto-calibração vertical epipolar, máscara de profundidade densa (320x240) e integração com `SkeletonCalibrator`. |
 | `test_ds4_controller` | `sensor/ds4_controller.py` | Identificação de VID/PID oficiais e clones (ShanWan, DragonRise), filtro permissivo, pontuação de interface HID, CRC-32 de Output Report `0x11` e detecção automática de layout/escala de IMU. |
+| `test_kinect_emulator` | `sensor/kinect_emulator.py` | Ciclo de vida do daemon em segundo plano, persistência de configuração, integridade binária da `Legacy10.dll` e roteamento de callbacks de status. |
 
 ### Adicionando Novos Testes
 Ao criar novos recursos (como um novo algoritmo de suavização ou novo controle de GUI), adicione uma função `test_<funcionalidade>()` no arquivo `test_suite.py` e inclua sua execução na função principal `run_all_tests()`.
@@ -134,10 +135,10 @@ O projeto conta com automação completa de CI/CD para gerar o executável stand
    git tag v0.4.9
    git push origin v0.4.9
    ```
-   O GitHub Actions iniciará o runner Windows, instalará as dependências, executará a suíte de testes (10/10), compilará o `LegacyPSCam_Sensor.exe` via PyInstaller, empacotará o executável standalone e anexará o `LegacyPSCam_Sensor-v0.4.9.zip` e o `.exe` na página de Releases do repositório.
+   O GitHub Actions iniciará o runner Windows, instalará as dependências, executará a suíte de testes (14/14), compilará o `LegacyPSCam_Sensor.exe` via PyInstaller e anexará diretamente o executável standalone `.exe` na página de Releases do repositório.
 
 2. **Manual para Testes (Workflow Dispatch):**
    - Acesse a aba **Actions** no GitHub.
    - Selecione **"Build & Release Legacy PSCam Sensor"**.
    - Clique em **"Run workflow"**.
-   - O executável e o arquivo `.zip` serão gerados e ficarão disponíveis para download na seção de **Artifacts** da execução.
+   - O executável `.exe` será gerado e ficará disponível para download na seção de **Artifacts** da execução.

@@ -248,13 +248,6 @@ class CalibPresetCard(QFrame):
         self.lbl_desc.setWordWrap(True)
         layout.addWidget(self.lbl_desc, stretch=1)
 
-        bot_row = QHBoxLayout()
-        bot_row.setContentsMargins(0, 2, 0, 0)
-        self.lbl_specs = QLabel(pdata["specs"], self)
-        bot_row.addWidget(self.lbl_specs)
-        bot_row.addStretch()
-        layout.addLayout(bot_row)
-
         self.set_active(False)
 
     def set_active(self, active: bool, hovered: bool = False):
@@ -282,9 +275,6 @@ class CalibPresetCard(QFrame):
             self.lbl_desc.setStyleSheet(
                 f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_main']}; background: transparent; border: none;"
             )
-            self.lbl_specs.setStyleSheet(
-                f"font-family: '{self.font_body}'; font-size: 9px; color: {PALETTE['ps_blue']}; background: transparent; border: none;"
-            )
         else:
             if not self.pix_inact.isNull():
                 self.lbl_icon.setPixmap(self.pix_inact)
@@ -308,9 +298,6 @@ class CalibPresetCard(QFrame):
             )
             self.lbl_desc.setStyleSheet(
                 f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
-            )
-            self.lbl_specs.setStyleSheet(
-                f"font-family: '{self.font_body}'; font-size: 9px; color: {PALETTE['text_dim']}; background: transparent; border: none;"
             )
 
     def enterEvent(self, event):

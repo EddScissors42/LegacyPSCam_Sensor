@@ -20,8 +20,7 @@ if "matplotlib" not in sys.modules:
     sys.modules["matplotlib"] = _m
     sys.modules["matplotlib.pyplot"] = _plt
 
-from sensor import ConfigManager, run_tracking_session
-from ui import launch_app, LegacySensorGUI
+from sensor.config_manager import ConfigManager
 from version import WINDOW_TITLE, VERSION_STRING, APP_NAME
 
 def run():
@@ -41,9 +40,11 @@ def run():
         cfg["camera_index"] = args.camera
 
     if args.start:
+        from sensor.tracking_session import run_tracking_session
         print("[INFO] Starting direct tracking session (--start)...")
         run_tracking_session(cfg)
     else:
+        from ui import launch_app
         sys.exit(launch_app())
 
 if __name__ == "__main__":

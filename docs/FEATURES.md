@@ -28,11 +28,12 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
 | **HUD de Jogo e Overlay OpenCV** | ✅ Totalmente Implementado | `tracking_overlay.py` | Renderização do esqueleto, silhueta e contadores reais de FPS. |
 | **Interface de Linha de Comando (CLI)**| ✅ Totalmente Implementado | `main.py` | Flags `--start`, `--mode {pscam,webcam,ds4}` e `--camera`. |
 | **Rastreamento Multi-Jogador (2P)** | 🟡 Parcialmente Implementado | `pose_tracker.py` | O MediaPipe suporta `num_poses=2`, mas o Lite foca em 1P. |
-| **Auto-Framing / FaceFollow PTZ** | ✅ Totalmente Implementado | `pose_tracker.py` | Auto-framing digital com zoom suave (1.22x) e centralização dinâmica do rosto para a foto/avatar do dançarino no Just Dance. |
+| **Auto-Framing / FaceFollow PTZ** | ✅ Totalmente Implementado | `pose_filters.py` / `tracking_session.py` | Auto-framing digital com zoom suave (1.22x) e alinhamento de frustum 3D→2D (`warpAffine`) que posiciona o rosto exatamente na coordenada UV em que o Just Dance recorta o quadrado do avatar (`Head(3)` / `ShoulderCenter(2)`), em conjunto com a escala 2x (`320x240 -> 640x480`) no Ordinal 9 (`NuiImageGetColorPixelCoordinatesFromDepthPixel`) do `Kinect10.dll` / `Legacy10.dll`. |
 | **Celular Virtual (Emulador JD Controller via Câmera)** | ✅ Totalmente Implementado | `virtual_phone.py` / `ui/gui_qt.py` | Emula um smartphone conectado via WebSocket local (`/smartphone`) e converte o movimento 3D da mão na câmera em dados de acelerômetro 3D (`JD_PhoneScoringData`) e comandos de menu para músicas que só suportam controle de mão. |
 | **DualShock 4 & Controles Compatíveis (Nível A) [EXPERIMENTAL]** | ✅ Totalmente Implementado | `sensor/ds4_controller.py` / `ui/gui_qt.py` | Driver nativo Bluetooth/USB HID (500+ Hz) com suporte a DS4 original, controles licenciados de terceiros (Hori, Nacon, Razer, Astro, Scuf) e clones/réplicas (ShanWan, DragonRise) com diagnóstico automático de IMU congelado (0G). |
 | **Benchmark de Telemetria & Calibração Adaptativa** | 🔒 Preservado / Oculto na UI | `sensor/telemetry_benchmark.py` / `ui/benchmark_dialog.py` | Módulo de benchmark comparativo de aceleração (Câmera vs DS4) e auto-gravação por música preservado no código, porém desabilitado por padrão e removido da interface visual para manter o design enxuto. |
 | **Visão Estéreo (Stereo Vision) para PS4 Camera** | ✅ Totalmente Implementado | `sensor/stereo_matcher.py` / `ui/gui_qt.py` | Calibração de fábrica ($B=85.2\text{ mm}$), auto-alinhamento vertical dinâmico das lentes ($\Delta y$), triangulação 3D sub-pixel via Fluxo Óptico Piramidal (`PyrLK`, <0.5ms) e suavização temporal EMA da silhueta. |
+| **Emulate Kinect (Zero-File-Replacement Mode)** | ✅ Totalmente Implementado | `sensor/kinect_emulator.py` / `ui/pages.py` | Emulação do sensor Kinect diretamente na memória RAM do Just Dance sem substituir o arquivo `Kinect10.dll` original na pasta do jogo; detecção automática de processo. |
 | **Modo Headless (Sem Janela)** | ⏳ Planejado | `tracking_session.py` | Rastrear em background sem gastar GPU com janela gráfica. |
 
 ---
@@ -411,6 +412,20 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
   - Todo o motor matemático de parsing de CSVs, interpolação temporal, correlação cruzada e ganho sugerido (`sensor/telemetry_benchmark.py`), bem como a janela de renderização gráfica vetorial (`ui/benchmark_dialog.py`), permanecem 100% íntegros, testados e funcionais no repositório.
   - Os objetos continuam instanciados e conectados internamente no controlador Qt, permitindo que o recurso seja reativado no futuro sem necessidade de reimplementação.
 
+
+### 30. Emulate Kinect (Zero-File-Replacement) & Exclusão Mútua com Celular Virtual (v0.5.5 Alpha)
+- **Zero-File-Replacement Mode (`sensor/kinect_emulator.py`):**
+  - Permite jogar Just Dance PC (Legacy Offline) sem precisar substituir o `Kinect10.dll` original de 14.9 MB do Microsoft Kinect SDK v1.8 na pasta do jogo.
+  - O daemon em segundo plano (`KinectEmulatorDaemon`) monitora a inicialização do executável (`Legacy.exe` ou `JustDance.exe`) em modo 32-bit (WoW64) via `psutil` e APIs Win32.
+  - Ao detectar o processo, injeta remotamente a biblioteca proxy `tools/Legacy10.dll` via `VirtualAllocEx`, `WriteProcessMemory` e `CreateRemoteThread(LoadLibraryW)`.
+  - Sobrescreve em tempo real a Import Address Table (IAT) do processo para os 8 ordinais originais do Kinect (`16, 5, 6, 21, 22, 9, 17, 26`), roteando as chamadas para a memória compartilhada do LegacyPSCam Sensor.
+- **Interface e Internacionalização (Inglês):**
+  - Toda a descrição, título e leitura dinâmica de status do recurso na aba Experimental estão em inglês intuitivo.
+- **Exclusão Mútua com Celular Virtual (Virtual Phone Controller):**
+  - Em modos de câmera (Webcam USB ou PlayStation Camera), ao ligar o **Emulate Kinect**, a opção **Virtual Phone Controller** é automaticamente desmarcada (`setChecked(False)`) e desabilitada (`setEnabled(False)`), com encerramento de qualquer conexão WebSocket ativa.
+  - Abaixo do título do Celular Virtual, é exibido um aviso vermelho em destaque: `"Emulate Kinect is active, this feature is unavailable."`.
+  - O Celular Virtual só é reabilitado quando o usuário desliga o Emulate Kinect ou alterna o dispositivo para **DualShock 4** (onde o Celular Virtual atua como ponte do acelerômetro físico).
+  - Ao alternar do DualShock 4 de volta para Webcam ou PS Camera, a restrição de exclusão mútua é preservada se o Emulate Kinect continuar ativado.
 
 ---
 

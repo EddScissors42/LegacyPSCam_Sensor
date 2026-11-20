@@ -692,6 +692,40 @@ class UIPagesMixin:
         warn_layout.addWidget(lbl_warn_text, stretch=1)
         exp_layout.addWidget(warn_box)
 
+        # Emulate Kinect Feature Box (Zero-File-Replacement Mode)
+        self.emulate_kinect_box = QFrame(exp_card)
+        self.emulate_kinect_box.setStyleSheet(f"""
+            QFrame {{
+                background-color: {PALETTE["input_bg"]};
+                border: 1px solid {PALETTE["border_subtle"]};
+                border-radius: 8px;
+            }}
+        """)
+        ek_layout = QVBoxLayout(self.emulate_kinect_box)
+        ek_layout.setContentsMargins(14, 12, 14, 12)
+        ek_layout.setSpacing(6)
+
+        self.chk_emulate_kinect = QCheckBox("Emulate Kinect", self.emulate_kinect_box)
+        self.chk_emulate_kinect.setStyleSheet(
+            f"font-family: '{self.font_heading}'; font-size: 13px; font-weight: bold; color: {PALETTE['text_main']};"
+        )
+        self.chk_emulate_kinect.setChecked(bool(self.cfg.get("emulate_kinect_enabled", False)))
+        self.chk_emulate_kinect.stateChanged.connect(self._on_emulate_kinect_toggle_changed)
+        ek_layout.addWidget(self.chk_emulate_kinect)
+
+        lbl_ek_desc = QLabel(
+            "Emulates the Kinect sensor directly in Just Dance's memory without replacing or modifying the "
+            "Kinect10.dll file in the game folder. The sensor automatically detects when the game is launched and connects tracking in real time.",
+            self.emulate_kinect_box
+        )
+        lbl_ek_desc.setWordWrap(True)
+        lbl_ek_desc.setStyleSheet(
+            f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
+        )
+        ek_layout.addWidget(lbl_ek_desc)
+
+        exp_layout.addWidget(self.emulate_kinect_box)
+
         # Auto-Frame Feature Box
         self.auto_frame_box = QFrame(exp_card)
         self.auto_frame_box.setStyleSheet(f"""
@@ -743,6 +777,13 @@ class UIPagesMixin:
         self.chk_vphone_enabled.setChecked(bool(self.cfg.get("virtual_phone_enabled", False)))
         self.chk_vphone_enabled.stateChanged.connect(self._on_vphone_toggle_changed)
         vp_layout.addWidget(self.chk_vphone_enabled)
+
+        self.lbl_vphone_kinect_conflict = QLabel("Emulate Kinect is active, this feature is unavailable.", vphone_box)
+        self.lbl_vphone_kinect_conflict.setStyleSheet(
+            f"font-family: '{self.font_heading}'; font-size: 10px; font-weight: bold; color: #DC2626; background: transparent; border: none;"
+        )
+        self.lbl_vphone_kinect_conflict.setVisible(False)
+        vp_layout.addWidget(self.lbl_vphone_kinect_conflict)
 
         self.lbl_vp_desc = QLabel(
             "Emulates a smartphone connected to Just Dance via WebSocket/TLS (/smartphone) and converts your hand motion "

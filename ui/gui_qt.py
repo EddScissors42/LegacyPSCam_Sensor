@@ -81,6 +81,7 @@ from version import WINDOW_TITLE, VERSION_STRING, APP_NAME
 from sensor.config_manager import ConfigManager, parse_preset, PRESETS_PSCAM, PRESETS_WEBCAM
 from sensor.camera_manager import CameraManager
 from sensor.kinect_shared_memory import KinectBridge
+from sensor.kinect_emulator import KinectEmulatorDaemon
 from sensor.virtual_phone import get_virtual_phone
 from sensor.ds4_controller import get_ds4_controller, find_ds4_devices, detect_controller_name
 from sensor.telemetry_benchmark import parse_telemetry_csv, compare_telemetries, find_available_benchmarks
@@ -91,6 +92,7 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
     """Modern Crisp-White & PlayStation Blue primary window in Qt 6."""
     cameras_refreshed_signal = Signal(list)
     tracking_finished_signal = Signal(bool, str)
+    kinect_emulator_status_signal = Signal(bool, str, int)
 
     def __init__(self, parent=None, *args, auto_discover=True, **kwargs):
         if parent is not None and not isinstance(parent, QWidget):
@@ -153,6 +155,13 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
         ):
             self.vphone.set_enabled(True)
 
+        # Initialize Kinect Emulator Daemon (Zero-File-Replacement Mode)
+        self.kinect_emulator = KinectEmulatorDaemon(self.cfg)
+        self.kinect_emulator.register_status_callback(self._on_emulate_kinect_status_changed)
+        self.kinect_emulator_status_signal.connect(self._update_emulate_kinect_status_ui)
+        if bool(self.cfg.get("emulate_kinect_enabled", False)) and self.cfg.get("camera_mode", "pscam") != "ds4":
+            self.kinect_emulator.start()
+
         self._load_pixmaps()
         self._setup_style()
         self._build_ui()
@@ -161,14 +170,17 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
         self.cameras_refreshed_signal.connect(self._on_cameras_refreshed)
         self.tracking_finished_signal.connect(self._on_tracking_finished)
 
-        # Initial mode setup
+        # Initial mode setup (already calls _update_pscam_status for camera modes)
         initial_mode = self.cfg.get("camera_mode", "pscam")
         self._set_mode(initial_mode, animate=False)
+        if initial_mode == "ds4":
+            self._update_pscam_status()
 
-        # Initial PS Camera status and camera discovery
-        self._update_pscam_status()
         if auto_discover:
             self._refresh_cameras_async()
+
+            # Background MediaPipe pre-warming after the GUI window is already painted on screen
+            QTimer.singleShot(350, self._prewarm_pose_engine_async)
 
             # Periodic non-blocking check (1000ms)
             self.timer_periodic = QTimer(self)
@@ -182,6 +194,19 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
         else:
             self.timer_periodic = None
             self.timer_vphone = None
+
+    def _prewarm_pose_engine_async(self):
+        """Pre-loads MediaPipe / PoseTracker in a background thread after the window is visible."""
+        if getattr(self, "_is_closing", False) or "mediapipe" in sys.modules:
+            return
+
+        def _warm_worker():
+            try:
+                import sensor.pose_tracker  # noqa: F401
+            except Exception:
+                pass
+
+        threading.Thread(target=_warm_worker, daemon=True, name="MediaPipePrewarmThread").start()
 
     def _load_pixmaps(self):
         """Loads pure PIL RGBA icons and converts them into antialiased QPixmaps with 4x supersampling."""
@@ -474,12 +499,6 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
             f"font-family: '{self.font_title}'; font-size: 20px; font-weight: 600; color: {PALETTE['ps_blue']}; background: transparent;"
         )
         sidebar_layout.addWidget(lbl_brand)
-
-        lbl_edition = QLabel("for Legacy PC and JD2022 Dreyn", self.sidebar_frame)
-        lbl_edition.setStyleSheet(
-            f"font-family: '{self.font_body}'; font-size: 11px; font-weight: bold; color: {PALETTE['text_muted']}; background: transparent;"
-        )
-        sidebar_layout.addWidget(lbl_edition)
         sidebar_layout.addSpacing(14)
 
         # Divider
@@ -536,19 +555,16 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
         sidebar_layout.addWidget(self.card_ds4)
         sidebar_layout.addSpacing(14)
 
-        # 1.6 Quick Action: Open Kinect10.dll folder
-        self.btn_dll_folder = QPushButton("Open Kinect10.dll Folder", self.sidebar_frame)
-        self.btn_dll_folder.setProperty("class", "btn_secondary")
-        self.btn_dll_folder.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_dll_folder.clicked.connect(self._open_dll_folder)
-        sidebar_layout.addWidget(self.btn_dll_folder)
-        sidebar_layout.addSpacing(6)
-
-        lbl_dll_tip = QLabel("Copy Kinect10.dll to the game folder\n(only for Legacy Offline PC).", self.sidebar_frame)
-        lbl_dll_tip.setStyleSheet(
-            f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent;"
+        # Temporary helper reminder for camera tracking
+        self.lbl_emulate_tip = QLabel(
+            "Remember to enable\nExperimental > Emulate Kinect\nto play with camera.",
+            self.sidebar_frame
         )
-        sidebar_layout.addWidget(lbl_dll_tip)
+        self.lbl_emulate_tip.setWordWrap(True)
+        self.lbl_emulate_tip.setStyleSheet(
+            f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent; line-height: 130%;"
+        )
+        sidebar_layout.addWidget(self.lbl_emulate_tip)
 
         sidebar_layout.addStretch()
 
@@ -557,17 +573,11 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
         lbl_cred1.setStyleSheet(
             f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent;"
         )
-        lbl_cred2 = QLabel("PSCam4Win by BumbleTree & Moon36", self.sidebar_frame)
-        lbl_cred2.setStyleSheet(
-            f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent;"
-        )
         lbl_cred3 = QLabel("Made by Edd", self.sidebar_frame)
         lbl_cred3.setStyleSheet(
             f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent;"
         )
         sidebar_layout.addWidget(lbl_cred1)
-        sidebar_layout.addSpacing(2)
-        sidebar_layout.addWidget(lbl_cred2)
         sidebar_layout.addSpacing(2)
         sidebar_layout.addWidget(lbl_cred3)
         sidebar_layout.addSpacing(4)
@@ -669,8 +679,12 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
         is_ds4 = (mode == "ds4")
         if hasattr(self, "auto_frame_box"):
             self.auto_frame_box.setVisible(not is_ds4)
+        if hasattr(self, "emulate_kinect_box"):
+            self.emulate_kinect_box.setVisible(not is_ds4)
 
         if is_ds4:
+            if hasattr(self, "kinect_emulator") and self.kinect_emulator is not None and self.kinect_emulator._running:
+                self.kinect_emulator.stop()
             if hasattr(self, "cb_ds4_hand") and hasattr(self, "cb_vphone_hand"):
                 self.cb_vphone_hand.blockSignals(True)
                 self.cb_vphone_hand.setCurrentIndex(self.cb_ds4_hand.currentIndex())
@@ -708,43 +722,91 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
                 )
             if hasattr(self, "vphone_details_frame"):
                 self.vphone_details_frame.setVisible(True)
+            if hasattr(self, "lbl_vphone_kinect_conflict"):
+                self.lbl_vphone_kinect_conflict.setVisible(False)
         else:
-            self.chk_vphone_enabled.blockSignals(True)
-            self.chk_vphone_enabled.setEnabled(True)
-            self.chk_vphone_enabled.setText("Virtual Phone Controller (JD Controller via Camera)")
-            self.chk_vphone_enabled.setStyleSheet(f"""
-                QCheckBox {{
-                    font-family: '{self.font_heading}';
-                    font-size: 13px;
-                    font-weight: bold;
-                    color: {PALETTE['text_main']};
-                    background: transparent;
-                }}
-                QCheckBox::indicator {{
-                    width: 18px;
-                    height: 18px;
-                    border-radius: 4px;
-                    border: 1px solid {PALETTE["input_border"]};
-                    background-color: #FFFFFF;
-                }}
-                QCheckBox::indicator:hover {{
-                    border-color: {PALETTE["ps_blue"]};
-                }}
-                QCheckBox::indicator:checked {{
-                    background-color: {PALETTE["ps_blue"]};
-                    border-color: {PALETTE["ps_blue"]};
-                }}
-            """)
-            saved_state = bool(self.cfg.get("virtual_phone_enabled", False))
-            self.chk_vphone_enabled.setChecked(saved_state)
-            self.chk_vphone_enabled.blockSignals(False)
+            ek_active = bool(self.cfg.get("emulate_kinect_enabled", False))
+            if hasattr(self, "chk_emulate_kinect"):
+                ek_active = self.chk_emulate_kinect.isChecked()
 
-            if hasattr(self, "lbl_vp_desc"):
-                self.lbl_vp_desc.setText(
-                    "Emulates a smartphone connected to Just Dance via WebSocket/TLS (/smartphone) and converts your hand motion in the camera into 3D accelerometer commands for songs that only support hand controllers."
-                )
-            if hasattr(self, "vphone_details_frame"):
-                self.vphone_details_frame.setVisible(saved_state)
+            if ek_active:
+                if hasattr(self, "kinect_emulator") and self.kinect_emulator is not None:
+                    self.kinect_emulator.enabled = True
+                    if not self.kinect_emulator._running:
+                        self.kinect_emulator.start()
+                self.chk_vphone_enabled.blockSignals(True)
+                self.chk_vphone_enabled.setChecked(False)
+                self.chk_vphone_enabled.setEnabled(False)
+                self.chk_vphone_enabled.setText("Virtual Phone Controller (JD Controller via Camera)")
+                self.chk_vphone_enabled.setStyleSheet(f"""
+                    QCheckBox {{
+                        font-family: '{self.font_heading}';
+                        font-size: 13px;
+                        font-weight: bold;
+                        color: #94A3B8;
+                        background: transparent;
+                    }}
+                    QCheckBox::indicator {{
+                        width: 18px;
+                        height: 18px;
+                        border-radius: 4px;
+                        border: 1px solid #CBD5E1;
+                        background-color: #E2E8F0;
+                    }}
+                """)
+                self.chk_vphone_enabled.blockSignals(False)
+
+                if hasattr(self, "lbl_vp_desc"):
+                    self.lbl_vp_desc.setText(
+                        "Emulates a smartphone connected to Just Dance via WebSocket/TLS (/smartphone) and converts your hand motion in the camera into 3D accelerometer commands for songs that only support hand controllers."
+                    )
+                if hasattr(self, "vphone_details_frame"):
+                    self.vphone_details_frame.setVisible(False)
+                if hasattr(self, "lbl_vphone_kinect_conflict"):
+                    self.lbl_vphone_kinect_conflict.setVisible(True)
+
+                if hasattr(self, "vphone") and self.vphone.enabled:
+                    self.vphone.set_enabled(False)
+                self.cfg["virtual_phone_enabled"] = False
+            else:
+                self.chk_vphone_enabled.blockSignals(True)
+                self.chk_vphone_enabled.setEnabled(True)
+                self.chk_vphone_enabled.setText("Virtual Phone Controller (JD Controller via Camera)")
+                self.chk_vphone_enabled.setStyleSheet(f"""
+                    QCheckBox {{
+                        font-family: '{self.font_heading}';
+                        font-size: 13px;
+                        font-weight: bold;
+                        color: {PALETTE['text_main']};
+                        background: transparent;
+                    }}
+                    QCheckBox::indicator {{
+                        width: 18px;
+                        height: 18px;
+                        border-radius: 4px;
+                        border: 1px solid {PALETTE["input_border"]};
+                        background-color: #FFFFFF;
+                    }}
+                    QCheckBox::indicator:hover {{
+                        border-color: {PALETTE["ps_blue"]};
+                    }}
+                    QCheckBox::indicator:checked {{
+                        background-color: {PALETTE["ps_blue"]};
+                        border-color: {PALETTE["ps_blue"]};
+                    }}
+                """)
+                saved_state = bool(self.cfg.get("virtual_phone_enabled", False))
+                self.chk_vphone_enabled.setChecked(saved_state)
+                self.chk_vphone_enabled.blockSignals(False)
+
+                if hasattr(self, "lbl_vp_desc"):
+                    self.lbl_vp_desc.setText(
+                        "Emulates a smartphone connected to Just Dance via WebSocket/TLS (/smartphone) and converts your hand motion in the camera into 3D accelerometer commands for songs that only support hand controllers."
+                    )
+                if hasattr(self, "vphone_details_frame"):
+                    self.vphone_details_frame.setVisible(saved_state)
+                if hasattr(self, "lbl_vphone_kinect_conflict"):
+                    self.lbl_vphone_kinect_conflict.setVisible(False)
 
         if hasattr(self, "chk_stereo"):
             is_on = str(self.cfg.get("stereo_mode", "disabled")).strip().lower() in (
@@ -1142,15 +1204,20 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
         if self.is_tracking_active:
             return
 
+        current_snapshot = CameraManager.get_hardware_snapshot()
+        hw_changed = (current_snapshot != self._last_hw_snapshot)
+        if hw_changed:
+            self._last_hw_snapshot = current_snapshot
+            from sensor.ps4_backend import PS4DriverInstaller
+            PS4DriverInstaller.invalidate_cache()
+
         ps4_info = CameraManager.get_ps4_camera_state()
         state_key = (ps4_info.get("state"), ps4_info.get("running"))
         if self._last_pscam_state != state_key:
             self._last_pscam_state = state_key
             self._apply_pscam_state(ps4_info)
 
-        current_snapshot = CameraManager.get_hardware_snapshot()
-        if current_snapshot != self._last_hw_snapshot:
-            self._last_hw_snapshot = current_snapshot
+        if hw_changed:
             self._refresh_cameras_async()
 
     def _refresh_cameras(self):
@@ -1261,10 +1328,54 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
         self._update_pscam_status()
 
     # =========================================================================
+    # EMULATE KINECT (ZERO-FILE-REPLACEMENT) HANDLERS
+    # =========================================================================
+    def _on_emulate_kinect_status_changed(self, connected: bool, game_name: str, pid: int):
+        self.kinect_emulator_status_signal.emit(connected, game_name, pid)
+
+    def _update_emulate_kinect_status_ui(self, connected: bool, game_name: str, pid: int):
+        if not hasattr(self, "lbl_emulate_kinect_status"):
+            return
+        if not self.chk_emulate_kinect.isChecked():
+            self.lbl_emulate_kinect_status.setText("Status: Disabled")
+            self.lbl_emulate_kinect_status.setStyleSheet(
+                f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['text_muted']}; background: transparent; border: none;"
+            )
+        elif connected:
+            self.lbl_emulate_kinect_status.setText(f"Status: Connected to {game_name} (PID: {pid}) — Kinect Emulated")
+            self.lbl_emulate_kinect_status.setStyleSheet(
+                f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: #16A34A; background: transparent; border: none;"
+            )
+        else:
+            self.lbl_emulate_kinect_status.setText("Status: Active — Waiting for Just Dance...")
+            self.lbl_emulate_kinect_status.setStyleSheet(
+                f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['ps_blue']}; background: transparent; border: none;"
+            )
+
+    def _on_emulate_kinect_toggle_changed(self):
+        enabled = self.chk_emulate_kinect.isChecked()
+        self.cfg["emulate_kinect_enabled"] = enabled
+        self._save_settings()
+        self.kinect_emulator.enabled = enabled
+        if enabled:
+            self.kinect_emulator.start()
+            st = self.kinect_emulator.get_status()
+            self._update_emulate_kinect_status_ui(st["connected"], st["game_name"], st["pid"])
+        else:
+            self.kinect_emulator.stop()
+            self._update_emulate_kinect_status_ui(False, "", 0)
+
+        # Synchronize Virtual Phone Controller availability based on active mode
+        mode = self.cfg.get("camera_mode", "pscam")
+        self._update_exp_view_for_mode(mode)
+
+    # =========================================================================
     # VIRTUAL PHONE CONTROLLER (CELULAR VIRTUAL) HANDLERS
     # =========================================================================
     def _on_vphone_toggle_changed(self):
         if self.cfg.get("camera_mode") == "ds4":
+            return
+        if hasattr(self, "chk_emulate_kinect") and self.chk_emulate_kinect.isChecked():
             return
         enabled = self.chk_vphone_enabled.isChecked()
         self.cfg["virtual_phone_enabled"] = enabled
@@ -1308,6 +1419,8 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
         )
 
     def _on_vphone_reconnect_clicked(self):
+        if self.cfg.get("camera_mode") != "ds4" and hasattr(self, "chk_emulate_kinect") and self.chk_emulate_kinect.isChecked():
+            return
         self._apply_vphone_settings_to_controller()
         self._save_settings()
         if not self.chk_vphone_enabled.isChecked():
@@ -1368,6 +1481,8 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
 
     def _on_skip_finish_clicked(self):
         """Sends the FTUE_FINISH shortcut packet for Just Dance 2022 phone tutorial."""
+        if self.cfg.get("camera_mode") != "ds4" and hasattr(self, "chk_emulate_kinect") and self.chk_emulate_kinect.isChecked():
+            return
         if not self.vphone.enabled:
             self.vphone.set_enabled(True)
             if hasattr(self, "chk_vphone_enabled"):
@@ -1749,22 +1864,6 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
         else:
             QMessageBox.warning(self, "PlayStation Camera Backend", msg)
 
-    def _open_dll_folder(self):
-        candidates = [
-            Path(sys.executable).parent / "tools",
-            BASE_DIR / "tools",
-            BASE_DIR.parent / "tools",
-        ]
-        if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
-            candidates.insert(1, Path(sys._MEIPASS) / "tools")
-        dll_dir = next((c for c in candidates if (c / "Kinect10.dll").exists()), None)
-        if dll_dir is None:
-            dll_dir = next((c for c in candidates if c.exists()), None)
-        if dll_dir and dll_dir.exists():
-            os.startfile(str(dll_dir))
-        else:
-            QMessageBox.information(self, "Kinect10.dll", "Kinect10.dll folder was not found.")
-
     def _start_tracking(self):
         if self.is_tracking_active:
             return
@@ -1910,6 +2009,8 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
             self.timer_vphone.stop()
         if hasattr(self, "vphone") and self.vphone is not None:
             self.vphone.stop()
+        if hasattr(self, "kinect_emulator") and self.kinect_emulator is not None:
+            self.kinect_emulator.stop()
         try:
             get_ds4_controller().disconnect()
         except Exception:
