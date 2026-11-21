@@ -427,7 +427,7 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
   - O Celular Virtual só é reabilitado quando o usuário desliga o Emulate Kinect ou alterna o dispositivo para **DualShock 4** (onde o Celular Virtual atua como ponte do acelerômetro físico).
   - Ao alternar do DualShock 4 de volta para Webcam ou PS Camera, a restrição de exclusão mútua é preservada se o Emulate Kinect continuar ativado.
 
-### 31. Session Logger & Telemetria de Dança em Tempo Real (v0.8.0 / Backend)
+### 31. Session Logger & Telemetria de Dança em Tempo Real (v0.8.1 / Backend)
 - **Ciclo de Vida na Inicialização (Startup Reset):**
   - Ao abrir o aplicativo, o `SessionLogger` limpa os arquivos de log anteriores em `logs/`, criando uma nova sessão limpa (`logs/session.log` e `logs/session_telemetry.csv`) para evitar acúmulo de arquivos no disco.
   - Preserva automaticamente a sessão anterior em `logs/session_previous.log` como medida de segurança contra reaberturas acidentais logo após um bug report.
