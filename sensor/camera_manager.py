@@ -573,6 +573,16 @@ class CameraManager:
         if not cameras:
             cameras.append(CameraInfo(0, "Default Camera (Index 0)", False))
 
+        try:
+            from sensor.session_logger import get_session_logger
+            get_session_logger().log_camera_discovery(
+                cameras,
+                pscam_installed=CameraManager.is_legacy_pscam4win_installed(),
+                pscam_running=CameraManager.is_legacy_pscam4win_running(),
+            )
+        except Exception:
+            pass
+
         return cameras
 
 class FrameBusReader:

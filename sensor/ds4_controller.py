@@ -580,6 +580,26 @@ class DS4Controller:
             self.state.controller_name = detect_controller_name(chosen_path)
             self.state.imu_frozen = False
 
+            try:
+                from sensor.session_logger import get_session_logger
+                get_session_logger().log_controller_state(
+                    "ds4",
+                    self.state.controller_name,
+                    {
+                        "connection": "USB" if self.is_usb else "Bluetooth",
+                        "device_path": chosen_path,
+                        "input_len": in_len,
+                        "output_len": out_len,
+                    },
+                )
+                get_session_logger().map_active_controller(
+                    "ds4",
+                    self.state.controller_name,
+                    details=f"{'USB' if self.is_usb else 'Bluetooth'}, Hand: {self.hand}",
+                )
+            except Exception:
+                pass
+
             # Trigger operational mode handshake (Feature Reports 0x02, 0x05, 0x04)
             # Crucial for clone DualShock 4 and official controllers to unlock Report 0x11
             # and activate the 6-axis IMU (gyroscope + accelerometer) on Bluetooth/USB.
@@ -1075,6 +1095,13 @@ class DS4Controller:
         """
         if self.on_button_press is not None:
             self.on_button_press(btn)
+
+        try:
+            from sensor.session_logger import get_session_logger
+            coach_id = getattr(vphone, "current_coach_id", 0) if vphone else 0
+            get_session_logger().log_controller_button(btn.upper(), coach_id=coach_id, action="press")
+        except Exception:
+            pass
 
         if not vphone or not vphone.enabled:
             return

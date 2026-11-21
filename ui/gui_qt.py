@@ -163,6 +163,7 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
             self.kinect_emulator.start()
 
         self._load_pixmaps()
+        self._setup_palette()
         self._setup_style()
         self._build_ui()
 
@@ -267,6 +268,29 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
         except Exception as e:
             print(f"[WARN] Failed to load status icons: {e}")
             self.pix_status_err = self.pix_status_ok = self.pix_status_warn = QPixmap()
+
+    def _setup_palette(self):
+        """Forces an explicit Light palette so Windows Dark Mode doesn't render combo popups in black."""
+        pal = QtGui.QPalette()
+        pal.setColor(QtGui.QPalette.ColorRole.Window, QtGui.QColor("#F5F8FC"))
+        pal.setColor(QtGui.QPalette.ColorRole.WindowText, QtGui.QColor("#0F172A"))
+        pal.setColor(QtGui.QPalette.ColorRole.Base, QtGui.QColor("#FFFFFF"))
+        pal.setColor(QtGui.QPalette.ColorRole.AlternateBase, QtGui.QColor("#F0F4FA"))
+        pal.setColor(QtGui.QPalette.ColorRole.ToolTipBase, QtGui.QColor("#FFFFFF"))
+        pal.setColor(QtGui.QPalette.ColorRole.ToolTipText, QtGui.QColor("#0F172A"))
+        pal.setColor(QtGui.QPalette.ColorRole.Text, QtGui.QColor("#0F172A"))
+        pal.setColor(QtGui.QPalette.ColorRole.Button, QtGui.QColor("#FFFFFF"))
+        pal.setColor(QtGui.QPalette.ColorRole.ButtonText, QtGui.QColor("#0F172A"))
+        pal.setColor(QtGui.QPalette.ColorRole.BrightText, QtGui.QColor("#00439C"))
+        pal.setColor(QtGui.QPalette.ColorRole.Highlight, QtGui.QColor("#00439C"))
+        pal.setColor(QtGui.QPalette.ColorRole.HighlightedText, QtGui.QColor("#FFFFFF"))
+        pal.setColor(QtGui.QPalette.ColorGroup.Disabled, QtGui.QPalette.ColorRole.Text, QtGui.QColor("#94A3B8"))
+        pal.setColor(QtGui.QPalette.ColorGroup.Disabled, QtGui.QPalette.ColorRole.ButtonText, QtGui.QColor("#94A3B8"))
+        pal.setColor(QtGui.QPalette.ColorGroup.Disabled, QtGui.QPalette.ColorRole.WindowText, QtGui.QColor("#94A3B8"))
+        self.setPalette(pal)
+        app = QApplication.instance()
+        if app is not None:
+            app.setPalette(pal)
 
     def _setup_style(self):
         """Applies the Crisp White & PlayStation Blue stylesheet (QSS)."""
@@ -568,7 +592,15 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
 
         sidebar_layout.addStretch()
 
-        # 1.6 Mini Credits
+        # 1.6 Quick Action: Open Logs Folder
+        self.btn_logs_folder = QPushButton("Open Logs Folder", self.sidebar_frame)
+        self.btn_logs_folder.setProperty("class", "btn_secondary")
+        self.btn_logs_folder.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_logs_folder.clicked.connect(self._open_logs_folder)
+        sidebar_layout.addWidget(self.btn_logs_folder)
+        sidebar_layout.addSpacing(10)
+
+        # 1.7 Mini Credits
         lbl_cred1 = QLabel("Original Legacy Sensor by itsVexor", self.sidebar_frame)
         lbl_cred1.setStyleSheet(
             f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent;"
@@ -670,6 +702,13 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
         content_layout.addLayout(footer_layout)
 
         master_layout.addWidget(self.content_widget, stretch=1)
+
+        # Enforce clean light palette on all combobox popup views preserving their native style
+        for cb in self.findChildren(QComboBox):
+            cb.view().setStyleSheet(
+                f"background-color: #FFFFFF; color: {PALETTE['text_main']}; "
+                f"selection-background-color: {PALETTE['ps_blue']}; selection-color: #FFFFFF;"
+            )
 
     def _update_exp_view_for_mode(self, mode: str):
         """Adapts the Experimental tab layout and Virtual Phone toggle according to the active controller mode."""
@@ -1540,8 +1579,13 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
         self.vphone.set_adaptive_calibration(enabled)
 
     def _open_logs_folder(self):
-        logs_dir = Path("logs").resolve()
+        logs_dir = (BASE_DIR / "logs").resolve()
         logs_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            from sensor.session_logger import get_session_logger
+            get_session_logger().log_event("INFO", "GUI", f"User opened logs directory: {logs_dir}")
+        except Exception:
+            pass
         if sys.platform == "win32":
             os.startfile(str(logs_dir))
         else:
@@ -2013,6 +2057,11 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
             self.kinect_emulator.stop()
         try:
             get_ds4_controller().disconnect()
+        except Exception:
+            pass
+        try:
+            from sensor.session_logger import get_session_logger
+            get_session_logger().close()
         except Exception:
             pass
         if hasattr(self, "bridge") and self.bridge is not None:

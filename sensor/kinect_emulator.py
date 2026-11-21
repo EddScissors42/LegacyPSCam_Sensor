@@ -201,6 +201,17 @@ class KinectEmulatorDaemon:
                 self._status_callbacks.append(cb)
 
     def _notify_status(self, connected: bool, game_name: str, pid: int) -> None:
+        try:
+            from sensor.session_logger import get_session_logger
+            status_text = "ATTACHED" if connected else "DETACHED"
+            get_session_logger().log_ipc_event(
+                "KINECT_EMULATOR",
+                status_text,
+                f"Target Game: {game_name} (PID: {pid})",
+            )
+        except Exception:
+            pass
+
         with self._lock:
             cbs = list(self._status_callbacks)
         for cb in cbs:

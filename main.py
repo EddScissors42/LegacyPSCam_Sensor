@@ -21,9 +21,15 @@ if "matplotlib" not in sys.modules:
     sys.modules["matplotlib.pyplot"] = _plt
 
 from sensor.config_manager import ConfigManager
+from sensor.session_logger import get_session_logger
 from version import WINDOW_TITLE, VERSION_STRING, APP_NAME
 
 def run():
+    # Initialize unified diagnostic session logger immediately on application boot
+    logger = get_session_logger()
+    logger.initialize()
+    logger.log_system_environment()
+
     parser = argparse.ArgumentParser(description=WINDOW_TITLE)
     parser.add_argument("--version", action="version", version=f"{APP_NAME} {VERSION_STRING}")
     parser.add_argument("--start", action="store_true", help="Start tracking directly without opening GUI menu")

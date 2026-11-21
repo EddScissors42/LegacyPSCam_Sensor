@@ -427,6 +427,23 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
   - O Celular Virtual só é reabilitado quando o usuário desliga o Emulate Kinect ou alterna o dispositivo para **DualShock 4** (onde o Celular Virtual atua como ponte do acelerômetro físico).
   - Ao alternar do DualShock 4 de volta para Webcam ou PS Camera, a restrição de exclusão mútua é preservada se o Emulate Kinect continuar ativado.
 
+### 31. Session Logger & Telemetria de Dança em Tempo Real (v0.8.0 / Backend)
+- **Ciclo de Vida na Inicialização (Startup Reset):**
+  - Ao abrir o aplicativo, o `SessionLogger` limpa os arquivos de log anteriores em `logs/`, criando uma nova sessão limpa (`logs/session.log` e `logs/session_telemetry.csv`) para evitar acúmulo de arquivos no disco.
+  - Preserva automaticamente a sessão anterior em `logs/session_previous.log` como medida de segurança contra reaberturas acidentais logo após um bug report.
+- **Cabeçalho Diagnóstico Completo de Sistema e Hardware:**
+  - Registra a versão do Windows (Build/Versão), modelo do processador, contagem de núcleos, memória RAM física total e disponível via API Win32 `GlobalMemoryStatusEx`, runtime Python (PE compilado vs script interpretado) e versão do aplicativo.
+- **Mapeamento e Transições de Controle em Tempo Real:**
+  - Registra o controle ativo em uso: **DualShock 4** (USB ou Bluetooth, VID/PID, nível de bateria, clone vs oficial), **Virtual Phone** (pareamento WebSocket) ou **Câmera Óptica** (PlayStation 4 Camera ou Webcam USB).
+  - Captura eventos de botões físicos do controle (L1/R1 de troca de coach) e mudanças de música detectadas pelo processo do jogo.
+- **Streaming de Telemetria de Dança (CSV Assíncrono):**
+  - Iniciado imediatamente a partir do clique em `START TRACKING`.
+  - Gravação de alta frequência e thread-safe com buffer em lote (batching) a cada 100ms, registrando acelerações 3D ($a_x, a_y, a_z, |G|$), velocidade da mão ($v$), coordenadas dos joints principais (ombro, cotovelo, pulso, mão), FPS da câmera, FPS de inferência e notas de feedback do jogo com overhead $< 0,1\%$ de CPU.
+- **Captura Global de Exceções e Crashes:**
+  - Instalação de hooks para `sys.excepthook` e `threading.excepthook`, garantindo que eventuais falhas graves gravem o traceback completo com flush imediato no disco.
+- **Botão `Open Logs Folder` na Barra Lateral:**
+  - Botão de ação rápida (`btn_secondary`) posicionado na barra lateral imediatamente acima dos créditos de rodapé, abrindo a pasta `logs/` no Windows Explorer com 1 clique para agilizar o envio de relatórios de diagnóstico e arquivos de telemetria.
+
 ---
 
 ## Funcionalidades Parciais e Roadmap Futuro

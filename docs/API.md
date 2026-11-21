@@ -426,3 +426,48 @@ O módulo `sensor.kinect_emulator` emula o sensor Kinect diretamente na memória
   - `register_status_callback(cb: Callable[[bool, str, int], None]) -> None`: Registra callback acionado ao conectar ou desconectar do processo do jogo.
   - `_scan_for_game_process() -> Optional[Dict[str, Any]]`: Varre processos ativos em $<0.5\text{ ms}$ via snapshot de kernel `CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)` sem abrir processos do sistema com `PROCESS_VM_READ`.
   - `_is_target_32bit(pid: int) -> bool`: Verifica via `IsWow64Process` e cabeçalho PE (`Magic == 0x10B`) se o processo alvo é 32-bit (WoW64 / PE32) antes de aplicar a injeção de `tools/Legacy10.dll` e o hot-patching IAT.
+
+---
+
+## 12. Subsistema de Logging & Telemetria de Dança (`sensor.session_logger`)
+
+O módulo `sensor.session_logger` gerencia o ciclo de vida dos arquivos de diagnóstico e a gravação assíncrona da telemetria de dança:
+
+### 12.1 Arquivos e Política de Retenção
+- `logs/session.log`: Log textual formatado (`YYYY-MM-DD HH:MM:SS.mmm [LEVEL] [CATEGORY] message`) contendo cabeçalho do sistema, descoberta de câmeras e controles, status da memória compartilhada, injeção do emulador e stack traces de falhas.
+- `logs/session_previous.log`: Backup preservado da execução anterior no momento da abertura do programa.
+- `logs/session_telemetry.csv`: Streaming tabular de alta frequência das variáveis de movimento durante o rastreamento ativo.
+- `logs/session_telemetry_previous.csv`: Backup da telemetria da sessão anterior.
+
+### 12.2 Especificação do Esquema CSV (`session_telemetry.csv`)
+O arquivo CSV de telemetria possui cabeçalho de 25 colunas:
+
+| Coluna | Tipo | Descrição |
+|---|---|---|
+| `timestamp_ms` | `uint64` | Timestamp Unix em milissegundos da amostra. |
+| `rel_time_s` | `float32` | Tempo decorrido em segundos a partir do `START TRACKING`. |
+| `source` | `string` | Origem do rastreamento (`"camera"` ou `"ds4"`). |
+| `song_name` | `string` | Nome da música ativa detectada pelo jogo ou `"DanceSession"`. |
+| `coach_id` | `int32` | Índice base zero do dançarino ativo selecionado (`0` a `3`). |
+| `is_tracked` | `uint32` | `1` se o corpo ou controle estiver rastreado; `0` se perdido. |
+| `ax, ay, az` | `float32` | Aceleração 3D calibrada em forças G. |
+| `mag_g` | `float32` | Magnitude vetorial tridimensional: $\sqrt{a_x^2 + a_y^2 + a_z^2}$. |
+| `speed_mps` | `float32` | Velocidade escalar da mão de pontuação em metros por segundo. |
+| `hand_x, hand_y, hand_z` | `float32` | Coordenadas espaciais métricas da mão no espaço do sensor. |
+| `shoulder_r_x/y/z` | `float32` | Coordenadas 3D do ombro direito. |
+| `elbow_r_x/y/z` | `float32` | Coordenadas 3D do cotovelo direito. |
+| `wrist_r_x/y/z` | `float32` | Coordenadas 3D do pulso direito. |
+| `joints_tracked_count` | `int32` | Quantidade de articulações com confiança $> 0.3$ (de 0 a 20). |
+| `cam_fps` | `float32` | Taxa real de quadros da câmera ou taxa de polling Hz do DualShock 4. |
+| `infer_fps` | `float32` | Taxa de inferência do MediaPipe Pose Landmarker. |
+| `game_feedback` | `string` | Classificação do movimento enviada pelo jogo (*PERFECT*, *SUPER*, *GOOD*, etc.). |
+| `controller_btn` | `string` | Último evento de botão físico acionado (`"L1:press"`, `"R1:press"`, etc.). |
+
+### 12.3 API Pública (`SessionLogger`)
+- `initialize(wipe_old_logs=True, backup_previous=True) -> None`: Prepara diretórios, rotaciona logs anteriores e inicia o consumidor assíncrono.
+- `log_system_environment() -> None`: Registra versão do Windows, CPU, RAM (Win32 API) e runtime Python.
+- `map_active_controller(controller_type: str, name: str, details: str = "") -> None`: Atualiza e registra o controle mapeado para a dança.
+- `start_telemetry_tracking(source, song_name, coach_id, config_summary) -> None`: Abre e inicia o streaming do arquivo CSV no `START TRACKING`.
+- `record_telemetry_sample(...) -> None`: Enfileira amostras de forma não-bloqueante na thread em segundo plano.
+- `stop_telemetry_tracking(summary_metrics: Optional[Dict[str, Any]] = None) -> None`: Esvazia a fila pendente e grava resumo da sessão no `session.log`.
+- `install_exception_hooks() -> None`: Registra hooks de crash em `sys.excepthook` e `threading.excepthook`.

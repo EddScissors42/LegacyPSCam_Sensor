@@ -44,6 +44,7 @@ from .virtual_phone import (
 )
 from .ds4_controller import DS4Controller, DS4State, find_ds4_devices, get_ds4_controller
 from .telemetry_benchmark import parse_telemetry_csv, compare_telemetries, find_available_benchmarks
+from .session_logger import SessionLogger, get_session_logger
 
 import importlib
 
@@ -151,4 +152,6 @@ __all__ = [
     "STEREO_MODES",
     "PS4_STEREO_BASELINE_M",
     "KinectEmulatorDaemon",
+    "SessionLogger",
+    "get_session_logger",
 ]

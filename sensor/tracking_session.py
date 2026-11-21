@@ -7,6 +7,7 @@ import time
 import math
 import cv2
 import ctypes
+import threading
 import numpy as np
 from sensor.camera_manager import LatestFrameCamera, CameraManager
 from sensor.kinect_shared_memory import KinectBridge
@@ -27,6 +28,7 @@ def set_high_resolution_timer(enable=True):
             ctypes.windll.winmm.timeEndPeriod(1)
     except Exception:
         pass
+
 
 def run_tracking_session(config, on_close_callback=None, stop_event=None):
     """
@@ -167,6 +169,26 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
 
     mode_label = f"{'PS Camera' if mode == 'pscam' else 'Webcam'} ({camera.actual_w}x{camera.actual_h})"
 
+    t_start_session = time.time()
+    total_frames = 0
+
+    try:
+        from sensor.session_logger import get_session_logger
+        cfg_summary = f"{w}x{h}@{target_fps}FPS, mode={mode}, backend={ps4_backend_mode if mode == 'pscam' else 'dshow'}"
+        get_session_logger().map_active_controller(
+            controller_type="camera",
+            name="PlayStation 4 Camera" if mode == "pscam" else "Standard Webcam",
+            details=cfg_summary,
+        )
+        get_session_logger().start_telemetry_tracking(
+            source="camera",
+            song_name=getattr(vphone, "current_map_name", "DanceSession"),
+            coach_id=getattr(vphone, "current_coach_id", 0),
+            config_summary=cfg_summary,
+        )
+    except Exception:
+        pass
+
     try:
         while True:
             if stop_event is not None and stop_event.is_set():
@@ -261,6 +283,38 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
             # Feed 3D Hand Coordinates to Virtual Phone Controller (Accelerometer emulation)
             vphone.update_from_joints(kinect_joints, is_tracked)
 
+            total_frames += 1
+            try:
+                from sensor.session_logger import get_session_logger
+                accel = vphone.accelerometer.latest_accel
+                speed = vphone.accelerometer.latest_speed
+                h_pos = (kinect_joints[11].x, kinect_joints[11].y, kinect_joints[11].z) if (kinect_joints and len(kinect_joints) > 11) else (0.0, 0.0, 0.0)
+                s_r = (kinect_joints[8].x, kinect_joints[8].y, kinect_joints[8].z) if (kinect_joints and len(kinect_joints) > 8) else (0.0, 0.0, 0.0)
+                e_r = (kinect_joints[9].x, kinect_joints[9].y, kinect_joints[9].z) if (kinect_joints and len(kinect_joints) > 9) else (0.0, 0.0, 0.0)
+                w_r = (kinect_joints[10].x, kinect_joints[10].y, kinect_joints[10].z) if (kinect_joints and len(kinect_joints) > 10) else (0.0, 0.0, 0.0)
+                j_count = len([j for j in kinect_joints if getattr(j, "confidence", 1.0) > 0.3]) if kinect_joints else 0
+                get_session_logger().record_telemetry_sample(
+                    ts_ms=int(time.time() * 1000),
+                    source="camera",
+                    song_name=getattr(vphone, "current_map_name", None),
+                    coach_id=getattr(vphone, "current_coach_id", 0),
+                    is_tracked=is_tracked,
+                    ax=accel[0],
+                    ay=accel[1],
+                    az=accel[2],
+                    speed_mps=speed,
+                    hand_pos=h_pos,
+                    shoulder_r=s_r,
+                    elbow_r=e_r,
+                    wrist_r=w_r,
+                    joints_tracked_count=j_count,
+                    cam_fps=cam_fps,
+                    infer_fps=measured_track_fps,
+                    game_feedback=getattr(vphone, "_last_feedback", ""),
+                )
+            except Exception:
+                pass
+
             # Render Player Silhouette Shadow & Contour ("sombrinha")
             if is_tracked and display_mask is not None:
                 display_frame = overlay.draw_player_silhouette(display_frame, display_mask)
@@ -311,6 +365,16 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
         print(f"[ERROR] Exception in tracking loop: {e}")
     finally:
         set_high_resolution_timer(False)
+        try:
+            from sensor.session_logger import get_session_logger
+            dur = round(time.time() - t_start_session, 2)
+            get_session_logger().stop_telemetry_tracking({
+                "duration_s": dur,
+                "total_frames": total_frames,
+                "avg_fps": round(total_frames / max(1.0, dur), 1),
+            })
+        except Exception:
+            pass
         if local_kinect_emulator is not None:
             local_kinect_emulator.stop()
         bridge.write_empty()
@@ -382,6 +446,27 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
 
     reconnect_feedback_until = 0.0
 
+    t_start_ds4 = time.time()
+    ds4_samples_count = 0
+
+    try:
+        from sensor.session_logger import get_session_logger
+        conn_str = "USB" if ds4.is_usb else "Bluetooth"
+        ds4_summary = f"{ds4.state.controller_name} ({conn_str}), Hand: {hand}, Sens: {sens}x"
+        get_session_logger().map_active_controller(
+            controller_type="ds4",
+            name=ds4.state.controller_name,
+            details=ds4_summary,
+        )
+        get_session_logger().start_telemetry_tracking(
+            source="ds4",
+            song_name=getattr(vphone, "current_map_name", "DanceSession"),
+            coach_id=getattr(vphone, "current_coach_id", 0),
+            config_summary=ds4_summary,
+        )
+    except Exception:
+        pass
+
     try:
         while True:
             if stop_event is not None and stop_event.is_set():
@@ -390,6 +475,25 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
             st = ds4.state
             ax, ay, az = st.accel_g
             tot_g = math.sqrt(ax * ax + ay * ay + az * az)
+
+            ds4_samples_count += 1
+            try:
+                from sensor.session_logger import get_session_logger
+                get_session_logger().record_telemetry_sample(
+                    ts_ms=int(time.time() * 1000),
+                    source="ds4",
+                    song_name=getattr(vphone, "current_map_name", None),
+                    coach_id=getattr(vphone, "current_coach_id", 0),
+                    is_tracked=ds4.is_connected,
+                    ax=ax,
+                    ay=ay,
+                    az=az,
+                    speed_mps=0.0,
+                    cam_fps=st.sample_rate_hz,
+                    game_feedback=getattr(vphone, "_last_feedback", ""),
+                )
+            except Exception:
+                pass
 
             frame = dark_bg.copy()
 
@@ -614,6 +718,16 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
         print(f"[ERROR] Exception in DualShock 4 tracking loop: {e}")
     finally:
         set_high_resolution_timer(False)
+        try:
+            from sensor.session_logger import get_session_logger
+            dur = round(time.time() - t_start_ds4, 2)
+            get_session_logger().stop_telemetry_tracking({
+                "duration_s": dur,
+                "samples_count": ds4_samples_count,
+                "avg_hz": round(ds4_samples_count / max(1.0, dur), 1),
+            })
+        except Exception:
+            pass
         bridge.write_empty()
         bridge.close()
         ds4.disconnect()

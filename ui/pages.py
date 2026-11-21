@@ -1232,6 +1232,14 @@ class UIPagesMixin:
             QComboBox:hover {{
                 border-color: {PALETTE['ps_blue']};
             }}
+            QComboBox QAbstractItemView {{
+                background-color: #FFFFFF;
+                color: #0F172A;
+                selection-background-color: {PALETTE['ps_blue']};
+                selection-color: #FFFFFF;
+                border: 1px solid {PALETTE['tab_gray_border']};
+                border-radius: 6px;
+            }}
         """)
         hand_box.addWidget(lbl_hand)
         hand_box.addWidget(self.cb_ds4_hand)
@@ -1261,6 +1269,14 @@ class UIPagesMixin:
             }}
             QComboBox:hover {{
                 border-color: {PALETTE['ps_blue']};
+            }}
+            QComboBox QAbstractItemView {{
+                background-color: #FFFFFF;
+                color: #0F172A;
+                selection-background-color: {PALETTE['ps_blue']};
+                selection-color: #FFFFFF;
+                border: 1px solid {PALETTE['tab_gray_border']};
+                border-radius: 6px;
             }}
         """)
         sens_box.addWidget(lbl_sens)

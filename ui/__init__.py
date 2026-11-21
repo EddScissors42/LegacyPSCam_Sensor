@@ -68,7 +68,28 @@ def launch_app() -> int:
         return 1
 
     from PySide6.QtWidgets import QApplication
+    from PySide6 import QtGui
     app = QApplication.instance() or QApplication(sys.argv)
+
+    # Force a crisp-white & PlayStation light palette so OS dark mode never bleeds black into popup menus/comboboxes
+    pal = QtGui.QPalette()
+    pal.setColor(QtGui.QPalette.ColorRole.Window, QtGui.QColor("#F5F8FC"))
+    pal.setColor(QtGui.QPalette.ColorRole.WindowText, QtGui.QColor("#0F172A"))
+    pal.setColor(QtGui.QPalette.ColorRole.Base, QtGui.QColor("#FFFFFF"))
+    pal.setColor(QtGui.QPalette.ColorRole.AlternateBase, QtGui.QColor("#F0F4FA"))
+    pal.setColor(QtGui.QPalette.ColorRole.ToolTipBase, QtGui.QColor("#FFFFFF"))
+    pal.setColor(QtGui.QPalette.ColorRole.ToolTipText, QtGui.QColor("#0F172A"))
+    pal.setColor(QtGui.QPalette.ColorRole.Text, QtGui.QColor("#0F172A"))
+    pal.setColor(QtGui.QPalette.ColorRole.Button, QtGui.QColor("#FFFFFF"))
+    pal.setColor(QtGui.QPalette.ColorRole.ButtonText, QtGui.QColor("#0F172A"))
+    pal.setColor(QtGui.QPalette.ColorRole.BrightText, QtGui.QColor("#00439C"))
+    pal.setColor(QtGui.QPalette.ColorRole.Highlight, QtGui.QColor("#00439C"))
+    pal.setColor(QtGui.QPalette.ColorRole.HighlightedText, QtGui.QColor("#FFFFFF"))
+    pal.setColor(QtGui.QPalette.ColorGroup.Disabled, QtGui.QPalette.ColorRole.Text, QtGui.QColor("#94A3B8"))
+    pal.setColor(QtGui.QPalette.ColorGroup.Disabled, QtGui.QPalette.ColorRole.ButtonText, QtGui.QColor("#94A3B8"))
+    pal.setColor(QtGui.QPalette.ColorGroup.Disabled, QtGui.QPalette.ColorRole.WindowText, QtGui.QColor("#94A3B8"))
+    app.setPalette(pal)
+
     window = LegacySensorQtGUI()
     window.show()
     return app.exec()

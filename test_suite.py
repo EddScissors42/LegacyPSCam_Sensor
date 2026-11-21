@@ -37,6 +37,7 @@ from sensor.tracking_overlay import TrackingOverlay
 from sensor.virtual_phone import (
     VirtualPhoneController, HandAccelerometer, get_virtual_phone, PHONE_INPUT_HASHES
 )
+from sensor.session_logger import SessionLogger, get_session_logger, TELEMETRY_CSV_HEADER
 
 def test_config():
     print("[TEST] ConfigManager...")
@@ -548,6 +549,8 @@ def test_project_structure():
     assert hasattr(sensor, "get_ds4_controller")
     assert hasattr(sensor, "StereoCalibrator")
     assert hasattr(sensor, "StereoDepthEngine")
+    assert hasattr(sensor, "SessionLogger")
+    assert hasattr(sensor, "get_session_logger")
 
     import ui
     assert hasattr(ui, "LegacySensorGUI")
@@ -605,6 +608,8 @@ def test_project_structure():
         assert hasattr(win, "stereo_box"), "Stereo feature box must exist in Video Settings card"
         assert hasattr(win, "chk_stereo"), "Stereo toggle checkbox must exist"
         assert win.chk_stereo.text() == "Stereo Vision", f"Expected 'Stereo Vision', got {win.chk_stereo.text()}"
+        assert hasattr(win, "btn_logs_folder"), "Open Logs Folder button must exist in sidebar"
+        assert win.btn_logs_folder.text() == "Open Logs Folder"
         assert hasattr(win, "cb_stereo_mode"), "Stereo mode alias must exist"
         assert hasattr(win, "block_ps_eye"), "Camera eye sensor block must exist"
 
@@ -1287,6 +1292,102 @@ def test_kinect_emulator():
     print("  -> Kinect In-Memory Emulator & Auto-Detector PASSED")
 
 
+def test_session_logger():
+    print("[TEST] SessionLogger & Dance Telemetry Subsystem...")
+    import tempfile
+    import shutil
+
+    temp_dir = Path(tempfile.mkdtemp(prefix="test_pscam_logger_"))
+    try:
+        # 1. Test initialization, directory creation and startup wipe/rotation
+        logger = SessionLogger(logs_dir=temp_dir)
+        logger.initialize(wipe_old_logs=True, backup_previous=True)
+        assert logger.session_log_path.exists(), "session.log must exist after initialization"
+
+        # 2. Test system environment header
+        logger.log_system_environment()
+        logger.flush()
+        with open(logger.session_log_path, "r", encoding="utf-8") as f:
+            log_content = f.read()
+        assert "Session Diagnostic Log" in log_content
+        assert "Operating System:" in log_content
+        assert "Processor:" in log_content
+        assert "Python Runtime:" in log_content
+
+        # 3. Test camera discovery and controller mapping
+        from sensor.camera_manager import CameraInfo
+        logger.log_camera_discovery([CameraInfo(0, "PS4 Camera", True), CameraInfo(1, "Webcam", False)])
+        logger.map_active_controller("ds4", "Sony DualShock 4", details="Bluetooth, Hand: Right")
+        logger.log_controller_button("L1", coach_id=0, action="press")
+        logger.log_ipc_event("KINECT_EMULATOR", "ATTACHED", "Game: JustDance.exe (PID: 9999)")
+        logger.flush()
+
+        with open(logger.session_log_path, "r", encoding="utf-8") as f:
+            updated_log = f.read()
+        assert "[CAMERA      ] Camera discovery completed" in updated_log
+        assert "[MAPPING     ] Active dancer control mapped to: [DS4] 'Sony DualShock 4'" in updated_log
+        assert "[INPUT       ] Button [L1] press" in updated_log
+        assert "[IPC         ] [KINECT_EMULATOR] Status: ATTACHED" in updated_log
+
+        # 4. Test real-time dance telemetry streaming (CSV)
+        logger.start_telemetry_tracking(source="camera", song_name="SmalltownBoy", coach_id=0)
+        assert logger.telemetry_csv_path.exists(), "session_telemetry.csv must exist after start_telemetry_tracking"
+
+        # Write 50 high-frequency samples
+        for i in range(50):
+            logger.record_telemetry_sample(
+                ts_ms=1000000 + i * 16,
+                source="camera",
+                song_name="SmalltownBoy",
+                coach_id=0,
+                is_tracked=True,
+                ax=0.15,
+                ay=0.25,
+                az=1.05,
+                speed_mps=1.45,
+                hand_pos=(0.35, -0.15, 1.85),
+                shoulder_r=(0.20, 0.45, 1.80),
+                elbow_r=(0.28, 0.15, 1.82),
+                wrist_r=(0.32, -0.05, 1.84),
+                joints_tracked_count=20,
+                cam_fps=60.0,
+                infer_fps=59.8,
+                game_feedback="PERFECT" if i % 10 == 0 else "",
+            )
+
+        logger.stop_telemetry_tracking({"duration_s": 0.83, "samples": 50, "avg_fps": 60.0})
+
+        with open(logger.telemetry_csv_path, "r", encoding="utf-8") as f:
+            csv_lines = [line.strip() for line in f if line.strip()]
+
+        assert len(csv_lines) >= 51, f"Expected header + 50 samples, got {len(csv_lines)}"
+        assert csv_lines[0] == TELEMETRY_CSV_HEADER.strip()
+        sample_row = csv_lines[1].split(",")
+        assert sample_row[2] == "camera"
+        assert sample_row[3] == "SmalltownBoy"
+        assert sample_row[5] == "1"  # is_tracked
+        assert float(sample_row[6]) == 0.15  # ax
+        assert float(sample_row[7]) == 0.25  # ay
+        assert float(sample_row[8]) == 1.05  # az
+
+        # 5. Test session rotation / backup on second initialization
+        logger.close()
+
+        logger2 = SessionLogger(logs_dir=temp_dir)
+        logger2.initialize(wipe_old_logs=True, backup_previous=True)
+        assert logger2.session_prev_log_path.exists(), "session_previous.log must exist after rotation"
+        assert logger2.telemetry_prev_csv_path.exists(), "session_telemetry_previous.csv must exist after rotation"
+        with open(logger2.session_prev_log_path, "r", encoding="utf-8") as f:
+            prev_content = f.read()
+        assert "Active dancer control mapped to: [DS4]" in prev_content
+        logger2.close()
+
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+    print("  -> SessionLogger & Dance Telemetry Subsystem PASSED")
+
+
 def run_all_tests():
     print("==========================================")
     print("   RUNNING LEGACY PSCAM SENSOR TEST SUITE ")
@@ -1305,8 +1406,9 @@ def run_all_tests():
     test_stereo_vision_engine()
     test_ds4_controller()
     test_kinect_emulator()
+    test_session_logger()
     print("==========================================")
-    print("   ALL TESTS PASSED SUCCESSFULLY (14/14)  ")
+    print("   ALL TESTS PASSED SUCCESSFULLY (15/15)  ")
     print("==========================================")
 
 if __name__ == "__main__":

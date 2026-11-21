@@ -11,13 +11,14 @@ O sistema é baseado em uma **arquitetura modular em pacotes**, onde cada etapa 
 ```
 LegacyPSCam_Sensor/
 ├── main.py                     # Ponto de entrada (CLI dispatcher e inicializador)
-├── test_suite.py               # Suíte de testes automatizados (14/14 suítes integradas)
+├── test_suite.py               # Suíte de testes automatizados (15/15 suítes integradas)
 ├── config.json                 # Gerenciamento e persistência das configurações locais
 ├── THIRD_PARTY_NOTICES.md      # Avisos de direitos autorais, licenças e separação de IP do firmware
 ├── driver/
 │   └── legacy_pscam_device.inf # Pacote INF associando o WinUSB.sys nativo da Microsoft à PS4 Camera
 ├── sensor/                     # Pacote do Motor de Rastreamento e Visão Computacional
 │   ├── __init__.py             # Exports unificados da API do sensor
+│   ├── session_logger.py       # Subsistema de log de sessão e telemetria de dança (CSV thread-safe e diagnóstico)
 │   ├── ps4_backend/            # Backend Próprio em Espaço de Usuário (WinUSB) para PlayStation 4 Camera
 │   │   ├── __init__.py         # Exports públicos do backend nativo
 │   │   ├── constants.py        # IDs USB (0580/058A/058B), hashes SHA-1/SHA-256 e geometrias ISP
@@ -207,6 +208,14 @@ flowchart TD
   4. Cálculo matemático do ganho de sensibilidade sugerido para equiparar a curva da câmera à aceleração real do acelerômetro de hardware.
   5. Agrupamento de sessões prontas na pasta `logs/` para exibição instantânea no `TelemetryBenchmarkDialog`.
   6. *Nota de UI:* Módulo e caixas de diálogo preservados de forma íntegra no backend, porém desabilitados por padrão (`benchmark_auto_record: false`) e desacoplados da interface gráfica Qt 6 (`gui_qt.py`) para manter a experiência enxuta.
+
+### 12. `session_logger.py` — Subsistema de Log de Sessão e Telemetria de Dança (Diagnóstico de Suporte)
+- **Responsabilidade:** Coordena o ciclo de vida de diagnóstico e o streaming de telemetria contínua da dança em tempo real.
+  1. **Ciclo de Vida na Inicialização (Startup Reset):** Limpa e reinicia o log ao abrir o aplicativo, preservando automaticamente o log anterior em `logs/session_previous.log` para segurança contra reaberturas acidentais.
+  2. **Cabeçalho Diagnóstico Completo de Sistema:** Registra metadados do Windows (Build/Versão), modelo de CPU, contagem de núcleos, memória RAM física total e disponível via API Win32 `GlobalMemoryStatusEx`, runtime Python (PE compilado vs script) e versão do aplicativo.
+  3. **Mapeamento Ativo de Controles:** Detecta e registra o dispositivo de controle em uso (DualShock 4 Bluetooth/USB, Virtual Phone ou Câmera Óptica), atualizações de bateria, modo de conexão e eventos de botões físicos (L1/R1 de troca de coach).
+  4. **Streaming de Telemetria de Dança (CSV Assíncrono):** A partir do momento do `START TRACKING`, grava em buffer assíncrono em lote (batching) todas as métricas de movimento ($a_x, a_y, a_z, |G|$, velocidade da mão, coordenadas dos joints, FPS e feedbacks de pontuação) com impacto computacional nulo (<0,1% CPU).
+  5. **Resiliência a Falhas (Crash Diagnostics):** Instala interceptores globais para `sys.excepthook` e `threading.excepthook`, garantindo que qualquer encerramento inesperado grave o stack trace completo e feche os arquivos de forma limpa.
 
 ---
 

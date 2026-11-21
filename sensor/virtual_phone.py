@@ -1547,6 +1547,21 @@ class VirtualPhoneController:
             self._handshake_complete = True
             self._status_text = self._format_connected_status()
 
+            try:
+                from sensor.session_logger import get_session_logger
+                get_session_logger().log_ipc_event(
+                    "VPHONE",
+                    "PAIRED",
+                    f"Virtual Phone handshake complete (ID: {self._phone_id}, Player: '{self._player_name}')",
+                )
+                get_session_logger().map_active_controller(
+                    "vphone",
+                    self.phone_name,
+                    details=f"WebSocket paired, Hand: {self.scoring_hand}",
+                )
+            except Exception:
+                pass
+
         elif cls_name == "JD_ProfilePhoneUiData":
             name = str(msg.get("name", "")).strip()
             if name:
@@ -1672,6 +1687,11 @@ class VirtualPhoneController:
                         self.current_map_name = clean_name
                         self.current_song_name = clean_name
                     print(f"[VPHONE] Detected active song map: '{self.current_map_name}'")
+                    try:
+                        from sensor.session_logger import get_session_logger
+                        get_session_logger().update_active_song(self.current_map_name)
+                    except Exception:
+                        pass
                     if self.on_song_change:
                         try:
                             self.on_song_change(self.current_map_name)
