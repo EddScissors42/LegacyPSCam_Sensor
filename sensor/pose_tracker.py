@@ -486,7 +486,9 @@ class PoseTracker:
         rect_right_frame = None
         if self.stereo_mode != STEREO_MODE_DISABLED and frame_left is not None:
             try:
-                rect_left_frame, rect_right_frame = self.stereo_engine.calibrator.rectify(frame_left, frame_bgr)
+                # If frame_left is single-channel luminance, match directly with green/luminance right view
+                mono_r = frame_bgr[:, :, 1] if (frame_left.ndim == 2 and frame_bgr.ndim == 3) else frame_bgr
+                rect_left_frame, rect_right_frame = self.stereo_engine.calibrator.rectify(frame_left, mono_r)
                 joints_2d = self._extract_joints_2d(norm_lm, w, h)
                 stereo_depths = self.stereo_engine.triangulate_sparse_joints(
                     rect_left_frame, rect_right_frame, joints_2d

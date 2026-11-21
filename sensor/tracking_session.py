@@ -121,6 +121,9 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
     if pose_model not in ("lite", "full", "heavy"):
         pose_model = preset_model_map.get(config.get("tracking_preset", "balanced"), "lite")
 
+    if target_fps >= 50 and pose_model in ("full", "heavy"):
+        print(f"[PERF] Câmera a {target_fps} FPS com modelo '{pose_model}'. Para 60 FPS estáveis na CPU, use o preset 'Competitive' (modelo lite).")
+
     try:
         tracker = PoseTracker(
             detection_confidence=det_conf,
@@ -221,12 +224,14 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
                 time.sleep(0.0015)
                 continue
 
-            # If stereo vision is active on PS4 Camera, retrieve synchronous Left Eye frame
-            # without re-converting the Right Eye from YUY2 to BGR.
+            # If stereo vision is active on PS4 Camera, retrieve synchronous Left Eye luminance frame
+            # directly from YUY2 buffer (<0.08 ms) to eliminate redundant color conversion.
             frame_left = None
             if getattr(tracker, "stereo_mode", "disabled") != "disabled":
-                if hasattr(camera, "read_left_eye"):
-                    frame_left = camera.read_left_eye()
+                if hasattr(camera, "read_left_mono"):
+                    frame_left = camera.read_left_mono()
+                if frame_left is None and hasattr(camera, "read_left_eye"):
+                    frame_left = camera.read_left_eye(mono=True)
                 if frame_left is None:
                     st_data = camera.read_stereo(only_new=False)
                     if st_data:

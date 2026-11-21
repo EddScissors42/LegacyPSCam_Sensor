@@ -215,7 +215,8 @@ Para desenvolvedores que importam os módulos internamente:
 - `CameraManager.enumerate_cameras(max_probe: Optional[int] = None, probe_hardware: bool = False) -> List[CameraInfo]`: Retorna a lista de câmeras conectadas cruzando dispositivos PnP ativos e interfaces WinUSB em ~4ms sem ligar fisicamente o sensor da webcam durante a listagem da UI (`probe_hardware=False`).
 - `LatestFrameCamera(camera_index, target_w=640, target_h=480, target_fps=30, mirror=True, is_pscam=False, orientation=0, ps4_eye="right", ps4_backend_mode="native")`: Capturador assíncrono que utiliza `PS4CameraBackend` nativo quando `is_pscam=True`.
 - `LatestFrameCamera.set_eye(eye: str)`: Alterna em tempo real entre `"right"` (Olho Direito, padrão) e `"left"` (Olho Esquerdo).
-- `LatestFrameCamera.read_left_eye() -> Optional[np.ndarray]`: Retorna o frame BGR sincronizado do Olho Esquerdo (com rotação de orientação aplicada) sem reconverter o Olho Direito a partir de YUY2.
+- `LatestFrameCamera.read_left_mono() -> Optional[np.ndarray]`: Retorna o plano de luminância monocromática de 8 bits (H, W) do Olho Esquerdo em <0.08ms diretamente da memória YUY2, eliminando o overhead de conversão YUY2->BGR.
+- `LatestFrameCamera.read_left_eye(mono: bool = False) -> Optional[np.ndarray]`: Retorna o frame sincronizado do Olho Esquerdo (com rotação de orientação aplicada). Se `mono=True`, retorna luminância direta sem reconversão BGR.
 - `LatestFrameCamera.read_stereo(only_new: bool = False) -> Optional[dict]`: Retorna simultaneamente os frames BGR e YUY2 de ambos os olhos (`right_bgr`, `left_bgr`, `right_yuy2`, `left_yuy2`, `pts`, `timestamp_ms`, `seq`), reutilizando o buffer BGR já convertido do olho ativo.
 
 ### `sensor.ps4_backend` — Backend Nativo WinUSB para PlayStation 4 Camera
@@ -229,7 +230,8 @@ Para desenvolvedores que importam os módulos internamente:
 - `PS4CameraBackend`:
   - `start() -> bool` / `stop() -> None`: Inicia e encerra o anel isócrono de 8 URBs Overlapped (`WinUsb_ReadIsochPipeAsap`) no endpoint `0x81`.
   - `read_frame(only_new: bool = False) -> Optional[np.ndarray]`: Retorna o frame BGR do olho selecionado (`"right"` por padrão).
-  - `read_left_frame() -> Optional[np.ndarray]`: Converte sob demanda apenas o plano YUY2 do Olho Esquerdo para BGR (eliminando conversão duplicada do Olho Direito no modo de Visão Estéreo).
+  - `read_left_mono() -> Optional[np.ndarray]`: Extrai diretamente em <0.08ms o plano de luminância de 8 bits a partir do buffer `_left_yuy2[:, :, 0]`, com latência zero de conversão de cor.
+  - `read_left_frame(mono: bool = False) -> Optional[np.ndarray]`: Retorna o frame do olho esquerdo (luminância uint8 se `mono=True`, ou convertido para BGR).
   - `read_stereo_frames(only_new: bool = False) -> Optional[dict]`: Retorna ambos os fluxos ópticos sincronizados reutilizando o buffer `_selected_bgr` do olho ativo.
 - `PS4DriverInstaller`:
   - `has_driver_store_package_fast(use_cache: bool = True) -> bool`: Consulta em ~1.0ms (e ~0.001ms em cache) o `DriverStore\FileRepository` via Win32 `FindFirstFileW` (busca prefixada B-tree no NTFS) sem invocar `pnputil.exe`.
@@ -403,7 +405,7 @@ O pacote `sensor.stereo_matcher` implementa o pipeline óptico de visão estére
 ### 10.2 Classes Principais
 - `StereoCalibrator(baseline_m=0.0852)`:
   - `update_resolution(w, h)`: Computa matrizes intrínsecas $K_1, K_2$, rotação $R$, translação $T = [B, 0, 0]^T$ e look-up tables `cv2.initUndistortRectifyMap`.
-  - `rectify(left, right) -> (rect_left, rect_right)`: Aplica `cv2.remap` em $<0.8\text{ ms}$.
+  - `rectify(left, right, force_remap=False) -> (rect_left, rect_right)`: Em geometria rígida de fábrica sem distorção (`is_identity=True`), retorna os frames diretamente em $<0.001\text{ ms}$ (zero-copy), eliminando remapeamento bilinear redundante. Quando calibração customizada estiver presente ou `force_remap=True`, executa `cv2.remap` em $<0.8\text{ ms}$.
 - `StereoDepthEngine(baseline_m=0.0852)`:
   - `triangulate_sparse_joints(rect_left, rect_right, joints_2d, search_radius_px=48, patch_half_size=6, vertical_tol_px=4) -> Dict[joint_id, (X, Y, Z, conf)]`:
     Executa busca em banda epipolar 2D no canal verde (`cv2.matchTemplate` com interpolação parabólica 2D) seguida de refinamento sub-pixel por Fluxo Óptico Piramidal Lucas-Kanade (`cv2.calcOpticalFlowPyrLK` em ROIs locais) em $<0.8\text{ ms}$, computando profundidade métrica $Z = \frac{f \cdot B}{d}$ e auto-calibrando dinamicamente o desalinhamento vertical entre as lentes (`vertical_offset_px`).

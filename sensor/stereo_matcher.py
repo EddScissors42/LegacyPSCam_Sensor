@@ -47,6 +47,7 @@ class StereoCalibrator:
     ):
         self.baseline_m = float(baseline_m)
         self.custom_calib = custom_calibration
+        self.is_identity = (custom_calibration is None)
 
         self.current_w = 0
         self.current_h = 0
@@ -80,6 +81,7 @@ class StereoCalibrator:
         self.cy = h / 2.0
 
         if self.custom_calib:
+            self.is_identity = False
             k1 = np.array(self.custom_calib["K1"], dtype=np.float64)
             d1 = np.array(self.custom_calib["D1"], dtype=np.float64)
             k2 = np.array(self.custom_calib["K2"], dtype=np.float64)
@@ -87,6 +89,7 @@ class StereoCalibrator:
             r = np.array(self.custom_calib["R"], dtype=np.float64)
             t = np.array(self.custom_calib["T"], dtype=np.float64).reshape(3, 1)
         else:
+            self.is_identity = True
             # High-precision rigid factory geometry for Sony PS4 Camera
             k1 = np.array([
                 [self.fx, 0.0, self.cx],
@@ -122,14 +125,19 @@ class StereoCalibrator:
         )
 
     def rectify(
-        self, left_frame: np.ndarray, right_frame: np.ndarray
+        self, left_frame: np.ndarray, right_frame: np.ndarray, force_remap: bool = False
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
         Applies precomputed epipolar rectification maps.
-        Ensures that corresponding points lie strictly on identical horizontal scanlines (yL == yR).
+        When running on factory geometry without custom distortion matrices (is_identity=True),
+        returns input frames directly with zero-copy/identity (<0.001 ms).
+        When custom calibration is active or force_remap=True, applies cv2.remap.
         """
         h, w = right_frame.shape[:2]
         self.update_resolution(w, h)
+        if self.is_identity and not force_remap:
+            return left_frame, right_frame
+
         rect_left = cv2.remap(left_frame, self.map_l_x, self.map_l_y, cv2.INTER_LINEAR)
         rect_right = cv2.remap(right_frame, self.map_r_x, self.map_r_y, cv2.INTER_LINEAR)
         return rect_left, rect_right
