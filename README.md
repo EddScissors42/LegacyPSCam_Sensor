@@ -1,4 +1,4 @@
-This project is inspired by **[Legacy Sensor by itsVexor]** and uses the original `kinect10.dll` from his project. Full credit for the original DLL goes to itsVexor.
+This project is inspired by **[Legacy Sensor by itsVexor]**
 
 This application is written entirely in Python to keep it lightweight and easy to maintain.
 
