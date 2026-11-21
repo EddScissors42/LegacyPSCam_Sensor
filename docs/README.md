@@ -62,7 +62,7 @@ All non-essential overhead has been removed while perfecting the core components
 ```
 LegacyPSCam_Sensor/
 ├── main.py                     # CLI launcher and entry point
-├── version.py                  # Official versioning & build metadata (v0.7.3 Alpha)
+├── version.py                  # Official versioning & build metadata (v0.8.3 Alpha)
 ├── test_suite.py               # 16 complete automated test suites (16/16 PASSED)
 ├── config.json                 # Saved user preferences
 ├── THIRD_PARTY_NOTICES.md      # Licensing & third-party attribution notices
@@ -70,7 +70,7 @@ LegacyPSCam_Sensor/
 │   └── legacy_pscam_device.inf # WinUSB association package for PS4 Camera
 ├── sensor/                     # Tracking Engine and AI package
 │   ├── ps4_backend/            # Native WinUSB PlayStation 4 Camera Backend
-│   ├── camera_manager.py       # Camera discovery and async capture
+│   ├── camera_manager.py       # Camera discovery (DirectShow COM + SetupAPI) and async capture
 │   ├── stereo_matcher.py       # Stereo Vision Engine (Rectification, Sub-Pixel PyrLK 3D, Depth Mask)
 │   ├── pose_tracker.py         # MediaPipe engine, Hand Anchor, Calibrator & EMA
 │   ├── pose_filters.py         # Kinematic filters (HandAnchor, AdaptiveSmoother, SkeletonCalibrator, Smart Body PTZ)
@@ -78,6 +78,7 @@ LegacyPSCam_Sensor/
 │   ├── virtual_phone.py        # UbiArt Smartphone WebSocket client & 3D Hand Accelerometer
 │   ├── ds4_controller.py       # Native Bluetooth/USB HID DualShock 4 driver
 │   ├── telemetry_benchmark.py  # Comparative telemetry benchmark (Camera vs DS4)
+│   ├── kinect_emulator.py      # Read-only Shared Memory IPC Bridge & Game Process Monitor
 │   ├── tracking_session.py     # Tracking loop orchestrator and hotkeys
 │   ├── tracking_overlay.py     # Skeleton, HUD, and silhouette renderer
 │   ├── kinect_shared_memory.py # Windows shared memory IPC driver (JDP1, JDP2, JMI1/2, JXC1)
@@ -95,20 +96,17 @@ LegacyPSCam_Sensor/
 ├── models/                     # Pre-trained neural network models
 │   ├── pose_landmarker_lite.task  # Google MediaPipe Pose Lite model (Competitive preset)
 │   └── pose_landmarker_full.task  # Google MediaPipe Pose Full model (Balanced preset)
-└── tools/                      # Setup utilities & proxy DLL
-    ├── Kinect10.dll            # 32-bit proxy DLL for Just Dance PC root folder
-    └── get_cameras.ps1         # WinRT camera enumeration script
+└── tools/                      # Setup utilities
+    └── get_cameras.ps1         # WinRT camera enumeration fallback script
 ```
 
 ---
 
 ## Quick Steps
 
-1. Copy DLL to Just Dance:
-   Place `Kinect10.dll` from `tools/` into the directory where your Just Dance PC executable is installed.
-2. Run the Sensor:
+1. Run the Sensor:
    Launch `LegacySensor.exe` or execute `python main.py`.
-3. Select Camera:
+2. Select Camera:
    Choose PlayStation 4 Camera (if connected) or Standard Webcam.
-4. Start Tracking:
-   Click START TRACKING, launch Just Dance PC, and select Kinect as your controller.
+3. Start Tracking:
+   Click START TRACKING, launch Just Dance PC, and dance via the Windows Shared Memory IPC Bridge (`Local\LegacyWebcamKinectPose` & `Local\LegacyWebcamKinectImage`).

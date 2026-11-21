@@ -554,6 +554,9 @@ def test_project_structure():
     assert hasattr(sensor, "DancerIdentityLock")
     assert hasattr(sensor, "PersonLockController")
     assert (BASE_DIR / "sensor" / "person_lock.py").exists(), "sensor/person_lock.py must exist"
+    assert (BASE_DIR / "sensor" / "gesture_detector.py").exists(), "sensor/gesture_detector.py must exist"
+    assert hasattr(sensor, "ArmRaiseGestureDetector")
+    assert hasattr(sensor, "check_arm_raised")
 
     import ui
     assert hasattr(ui, "LegacySensorGUI")
@@ -1536,6 +1539,72 @@ def test_person_lock_subsystem():
     print(f"  -> Modular Person Lock-In Subsystem PASSED (Identity check latency: {dt_lock_ms:.3f}ms)")
 
 
+def test_arm_raise_gesture():
+    print("[TEST] Arm Raise Gesture Recognition & State Machine...")
+    from sensor.gesture_detector import check_arm_raised, ArmRaiseGestureDetector
+
+    neutral = [(320, 240, 0.9)] * 20
+    neutral[3] = (320, 100, 0.9)  # Head
+    neutral[2] = (320, 150, 0.9)  # ShoulderCenter
+    neutral[4] = (270, 160, 0.9)  # ShL
+    neutral[8] = (370, 160, 0.9)  # ShR
+    neutral[6] = (260, 280, 0.9)  # WristL
+    neutral[10] = (380, 280, 0.9) # WristR
+    neutral[7] = (260, 320, 0.9)  # HandL
+    neutral[11] = (380, 320, 0.9) # HandR
+
+    assert check_arm_raised(neutral) is False, "Neutral pose must not trigger arm raised"
+
+    # Raise right arm above head (y=40 < head y=100)
+    right_up = list(neutral)
+    right_up[10] = (380, 80, 0.9)
+    right_up[11] = (380, 40, 0.9)
+    assert check_arm_raised(right_up) is True, "Right arm up should be True"
+
+    # Raise left arm above head
+    left_up = list(neutral)
+    left_up[6] = (260, 80, 0.9)
+    left_up[7] = (260, 40, 0.9)
+    assert check_arm_raised(left_up) is True, "Left arm up should be True"
+
+    # Test State Machine with simulated time progression
+    detector = ArmRaiseGestureDetector(enabled=True, hold_seconds=2.0, cooldown_seconds=2.5)
+
+    # Inactive frame
+    st = detector.update(neutral, is_tracked=False, now=100.0)
+    assert st["holding"] is False
+    assert st["triggered"] is False
+
+    # Neutral frame
+    st = detector.update(neutral, is_tracked=True, now=101.0)
+    assert st["holding"] is False
+    assert st["triggered"] is False
+
+    # Arm raised at t=102.0 (initial detection)
+    st = detector.update(right_up, is_tracked=True, now=102.0)
+    assert st["holding"] is False  # First frame records start_time
+    assert st["progress"] == 0.0
+
+    # Arm raised at t=103.0 (1.0s elapsed of 2.0s hold)
+    st = detector.update(right_up, is_tracked=True, now=103.0)
+    assert st["holding"] is True
+    assert 0.49 <= st["progress"] <= 0.51
+    assert st["triggered"] is False
+
+    # Arm raised at t=104.1 (2.1s elapsed -> TRIGGERED!)
+    st = detector.update(right_up, is_tracked=True, now=104.1)
+    assert st["triggered"] is True
+    assert st["feedback_active"] is True
+
+    # Immediate next frame at t=104.2 (still arm up, but should NOT re-trigger due to cooldown)
+    st = detector.update(right_up, is_tracked=True, now=104.2)
+    assert st["triggered"] is False
+    assert st["holding"] is False
+    assert st["feedback_active"] is True
+
+    print("  -> Arm Raise Gesture Recognition & State Machine PASSED")
+
+
 def run_all_tests():
     print("==========================================")
     print("   RUNNING LEGACY PSCAM SENSOR TEST SUITE ")
@@ -1556,8 +1625,9 @@ def run_all_tests():
     test_kinect_emulator()
     test_session_logger()
     test_person_lock_subsystem()
+    test_arm_raise_gesture()
     print("==========================================")
-    print("   ALL TESTS PASSED SUCCESSFULLY (16/16)  ")
+    print("   ALL TESTS PASSED SUCCESSFULLY (17/17)  ")
     print("==========================================")
 
 if __name__ == "__main__":

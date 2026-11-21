@@ -50,6 +50,8 @@ DEFAULT_CONFIG = {
     "dancer_lock_enabled": True,
     "dancer_lock_color_thresh": 0.35,
     "dancer_lock_roi_focus": True,
+    "arm_raise_gesture_enabled": True,
+    "arm_raise_hold_seconds": 2.0,
     "virtual_phone_enabled": False,
     "virtual_phone_host": "127.0.0.1",
     "virtual_phone_port": 8080,

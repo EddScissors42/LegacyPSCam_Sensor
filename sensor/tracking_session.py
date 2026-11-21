@@ -13,6 +13,13 @@ from sensor.camera_manager import LatestFrameCamera, CameraManager
 from sensor.kinect_shared_memory import KinectBridge
 from sensor.config_manager import parse_preset
 from sensor.virtual_phone import get_virtual_phone
+from sensor.gesture_detector import (
+    ArmRaiseGestureDetector,
+    check_arm_raised,
+    dispatch_enter_keystroke,
+)
+
+_send_enter_keystroke = dispatch_enter_keystroke
 
 def set_high_resolution_timer(enable=True):
     """
@@ -164,6 +171,12 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
     if should_enable_vphone and not vphone.enabled:
         vphone.set_enabled(True)
 
+    gesture_detector = ArmRaiseGestureDetector(
+        enabled=bool(config.get("arm_raise_gesture_enabled", True)),
+        hold_seconds=float(config.get("arm_raise_hold_seconds", 2.0)),
+        cooldown_seconds=2.5,
+    )
+
     window_name = "Legacy PSCam Sensor"
     cv2.namedWindow(window_name, cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_EXPANDED)
     cv2.resizeWindow(window_name, min(w, 1280), min(h, 800))
@@ -242,6 +255,9 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
             # Process Pose on pristine RAW frame with MediaPipe (guarantees correct anatomical limbs)
             is_tracked, kinect_joints, px_joints, body_mask = tracker.process_frame(frame, frame_left=frame_left)
 
+            # Detect arm raised gesture to dispatch virtual ENTER / START command
+            gesture_info = gesture_detector.update(px_joints, is_tracked, vphone=vphone)
+
             # Measure tracking FPS
             track_fps_counter += 1
             now = time.time()
@@ -295,11 +311,25 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
                 from sensor.session_logger import get_session_logger
                 accel = vphone.accelerometer.latest_accel
                 speed = vphone.accelerometer.latest_speed
-                h_pos = (kinect_joints[11].x, kinect_joints[11].y, kinect_joints[11].z) if (kinect_joints and len(kinect_joints) > 11) else (0.0, 0.0, 0.0)
-                s_r = (kinect_joints[8].x, kinect_joints[8].y, kinect_joints[8].z) if (kinect_joints and len(kinect_joints) > 8) else (0.0, 0.0, 0.0)
-                e_r = (kinect_joints[9].x, kinect_joints[9].y, kinect_joints[9].z) if (kinect_joints and len(kinect_joints) > 9) else (0.0, 0.0, 0.0)
-                w_r = (kinect_joints[10].x, kinect_joints[10].y, kinect_joints[10].z) if (kinect_joints and len(kinect_joints) > 10) else (0.0, 0.0, 0.0)
-                j_count = len([j for j in kinect_joints if getattr(j, "confidence", 1.0) > 0.3]) if kinect_joints else 0
+
+                def _j_xyz(j):
+                    if isinstance(j, (tuple, list)) and len(j) >= 3:
+                        return (float(j[0]), float(j[1]), float(j[2]))
+                    return (float(getattr(j, "x", 0.0)), float(getattr(j, "y", 0.0)), float(getattr(j, "z", 0.0)))
+
+                def _j_conf(j):
+                    if isinstance(j, (tuple, list)) and len(j) >= 4:
+                        return float(j[3])
+                    return float(getattr(j, "confidence", 1.0))
+
+                is_left_hand = str(getattr(vphone, "hand", "right")).lower() == "left"
+                idx_sh, idx_el, idx_wr, idx_hd = (4, 5, 6, 7) if is_left_hand else (8, 9, 10, 11)
+
+                h_pos = _j_xyz(kinect_joints[idx_hd]) if (kinect_joints and len(kinect_joints) > idx_hd) else (0.0, 0.0, 0.0)
+                s_r = _j_xyz(kinect_joints[idx_sh]) if (kinect_joints and len(kinect_joints) > idx_sh) else (0.0, 0.0, 0.0)
+                e_r = _j_xyz(kinect_joints[idx_el]) if (kinect_joints and len(kinect_joints) > idx_el) else (0.0, 0.0, 0.0)
+                w_r = _j_xyz(kinect_joints[idx_wr]) if (kinect_joints and len(kinect_joints) > idx_wr) else (0.0, 0.0, 0.0)
+                j_count = sum(1 for j in kinect_joints if _j_conf(j) > 0.3) if kinect_joints else 0
                 get_session_logger().record_telemetry_sample(
                     ts_ms=int(time.time() * 1000),
                     source="camera",
@@ -340,6 +370,23 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
                 is_mirrored=mirror,
                 calibration_tier=tracker.calibrator.calibration_tier
             )
+
+            # Render gesture hold progress / confirmation feedback on preview
+            if gesture_info.get("holding"):
+                elapsed = min(gesture_info["target"], gesture_info["elapsed"])
+                pct = int(gesture_info["progress"] * 100)
+                target_s = gesture_info["target"]
+                hud_txt = f"HOLD ARM UP: {elapsed:.1f}s / {target_s:.1f}s ({pct}%) -> [ENTER]"
+                cv2.putText(display_frame, hud_txt, (max(20, fw // 2 - 180), fh - 44),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0), 3, cv2.LINE_AA)
+                cv2.putText(display_frame, hud_txt, (max(20, fw // 2 - 180), fh - 44),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 240, 255), 2, cv2.LINE_AA)
+            elif gesture_info.get("feedback_active"):
+                hud_txt = ">>> ENTER COMMAND SENT! <<<"
+                cv2.putText(display_frame, hud_txt, (max(20, fw // 2 - 150), fh - 44),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 0, 0), 4, cv2.LINE_AA)
+                cv2.putText(display_frame, hud_txt, (max(20, fw // 2 - 150), fh - 44),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.65, (50, 255, 50), 2, cv2.LINE_AA)
 
             cv2.imshow(window_name, display_frame)
 

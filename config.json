@@ -1,6 +1,6 @@
 {
     "camera_mode": "webcam",
-    "camera_index": 0,
+    "camera_index": 1,
     "camera_orientation": 0,
     "ps4_camera_backend": "native",
     "ps4_eye": "right",
@@ -41,6 +41,8 @@
     "dancer_lock_enabled": true,
     "dancer_lock_color_thresh": 0.35,
     "dancer_lock_roi_focus": true,
+    "arm_raise_gesture_enabled": true,
+    "arm_raise_hold_seconds": 2.0,
     "virtual_phone_enabled": false,
     "virtual_phone_host": "127.0.0.1",
     "virtual_phone_port": 8080,

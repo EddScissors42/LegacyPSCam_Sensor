@@ -36,6 +36,11 @@ from .person_lock import (
     DancerIdentityLock,
     PersonLockController,
 )
+from .gesture_detector import (
+    ArmRaiseGestureDetector,
+    check_arm_raised,
+    dispatch_enter_keystroke,
+)
 from .kinect_shared_memory import (
     KinectBridge, KinectSharedMemory, KinectMultiPoseSharedMemory, KinectImageSharedMemory, KinectCoachXSharedMemory,
     SHARED_NAME, SHARED_SIZE, MULTI_SHARED_NAME, MULTI_SHARED_SIZE, IMAGE_SHARED_NAME, IMAGE_SHARED_SIZE,
@@ -117,6 +122,9 @@ __all__ = [
     "InertialCoastingFilter",
     "DancerIdentityLock",
     "PersonLockController",
+    "ArmRaiseGestureDetector",
+    "check_arm_raised",
+    "dispatch_enter_keystroke",
     "KINECT_CONNECTIONS",
     "JOINT_NAMES",
     "KinectBridge",

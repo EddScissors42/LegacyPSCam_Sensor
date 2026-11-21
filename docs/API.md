@@ -153,35 +153,13 @@ Para eliminar travamentos e deadlocks entre o Python (produtor dos dados) e o jo
 
 ---
 
-## 2. Interface da DLL Proxy (`Kinect10.dll`)
+## 2. Monitor da Ponte de Memória Compartilhada (`sensor.kinect_emulator`)
 
-A DLL proxy de 32 bits fornecida em `Kinect for Legacy DLL/Kinect10.dll` intercepta as seguintes 8 funções da API oficial da Microsoft do Kinect SDK v1.x:
+O projeto opera **exclusivamente** através dos canais da Ponte de Memória Compartilhada do Windows (`KinectBridge`: `JDP1`, `JDP2`, `JMI1`, `JMI2` e `JXC1`), sem incluir nem injetar arquivos binários `Kinect10.dll` ou `Legacy10.dll` personalizados.
 
-```c
-// Exportações de funções da Kinect10.dll consumidas pelo Just Dance PC
-HRESULT WINAPI NuiCreateSensorById(const OLECHAR* strInstanceId, INuiSensor** ppNuiSensor);
-HRESULT WINAPI NuiCreateSensorByIndex(int index, INuiSensor** ppNuiSensor);
-int     WINAPI NuiGetSensorCount(int* pCount);
-HRESULT WINAPI NuiImageGetColorPixelCoordinatesFromDepthPixel(eResolution, pView, lDepthX, lDepthY, usDepthValue, plColorX, plColorY);
-HRESULT WINAPI NuiSetDeviceStatusCallback(NuiStatusProc callback, void* pUserData);
-void    WINAPI NuiShutdown();
-HRESULT WINAPI NuiSkeletonGetNextFrame(DWORD dwMillisecondsToWait, NUI_SKELETON_FRAME* pSkeletonFrame);
-HRESULT WINAPI NuiSkeletonSetTrackedSkeletons(DWORD* pTrackingIDs);
-```
-
-- A função crítica é `NuiSkeletonGetNextFrame`: é nela que o jogo solicita o próximo quadro de esqueleto a cada tick de renderização. A DLL lê a memória compartilhada `Local\LegacyWebcamKinectPose`, preenche a estrutura `NUI_SKELETON_FRAME` e retorna `S_OK`.
-
-### 2.1 Pacer Loop e Sincronização a 30 FPS na `Kinect10.dll`
-
-Quando o jogo inicializa o rastreamento via `NuiSkeletonTrackingEnable` ou abre um stream de imagem via `NuiImageStreamOpen`, a `Kinect10.dll` inicia uma thread de ritmo em `0x10002320` para pulsar tanto o evento do esqueleto (`0x1001e96c`) quanto os eventos dos streams de vídeo/profundidade (`stream.hNextFrameEvent`):
-
-- **Cadência Obrigatória de 30 FPS do Kinect v1:**
-  - O motor de pontuação do Just Dance PC (avaliação de gestos, cálculo de velocidade das articulações e sincronização com o mapa de batidas da música) foi projetado estritamente para o hardware do Kinect v1, cuja taxa nativa é **30 FPS fixos** (`NUI_SKELETON_FRAME_RATE = 30`).
-  - Se a thread for acelerada para 60 FPS (15 ms), o motor de dança recebe o dobro de quadros de esqueleto, perde a sincronia temporal com a música e marca **todas as jogadas como "X" (erro)**.
-  - Portanto, a `Kinect10.dll` **deve obrigatoriamente** manter a cadência padrão de 33 ms (`0x10002346: push 0x21; call Sleep`).
-- **Otimização de Timer no Python (Solução Real para os ~20 FPS):**
-  - O motivo de o jogo parecer rodar em ~20 FPS com a DLL padrão em sistemas sem otimização é o agendador padrão do Windows (tick de 15,625 ms). Como 33 ms > 31,25 ms, o Windows adormecia a thread por 3 ticks (46,875 ms = **21,33 FPS**).
-  - O `LegacyPSCam_Sensor` resolve isso sem tocar no binário da DLL: ao ativar `winmm.timeBeginPeriod(1)` e `ntdll.NtSetTimerResolution(10000, 1, ...)` no [tracking_session.py](file:///C:/Users/reydn/OneDrive/Documents/Projetos/LegacyPSCam_Sensor/tracking_session.py), a precisão do Windows vai para 1,0 ms. O `Sleep(33)` da DLL agora acorda pontualmente a cada **33,6 ms (30 FPS cravados)**, proporcionando o máximo de fluidez visual permitido pela engine do Just Dance mantendo 100% da pontuação perfeita.
+### 2.1 Sincronização de Timer de Alta Resolução (1 ms) no Python
+- O agendador padrão do Windows possui resolução de tick de 15,625 ms, o que pode degradar sleeps de 33 ms (~30 FPS) para 3 ticks (46,875 ms = **21,33 FPS**).
+- Ao ativar `winmm.timeBeginPeriod(1)` e `ntdll.NtSetTimerResolution(10000, 1, ...)` no [tracking_session.py](file:///C:/Users/reydn/OneDrive/Documents/Projetos/LegacyPSCam_Sensor/sensor/tracking_session.py), a precisão global do agendador durante a sessão vai para 1,0 ms, garantindo cadência estável de 30/60 FPS sem tocar em binários do jogo.
 
 ---
 
@@ -239,6 +217,12 @@ Para desenvolvedores que importam os módulos internamente:
   - `verify_driver_status() -> dict`: Verifica sem elevação UAC se `legacy_pscam_device.inf` está instalado e associado ao `WinUSB.sys` (incluindo disponibilidade do instalador de fallback assinado `fallback_installer_present`).
   - `get_fallback_installer_path() -> Optional[Path]`: Localiza o instalador assinado de fallback `tools/PSCam4Win-Setup.exe`.
   - `install_or_repair_driver(force_reinstall: bool = False, allow_fallback_installer: bool = True) -> Tuple[bool, str]`: Solicita elevação pontual via `pnputil.exe` apenas quando necessário e aciona automaticamente o instalador de fallback caso a política de assinatura digital do Windows rejeite um catálogo INF não assinado.
+
+### `sensor.gesture_detector` — Reconhecimento de Gestos Corporais
+- `check_arm_raised(px_joints) -> bool`: Avalia os 20 joints 2D do jogador (`px_joints`), retornando `True` caso o pulso e a mão esquerda ou direita estejam confortavelmente elevados acima do nível da cabeça ou ombros.
+- `dispatch_enter_keystroke() -> None`: Dispara de forma assíncrona (thread desacoplada) o evento físico de teclado `VK_RETURN` (`0x0D`, scan code `0x1C`) para o processo do Just Dance PC via `ctypes.windll.user32.keybd_event`.
+- `ArmRaiseGestureDetector(enabled=True, hold_seconds=2.0, cooldown_seconds=2.5)`:
+  - `update(px_joints, is_tracked, vphone=None, now=None) -> dict`: Gerencia a máquina de estados do gesto, calcula o progresso percentual acumulado durante a sustentação da pose, aciona o envio de `Enter` e `VALID` do Celular Virtual ao completar o tempo estipulado (`hold_seconds`), e gerencia o período de cooldown para evitar disparos repetitivos.
 
 ### `pose_tracker.PoseTracker`
 - `PoseTracker(model_path=None, detection_confidence=0.5, smoothing_alpha=0.55, target_height_m=1.75, cfg=None, model_variant=None)`: Construtor do motor de IA (`model_variant` aceita `"lite"` ou `"full"`, com fallback automático de `"heavy"` legado para `"full"`).
@@ -416,18 +400,16 @@ O pacote `sensor.stereo_matcher` implementa o pipeline óptico de visão estére
 
 ---
 
-## 11. Emulador de Kinect em Memória (`sensor.kinect_emulator`)
+## 11. Monitor de Memória Compartilhada (`sensor.kinect_emulator`)
 
-O módulo `sensor.kinect_emulator` emula o sensor Kinect diretamente na memória RAM do Just Dance PC (modo *Zero-File-Replacement*), sem exigir a substituição manual do arquivo `Kinect10.dll` na pasta do jogo:
+O módulo `sensor.kinect_emulator` monitora a execução do Just Dance PC de forma 100% read-only e coordena a disponibilidade da Ponte de Memória Compartilhada (`KinectBridge`), sem arquivos `Kinect10.dll` / `Legacy10.dll` personalizados e sem injeção de memória:
 
-- `KINECT_ORDINALS_ORDER = [16, 5, 6, 21, 22, 9, 17, 26]`: Ordem dos 8 ordinais da API NUI do `Kinect10.dll` mapeados na tabela IAT do `Legacy.exe`.
 - `TARGET_PROCESS_NAMES = ["legacy.exe", "justdance.exe", "jd2022.exe"]`: Executáveis monitorados pelo daemon.
 - `KinectEmulatorDaemon(cfg=None)`:
-  - `start() -> None` / `stop() -> None`: Inicia e encerra a thread daemon de monitoramento de processos (`KinectEmulatorDaemon`).
-  - `get_status() -> Dict[str, Any]`: Retorna o estado atual (`enabled`, `running`, `connected`, `game_name`, `pid`, `mode` `"iat_hook"` ou `"aiwebcam"`).
-  - `register_status_callback(cb: Callable[[bool, str, int], None]) -> None`: Registra callback acionado ao conectar ou desconectar do processo do jogo.
-  - `_scan_for_game_process() -> Optional[Dict[str, Any]]`: Varre processos ativos em $<0.5\text{ ms}$ via snapshot de kernel `CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)` sem abrir processos do sistema com `PROCESS_VM_READ`.
-  - `_is_target_32bit(pid: int) -> bool`: Verifica via `IsWow64Process` e cabeçalho PE (`Magic == 0x10B`) se o processo alvo é 32-bit (WoW64 / PE32) antes de aplicar a injeção de `tools/Legacy10.dll` e o hot-patching IAT.
+  - `start() -> None` / `stop() -> None`: Inicia e encerra a thread daemon de monitoramento de processos (`KinectEmulatorDaemon`) e garante a abertura dos canais IPC.
+  - `get_status() -> Dict[str, Any]`: Retorna o estado atual (`enabled`, `running`, `connected`, `game_name`, `pid`, `mode` `"shared_memory"`).
+  - `register_status_callback(cb: Callable[[bool, str, int], None]) -> None`: Registra callback acionado ao detectar ou encerrar o processo do jogo.
+  - `_scan_for_game_process() -> Optional[Dict[str, Any]]`: Varre processos ativos em $<0.5\text{ ms}$ via snapshot de kernel `CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)` com zero acesso de escrita à memória de processos.
 
 ---
 
