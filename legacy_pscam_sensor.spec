@@ -11,7 +11,6 @@ mp_datas, mp_binaries, mp_hiddenimports = collect_all('mediapipe')
 added_datas = [
     ('models/pose_landmarker_lite.task', 'models'),
     ('models/pose_landmarker_full.task', 'models'),
-    ('models/pose_landmarker_heavy.task', 'models'),
     ('assets', 'assets'),
     ('tools/Kinect10.dll', 'tools'),
     ('tools/Legacy10.dll', 'tools'),
@@ -37,6 +36,9 @@ a = Analysis(
         'sensor',
         'sensor.ps4_backend',
         'sensor.stereo_matcher',
+        'sensor.person_lock',
+        'sensor.session_logger',
+        'sensor.kinect_emulator',
         'ui',
         'ui.widgets',
         'ui.benchmark_dialog',

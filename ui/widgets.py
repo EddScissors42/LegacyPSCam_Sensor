@@ -191,7 +191,7 @@ class DeviceNavCard(QFrame):
 
 
 class CalibPresetCard(QFrame):
-    """Interactive card for calibration presets (Balanced, Competitive, Ultra Stable)."""
+    """Interactive card for calibration presets (Balanced, Competitive)."""
     clicked = Signal(str)
 
     def __init__(

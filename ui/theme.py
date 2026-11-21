@@ -81,18 +81,6 @@ CALIB_PRESETS = {
         "detection_confidence": 0.45,
         "specs": "Lite AI • EMA 0.75 • Conf 0.45",
     },
-    "stable": {
-        "id": "stable",
-        "title": "Ultra Stable",
-        "icon": "🛡",
-        "tag": "",
-        "subtitle": "Heavy AI • Max Precision",
-        "desc": "Uses MediaPipe Heavy model with intensive filtering against visual noise and occlusions. Ideal for dimly lit rooms.",
-        "pose_model": "heavy",
-        "smoothing_alpha": 0.35,
-        "detection_confidence": 0.40,
-        "specs": "Heavy AI • EMA 0.35 • Conf 0.40",
-    },
 }
 
 

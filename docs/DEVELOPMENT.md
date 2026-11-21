@@ -82,7 +82,7 @@ Antes de aprovar qualquer modificação de código, execute a suíte de testes i
 python LegacyPSCam_Sensor/test_suite.py
 ```
 
-A suíte cobre 15 áreas fundamentais:
+A suíte cobre 16 áreas fundamentais:
 
 | Teste | Módulo Testado | Critério de Sucesso |
 |---|---|---|
@@ -101,6 +101,7 @@ A suíte cobre 15 áreas fundamentais:
 | `test_ds4_controller` | `sensor/ds4_controller.py` | Identificação de VID/PID oficiais e clones (ShanWan, DragonRise), filtro permissivo, pontuação de interface HID, CRC-32 de Output Report `0x11` e detecção automática de layout/escala de IMU. |
 | `test_kinect_emulator` | `sensor/kinect_emulator.py` | Ciclo de vida do daemon em segundo plano, persistência de configuração, integridade binária da `Legacy10.dll` e roteamento de callbacks de status. |
 | `test_session_logger` | `sensor/session_logger.py` | Rotação/limpeza automática de sessão anterior, diagnóstico de sistema (SO, CPU, RAM), mapeamento de controles, streaming CSV assíncrono e exception hooks. |
+| `test_person_lock_subsystem` | `sensor/person_lock.py` & `sensor/pose_filters.py` | Predição inercial em micro-quedas (coasting 3D/2D + translação de máscara + LERP de reentrada), trava de identidade por histograma HSV do tronco e continuidade espacial, fallback anti-giro 360° e zoom adaptativo no `FaceFollowPTZ`, e chaves modulares de bypass. |
 
 ### Adicionando Novos Testes
 Ao criar novos recursos (como um novo algoritmo de suavização ou novo controle de GUI), adicione uma função `test_<funcionalidade>()` no arquivo `test_suite.py` e inclua sua execução na função principal `run_all_tests()`.

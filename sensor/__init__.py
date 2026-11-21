@@ -31,6 +31,11 @@ from .pose_filters import (
     CameraSpaceXTracker, apply_camera_space_translation, apply_slot_snap,
     FaceFollowPTZ, KINECT_CONNECTIONS, avg, lerp
 )
+from .person_lock import (
+    InertialCoastingFilter,
+    DancerIdentityLock,
+    PersonLockController,
+)
 from .kinect_shared_memory import (
     KinectBridge, KinectSharedMemory, KinectMultiPoseSharedMemory, KinectImageSharedMemory, KinectCoachXSharedMemory,
     SHARED_NAME, SHARED_SIZE, MULTI_SHARED_NAME, MULTI_SHARED_SIZE, IMAGE_SHARED_NAME, IMAGE_SHARED_SIZE,
@@ -109,6 +114,9 @@ __all__ = [
     "apply_camera_space_translation",
     "apply_slot_snap",
     "FaceFollowPTZ",
+    "InertialCoastingFilter",
+    "DancerIdentityLock",
+    "PersonLockController",
     "KINECT_CONNECTIONS",
     "JOINT_NAMES",
     "KinectBridge",

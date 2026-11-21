@@ -45,17 +45,23 @@ from sensor.stereo_matcher import (
     STEREO_MODE_FULL_DEPTH,
     PS4_STEREO_BASELINE_M,
 )
+from sensor.person_lock import (
+    InertialCoastingFilter,
+    DancerIdentityLock,
+    PersonLockController,
+)
 
 
 MODEL_FILENAMES = {
     "lite": "pose_landmarker_lite.task",
     "full": "pose_landmarker_full.task",
-    "heavy": "pose_landmarker_heavy.task",
 }
 
 
 def _resolve_model_path(model_variant: str = "lite") -> Path:
     variant = str(model_variant or "lite").strip().lower()
+    if variant == "heavy":
+        variant = "full"
     if variant not in MODEL_FILENAMES:
         variant = "lite"
     filename = MODEL_FILENAMES[variant]
@@ -103,6 +109,8 @@ class PoseTracker:
     def __init__(self, model_path=None, detection_confidence=0.5, smoothing_alpha=0.55, target_height_m=1.75, cfg=None, model_variant=None):
         self.cfg = dict(cfg) if cfg else {}
         variant = str(model_variant or self.cfg.get("pose_model", "lite")).strip().lower()
+        if variant == "heavy":
+            variant = "full"
         if variant not in MODEL_FILENAMES:
             variant = "lite"
         self.model_variant = variant
@@ -119,6 +127,9 @@ class PoseTracker:
         self.calibrator = SkeletonCalibrator(target_height_m=target_height_m, cfg=self.cfg)
         self.camera_x_tracker = CameraSpaceXTracker(cfg=self.cfg)
         self.face_ptz = FaceFollowPTZ(cfg=self.cfg)
+        self.person_lock = PersonLockController(cfg=self.cfg)
+        self.coasting_filter = self.person_lock.coasting
+        self.identity_lock = self.person_lock.identity
         self.stereo_mode = str(self.cfg.get("stereo_mode", STEREO_MODE_DISABLED)).strip().lower()
         self.stereo_engine = StereoDepthEngine(baseline_m=PS4_STEREO_BASELINE_M)
         self._seg_prob_ema = None
@@ -157,6 +168,7 @@ class PoseTracker:
             self.calibrator.cfg = self.cfg
             self.camera_x_tracker.cfg = self.cfg
             self.face_ptz.cfg = self.cfg
+            self.person_lock.update_config(self.cfg)
             if "stereo_mode" in self.cfg:
                 self.stereo_mode = str(self.cfg.get("stereo_mode", STEREO_MODE_DISABLED)).strip().lower()
         if smoothing_alpha is not None:
@@ -216,6 +228,7 @@ class PoseTracker:
         self.smoother.reset()
         self.camera_x_tracker.reset()
         self.face_ptz.reset()
+        self.person_lock.reset()
         self.stereo_engine.reset_calibration()
         self._seg_prob_ema = None
 
@@ -348,6 +361,9 @@ class PoseTracker:
                 self._infer_rgb = np.empty((h, w, 3), dtype=np.uint8)
             cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB, dst=self._infer_rgb)
 
+        # Apply peripheral ROI attenuation around locked dancer in private inference buffer (< 0.02 ms)
+        self.person_lock.apply_pre_inference_roi(self._infer_rgb)
+
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=self._infer_rgb)
 
         # Milliseconds strictly monotonic timestamp for VIDEO running mode
@@ -365,15 +381,30 @@ class PoseTracker:
         result = self.detector.detect_for_video(mp_image, timestamp_ms)
 
         if not result.pose_world_landmarks or not result.pose_world_landmarks[0]:
+            # 1.1 Inertial Coasting during transient micro-dropouts (360° spins / motion blur <= 250 ms)
+            is_coasting, c_3d, c_2d, c_mask = self.person_lock.coast(dt=dt_infer, frame_w=w, frame_h=h)
+            if is_coasting:
+                return True, c_3d, c_2d, c_mask
+
             self.smoother.reset()
             self.camera_x_tracker.reset()
             self.face_ptz.reset()
+            self.person_lock.reset()
             self._seg_prob_ema = None
             self.last_norm_landmarks = None
             return False, None, None, None
 
         world_lm = result.pose_world_landmarks[0]
         norm_lm = result.pose_landmarks[0] if result.pose_landmarks else world_lm
+
+        # 1.2 Active Dancer Identity Lock (Color Signature + Spatial Continuity Gate)
+        sample_bgr = self._infer_bgr if (w > self.INFER_MAX_W and self._infer_bgr is not None) else frame_bgr
+        if not self.person_lock.validate_candidate(sample_bgr, norm_lm, dt=dt_infer):
+            is_coasting, c_3d, c_2d, c_mask = self.person_lock.coast(dt=dt_infer, frame_w=w, frame_h=h)
+            if is_coasting:
+                return True, c_3d, c_2d, c_mask
+            return False, None, None, None
+
         self.last_norm_landmarks = norm_lm
 
         # Helper to extract joint tuple: (x, y, z, confidence)
@@ -604,6 +635,11 @@ class PoseTracker:
             body_mask = cv2.bitwise_or(neural_mask, anatomical_mask)
         else:
             body_mask = anatomical_mask
+
+        # 8. Record valid frame in Person Lock-In controller (updates velocity vectors & smooth re-entry blend)
+        snapped, pixel_joints, body_mask = self.person_lock.record_valid_frame(
+            snapped, pixel_joints, body_mask, norm_landmarks=norm_lm, dt=dt_infer
+        )
 
         return True, snapped, pixel_joints, body_mask
 

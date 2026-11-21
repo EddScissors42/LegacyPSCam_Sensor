@@ -67,6 +67,15 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
   - **`Desativado` (Padrão):** Opera em modo monocular clássico com custo zero de CPU adicional.
   - **`Ativado (Sub-Pixel PyrLK 3D)`:** Ativa a triangulação 3D sub-pixel com auto-alinhamento das lentes, mantendo 60 FPS estáveis.
 
+### 3.1 Sistema Modular "Person Lock-In" (`sensor/person_lock.py` & `sensor/pose_filters.py`)
+- **Objetivo:** Fazer o rastreador "grudar" no dançarino ativo e jamais perder o esqueleto ou a silhueta em giros rápidos de 360°, oclusões momentâneas, passos largos ou quando outra pessoa passa pelo ambiente, mantendo **60 FPS cravados** (< 0.25 ms de custo combinado).
+- **Arquitetura 100% Modular (Hot-Reload & Zero-Cost Bypass):**
+  - Controlado pela chave mestra `person_lock_enabled` e pelas chaves individuais `inertial_coasting_enabled`, `dancer_lock_enabled`, `dancer_lock_roi_focus`, `face_follow_spin_fallback` e `face_follow_adaptive_zoom`. Quando desabilitado, cada módulo executa *short-circuit* imediato (0.000 ms), pronto para futuros controles de UI em hardwares modestos.
+- **Os 3 Pilares Implementados:**
+  1. **Predição Inercial em Micro-Quedas (`InertialCoastingFilter`):** Quando a rede neural perde o corpo por até `250 ms` (~15 frames a 60 FPS durante um giro de 360° ou *motion blur*), o filtro mantém `is_tracked = True` e projeta as 20 articulações 3D e 2D usando velocidade física amortecida ($\gamma = 0.82$), deslocando também a máscara de silhueta `320x240` e aplicando interpolação suave (*re-entry LERP*) por 3 frames ao readquirir o jogador.
+  2. **Trava de Jogador Ativo por Cor e Espaço (`DancerIdentityLock`):** Memoriza um histograma 2D Matiz-Saturação (HSV 12x8 bins) da roupa/tronco do jogador e monitora a continuidade espacial da caixa delimitadora. Rejeita saltos impossíveis para objetos de fundo ou pessoas passando com outra cor de roupa, além de atenuar suavemente regiões periféricas distantes no buffer privado da IA (`apply_roi_focus`).
+  3. **Auto-Framing Dinâmico de Corpo Inteiro (`FaceFollowPTZ` Aprimorado):** Inclui fallback anatômico anti-giro (extrapola a posição da cabeça pelo vetor `HipCenter -> ShoulderCenter` quando o rosto fica oculto de costas), deadzone central anti-trepidação e zoom adaptativo de corpo inteiro que abre o enquadramento automaticamente quando o jogador ergue os braços ou abre a base.
+
 ### 4. Filtro Hand Anchor (Extrapolação Anatômica)
 - **Problema resolvido:** Em coreografias de dança com giros rápidos ou mãos próximas ao tronco, as redes neurais de detecção de pose frequentemente perdem a visibilidade dos dedos (`INDEX` e `WRIST`), fazendo a mão "pular" para coordenadas inválidas e gerando notas `MISS` ou `OK`.
 - **Implementação:** O `HandAnchorFilter` calcula o vetor diretor 3D que vai do cotovelo até o pulso (`vetor = pulso - cotovelo`) e, caso a confiança dos dedos caia, projeta a ponta da mão ao longo dessa linha anatômica natural por uma distância proporcional de 12 centímetros.
@@ -372,11 +381,11 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
   - `DEFAULT_CONFIG` em `sensor/config_manager.py` consolidado com todas as chaves persistidas pela aplicação (`camera_orientation`, `ds4_hand`, `ds4_sensitivity`, `benchmark_auto_record`, `virtual_phone_auto_record`, `virtual_phone_adaptive`).
   - Removidos ícones legados não utilizados (`camera.svg`, `dualshock4.jpg`) e corrigida a resolução de `MODELS_DIR` para builds congelados PyInstaller (`_MEIPASS`).
 
-### 27. Seleção Dinâmica dos Modelos MediaPipe Lite, Full e Heavy nos Perfis de Precisão (v0.5.2 Alpha)
-- **Integração dos 3 Modelos Oficiais (`models/pose_landmarker_{lite,full,heavy}.task`):**
-  - **Competitive (`competitive`) ➔ `lite`:** Usa `pose_landmarker_lite.task` (EMA 0.75 / Conf 0.45) para latência mínima e máxima taxa de quadros (60+ FPS).
+### 27. Seleção Dinâmica dos Modelos MediaPipe Lite e Full nos Perfis de Precisão
+- **Integração dos 2 Modelos Oficiais (`models/pose_landmarker_{lite,full}.task`):**
+  - **Competitive (`competitive`) ➔ `lite`:** Usa `pose_landmarker_lite.task` (EMA 0.75 / Conf 0.45) para latência mínima e máxima taxa de quadros (60+ FPS cravados na CPU).
   - **Balanced (`balanced`) [RECOMMENDED] ➔ `full`:** Usa `pose_landmarker_full.task` (EMA 0.55 / Conf 0.50) para o melhor equilíbrio entre estabilidade anatômica, rastreamento de mãos e desempenho.
-  - **Ultra Stable (`stable`) ➔ `heavy`:** Usa `pose_landmarker_heavy.task` (EMA 0.35 / Conf 0.40) para máxima precisão de juntas e resistência a oclusões/baixa iluminação.
+- **Remoção do Modelo Heavy:** O modelo `pose_landmarker_heavy.task` (~30.6 MB) e o preset *Ultra Stable* foram removidos para manter o pacote ultraleve e focado em alta taxa de quadros, com fallback automático para `full` caso um `config.json` antigo referencie `heavy` ou `stable`.
 - **Resolução e Fallback Seguros:** `_resolve_model_path(model_variant)` seleciona o modelo correspondente (incluindo builds PyInstaller `_MEIPASS`) com fallback automático para `lite` caso algum arquivo `.task` não esteja disponível.
 
 ### 28. Expansão DualShock 4: Suporte a Controles de Terceiros e Clones (Nível A) e Diagnóstico IMU (v0.5.3 Alpha)
@@ -443,6 +452,21 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
   - Instalação de hooks para `sys.excepthook` e `threading.excepthook`, garantindo que eventuais falhas graves gravem o traceback completo com flush imediato no disco.
 - **Botão `Open Logs Folder` na Barra Lateral:**
   - Botão de ação rápida (`btn_secondary`) posicionado na barra lateral imediatamente acima dos créditos de rodapé, abrindo a pasta `logs/` no Windows Explorer com 1 clique para agilizar o envio de relatórios de diagnóstico e arquivos de telemetria.
+
+### 32. Sub-sistema Modular de Person Lock-In, Smart PTZ Auto-Framing & Otimização do MediaPipe (v0.8.2 Alpha)
+- **Sub-sistema Modular de Trava de Jogador (`sensor/person_lock.py`):**
+  - **Inertial Coasting Filter (`InertialCoastingFilter`):** Mantém a trajetória e continuidade do esqueleto mesmo durante giros 360°, movimentos ultrarrápidos ou oclusões transitórias de até 250 ms através de extrapolação inercial 3D/2D com amortecimento exponencial ($0.88^k$) e transição suave LERP (3 frames) ao recuperar a detecção.
+  - **Dancer Identity Lock (`DancerIdentityLock`):** Gera uma assinatura cromática HSV (12x8 bins) do tronco do dançarino e calcula a correlação de Bhattacharyya/Intersecção ($H > 0.35$), garantindo que a câmera nunca troque de jogador mesmo se outra pessoa cruzar o campo de visão.
+  - **Atenuação Periférica de ROI:** Prioriza dinamicamente o dançarino ativo diminuindo a sensibilidade de bordas para ignorar pessoas ao fundo ou nas laterais.
+  - **Arquitetura 100% Modular e Desacoplada (`PersonLockController`):** Pode ser ativado ou desativado de forma transparente e flexível via `config.json` sem impacto de CPU.
+- **Smart PTZ Auto-Framing & Face Follow com Fallback 360° (`sensor/pose_filters.py`):**
+  - Quando a face é perdida em piruetas ou giros de costas, o algoritmo automaticamente faz fallback para o centroide anatômico da cabeça (`head_center` derivado de ombros, orelhas e nariz), prevenindo saltos abruptos de enquadramento.
+  - Zoom dinâmico proporcional à escala do corpo para enquadramento perfeito em qualquer distância.
+- **Remoção do Modelo Heavy e Otimização do Bundle:**
+  - O modelo `pose_landmarker_heavy.task` (~30.6 MB) e referências foram completamente removidos da base de código e da interface.
+  - A interface gráfica agora apresenta de forma limpa e direta apenas os modos **Balanced** (Full) e **Competitive** (Lite), com migração automática e segura de perfis legados.
+- **Stereo Vision 60 FPS Boost:**
+  - Extração de luminância direta monocromática no leitor nativo da PS4 Camera (`read_left_mono()`) e retificação identidade instantânea (<0.001 ms), liberando ciclos de CPU preciosos.
 
 ---
 

@@ -559,11 +559,14 @@ def apply_slot_snap(joints, cfg=None):
 
 class FaceFollowPTZ:
     """
-    Software Pan-Tilt-Zoom (PTZ) auto-framing & Frustum-Aligned Face Square Filter.
-    Smoothly tracks the player's face landmarks and shifts/zooms the video frame
-    and player segmentation mask sent to Just Dance via shared memory (Local\\LegacyWebcamKinectImage)
-    so the player's face is placed at the exact 2D frustum UV coordinate where Just Dance PC
-    projects the 3D Head(3) and ShoulderCenter(2) joints for the dancer avatar box ("quadradinho").
+    Software Pan-Tilt-Zoom (PTZ) auto-framing & Frustum-Aligned Face/Body Follower.
+    Smoothly tracks the player's face and full-body envelope, featuring:
+      - 360-degree spin fallback (`face_follow_spin_fallback`): extrapolates head position
+        from the torso vector (HipCenter -> ShoulderCenter) when face landmarks are occluded.
+      - Dynamic Adaptive Full-Body Zoom (`face_follow_adaptive_zoom`): automatically widens
+        the framing toward 1.0x when arms/legs stretch near crop edges so the 320x240
+        silhouette mask is never clipped, returning to `face_follow_zoom` on standard stances.
+      - Center stability deadzone to prevent micro-bobbing jitter.
     """
     def __init__(self, cfg=None):
         self.cfg = cfg or {}
@@ -571,6 +574,7 @@ class FaceFollowPTZ:
         self.cy = 0.38
         self.target_u = 0.5
         self.target_v = 0.25
+        self.current_zoom = float(self.cfg.get('face_follow_zoom', 1.22))
         self.valid = False
 
     def reset(self):
@@ -578,6 +582,7 @@ class FaceFollowPTZ:
         self.cy = 0.38
         self.target_u = 0.5
         self.target_v = 0.25
+        self.current_zoom = float(self.cfg.get('face_follow_zoom', 1.22))
         self.valid = False
 
     def update_from_norm(self, norm_landmarks, mirrored=True, kinect_joints=None):
@@ -593,6 +598,36 @@ class FaceFollowPTZ:
                     x = 1.0 - float(lm.x) if mirrored else float(lm.x)
                     y = float(lm.y)
                     candidates.append((x, y))
+
+        # 360-degree Spin Anatomical Fallback: when player turns their back to the camera
+        # and face landmarks drop below visibility, extrapolate head above ShoulderCenter
+        if not candidates and bool(self.cfg.get('face_follow_spin_fallback', True)):
+            if len(norm_landmarks) > RIGHT_SHOULDER:
+                sh_l = norm_landmarks[LEFT_SHOULDER]
+                sh_r = norm_landmarks[RIGHT_SHOULDER]
+                vis_l = min(float(getattr(sh_l, 'visibility', 1.0)), float(getattr(sh_l, 'presence', 1.0)))
+                vis_r = min(float(getattr(sh_r, 'visibility', 1.0)), float(getattr(sh_r, 'presence', 1.0)))
+                if min(vis_l, vis_r) >= 0.15:
+                    lx = 1.0 - float(sh_l.x) if mirrored else float(sh_l.x)
+                    rx = 1.0 - float(sh_r.x) if mirrored else float(sh_r.x)
+                    ly, ry = float(sh_l.y), float(sh_r.y)
+                    sh_cx = (lx + rx) * 0.5
+                    sh_cy = (ly + ry) * 0.5
+                    sh_w = max(0.08, math.hypot(rx - lx, ry - ly))
+
+                    # Use torso vector (Hip -> Shoulder) if hips are visible, else vertical offset
+                    if len(norm_landmarks) > RIGHT_HIP:
+                        hl = norm_landmarks[LEFT_HIP]
+                        hr = norm_landmarks[RIGHT_HIP]
+                        if min(float(getattr(hl, 'visibility', 1.0)), float(getattr(hr, 'visibility', 1.0))) >= 0.20:
+                            hx = ((1.0 - float(hl.x) if mirrored else float(hl.x)) + (1.0 - float(hr.x) if mirrored else float(hr.x))) * 0.5
+                            hy = (float(hl.y) + float(hr.y)) * 0.5
+                            vx = sh_cx - hx
+                            vy = sh_cy - hy
+                            candidates.append((sh_cx + vx * 0.42, sh_cy + vy * 0.42))
+                    if not candidates:
+                        candidates.append((sh_cx, max(0.05, sh_cy - sh_w * 0.55)))
+
         if candidates:
             tx = sum(c[0] for c in candidates) / len(candidates)
             ty = sum(c[1] for c in candidates) / len(candidates)
@@ -604,10 +639,41 @@ class FaceFollowPTZ:
             if not self.valid:
                 self.cx = tx
                 self.cy = ty
+                self.current_zoom = max(1.0, float(self.cfg.get('face_follow_zoom', 1.22)))
                 self.valid = True
             else:
-                self.cx = self.cx * (1.0 - a) + tx * a
-                self.cy = self.cy * (1.0 - a) + ty * a
+                # Apply soft central deadzone to suppress micro-bobbing jitter while dancing
+                deadzone = float(self.cfg.get('face_follow_deadzone', 0.018))
+                disp = math.hypot(tx - self.cx, ty - self.cy)
+                eff_a = a * 0.20 if disp < deadzone else a
+                self.cx = self.cx * (1.0 - eff_a) + tx * eff_a
+                self.cy = self.cy * (1.0 - eff_a) + ty * eff_a
+
+        # Dynamic Adaptive Full-Body Zoom (prevents clipping raised arms or wide steps)
+        base_zoom = max(1.0, float(self.cfg.get('face_follow_zoom', 1.22)))
+        if bool(self.cfg.get('face_follow_adaptive_zoom', True)) and base_zoom > 1.01:
+            xs, ys = [], []
+            for idx in (NOSE, LEFT_SHOULDER, RIGHT_SHOULDER, LEFT_ELBOW, RIGHT_ELBOW, LEFT_WRIST, RIGHT_WRIST, LEFT_HIP, RIGHT_HIP, LEFT_ANKLE, RIGHT_ANKLE):
+                if idx < len(norm_landmarks):
+                    lm = norm_landmarks[idx]
+                    if min(float(getattr(lm, 'visibility', 1.0)), float(getattr(lm, 'presence', 1.0))) >= 0.22:
+                        lx = 1.0 - float(lm.x) if mirrored else float(lm.x)
+                        ly = float(lm.y)
+                        xs.append(lx)
+                        ys.append(ly)
+            if len(xs) >= 2:
+                span_x = (max(xs) - min(xs)) + 0.18  # safety breathing margin
+                span_y = (max(ys) - min(ys)) + 0.16
+                max_span = max(span_x, span_y)
+                if max_span > (1.0 / base_zoom):
+                    desired_zoom = float(np.clip(1.0 / max(0.5, max_span), 1.0, base_zoom))
+                else:
+                    desired_zoom = base_zoom
+                self.current_zoom = 0.82 * self.current_zoom + 0.18 * desired_zoom
+            else:
+                self.current_zoom = 0.85 * self.current_zoom + 0.15 * base_zoom
+        else:
+            self.current_zoom = base_zoom
 
         # Compute exact 2D frustum UV coordinate where Just Dance PC samples the 3D Head(3) joint
         # NuiTransformSkeletonToDepthImage (320x240):
@@ -638,7 +704,7 @@ class FaceFollowPTZ:
         if not self.valid or frame is None:
             return frame, mask
         h, w = frame.shape[:2]
-        zoom = max(1.0, float(self.cfg.get('face_follow_zoom', 1.22)))
+        zoom = max(1.0, float(self.current_zoom))
 
         # Place detected face (self.cx, self.cy) at the exact frustum UV (self.target_u, self.target_v)
         # where Just Dance PC crops the player avatar square ("quadradinho").

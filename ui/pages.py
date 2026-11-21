@@ -531,9 +531,9 @@ class UIPagesMixin:
         card_layout.addWidget(lbl_head)
         card_layout.addWidget(lbl_sub)
 
-        # 3 Profile cards
+        # 2 Profile cards (Balanced / Competitive)
         cards_row = QHBoxLayout()
-        cards_row.setSpacing(8)
+        cards_row.setSpacing(10)
 
         for pid, pdata in CALIB_PRESETS.items():
             pix_act, pix_inact = self.mode_pixmaps.get(pid, (QPixmap(), QPixmap()))

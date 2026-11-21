@@ -531,12 +531,11 @@ def test_project_structure():
     assert (BASE_DIR / "assets" / "icons" / "sliders.svg").exists(), "Asset sliders.svg must exist in assets/icons/"
     assert (BASE_DIR / "assets" / "icons" / "mode_balanced.svg").exists(), "Asset mode_balanced.svg must exist in assets/icons/"
     assert (BASE_DIR / "assets" / "icons" / "mode_competitive.svg").exists(), "Asset mode_competitive.svg must exist in assets/icons/"
-    assert (BASE_DIR / "assets" / "icons" / "mode_stable.svg").exists(), "Asset mode_stable.svg must exist in assets/icons/"
     assert (BASE_DIR / "assets" / "icons" / "lab.svg").exists(), "Asset lab.svg must exist in assets/icons/"
     assert (BASE_DIR / "assets" / "icons" / "arrow_down.png").exists() or (BASE_DIR / "assets" / "icons" / "arrow_down.svg").exists(), "Asset arrow_down must exist in assets/icons/"
     assert (BASE_DIR / "models" / "pose_landmarker_lite.task").exists(), "models/pose_landmarker_lite.task must exist"
     assert (BASE_DIR / "models" / "pose_landmarker_full.task").exists(), "models/pose_landmarker_full.task must exist"
-    assert (BASE_DIR / "models" / "pose_landmarker_heavy.task").exists(), "models/pose_landmarker_heavy.task must exist"
+    assert not (BASE_DIR / "models" / "pose_landmarker_heavy.task").exists(), "models/pose_landmarker_heavy.task must be removed"
 
     import sensor
     assert hasattr(sensor, "PoseTracker")
@@ -551,6 +550,10 @@ def test_project_structure():
     assert hasattr(sensor, "StereoDepthEngine")
     assert hasattr(sensor, "SessionLogger")
     assert hasattr(sensor, "get_session_logger")
+    assert hasattr(sensor, "InertialCoastingFilter")
+    assert hasattr(sensor, "DancerIdentityLock")
+    assert hasattr(sensor, "PersonLockController")
+    assert (BASE_DIR / "sensor" / "person_lock.py").exists(), "sensor/person_lock.py must exist"
 
     import ui
     assert hasattr(ui, "LegacySensorGUI")
@@ -561,7 +564,7 @@ def test_project_structure():
     assert hasattr(ui, "CALIB_PRESETS")
     assert ui.CALIB_PRESETS["balanced"]["pose_model"] == "full"
     assert ui.CALIB_PRESETS["competitive"]["pose_model"] == "lite"
-    assert ui.CALIB_PRESETS["stable"]["pose_model"] == "heavy"
+    assert "stable" not in ui.CALIB_PRESETS, "Ultra Stable / Heavy preset must be removed"
     assert hasattr(ui, "generate_icons")
 
     # Verify Qt GUI offscreen instantiation, icons, and fonts
@@ -585,7 +588,7 @@ def test_project_structure():
         assert win.pix_gear_act.devicePixelRatio() >= 2.0, "Icons must have High-DPI supersampling"
         assert "balanced" in win.mode_pixmaps and not win.mode_pixmaps["balanced"][0].isNull(), "Mode icon balanced must not be null"
         assert "competitive" in win.mode_pixmaps and not win.mode_pixmaps["competitive"][0].isNull(), "Mode icon competitive must not be null"
-        assert "stable" in win.mode_pixmaps and not win.mode_pixmaps["stable"][0].isNull(), "Mode icon stable must not be null"
+        assert "stable" not in win.calib_cards and len(win.calib_cards) == 2, "Only Balanced and Competitive cards should exist"
         assert not win.pix_status_err.isNull(), "Status X icon pixmap must not be null"
         assert win.font_title == "Kanit", f"Expected Kanit title font, got {win.font_title}"
         assert win.font_heading == "National Park", f"Expected National Park heading font, got {win.font_heading}"
@@ -756,18 +759,16 @@ def test_project_structure():
     assert assets.ICON_SLIDERS_PATH.exists()
     assert assets.ICON_MODE_BALANCED_PATH.exists()
     assert assets.ICON_MODE_COMPETITIVE_PATH.exists()
-    assert assets.ICON_MODE_STABLE_PATH.exists()
     assert assets.ICON_WEBCAM_PATH.exists()
     assert assets.ICON_DUALSHOCK4_PATH.exists()
     assert assets.MODEL_POSE_PATH.exists(), "Canonical pose model path must exist via assets.MODEL_POSE_PATH"
     assert assets.MODEL_POSE_LITE_PATH.exists()
     assert assets.MODEL_POSE_FULL_PATH.exists()
-    assert assets.MODEL_POSE_HEAVY_PATH.exists()
 
     from sensor.pose_tracker import _resolve_model_path
     assert _resolve_model_path("lite").name == "pose_landmarker_lite.task"
     assert _resolve_model_path("full").name == "pose_landmarker_full.task"
-    assert _resolve_model_path("heavy").name == "pose_landmarker_heavy.task"
+    assert _resolve_model_path("heavy").name == "pose_landmarker_full.task"  # Legacy fallback to full
 
     print("  -> Modular Project Structure PASSED")
 
@@ -1388,6 +1389,153 @@ def test_session_logger():
     print("  -> SessionLogger & Dance Telemetry Subsystem PASSED")
 
 
+def test_person_lock_subsystem():
+    print("[TEST] Modular Person Lock-In Subsystem (Inertial Coasting, Identity Lock & Smart Body PTZ)...")
+    from sensor.person_lock import InertialCoastingFilter, DancerIdentityLock, PersonLockController
+    from sensor.pose_filters import FaceFollowPTZ
+
+    # 1. Test InertialCoastingFilter (Kinematic Dead Reckoning & Smooth Re-entry)
+    coasting = InertialCoastingFilter(cfg={
+        "person_lock_enabled": True,
+        "inertial_coasting_enabled": True,
+        "inertial_coasting_max_ms": 250,
+        "inertial_coasting_damping": 0.82,
+        "inertial_coasting_reentry_frames": 3,
+    })
+    assert coasting.is_enabled is True
+
+    # Simulate 3 frames of rightward motion (+0.02m per 16.6ms tick => ~1.2 m/s)
+    mask_in = np.zeros((240, 320), dtype=np.uint8)
+    mask_in[80:160, 120:180] = 255
+    for step in range(3):
+        x_val = 0.10 + step * 0.02
+        px_val = 200 + step * 10
+        j3d = [(x_val, 0.5, 2.0, 0.95) for _ in range(20)]
+        j2d = [(px_val, 240, 0.95) for _ in range(20)]
+        out_3d, out_2d, out_mask = coasting.record_valid_frame(j3d, j2d, mask_in, dt=0.0166)
+
+    # Now simulate a 4-frame tracking loss (e.g. 360° spin / motion blur ~ 66 ms < 250 ms)
+    prev_x = out_3d[0][0]
+    for _ in range(4):
+        ok, c_3d, c_2d, c_mask = coasting.coast(dt=0.0166, frame_w=640, frame_h=480)
+        assert ok is True, "Coasting must stay active within 250 ms window"
+        assert c_3d is not None and len(c_3d) == 20
+        assert c_2d is not None and len(c_2d) == 20
+        assert c_mask is not None and c_mask.shape == (240, 320)
+        assert np.any(c_mask == 255), "Shifted coasted silhouette mask must remain non-empty"
+        assert c_3d[0][0] > prev_x, "Coasted X position must advance along positive velocity vector"
+        prev_x = c_3d[0][0]
+
+    # Simulate re-detection and verify smooth LERP re-entry blend
+    re_j3d = [(0.30, 0.5, 2.0, 0.95) for _ in range(20)]
+    re_j2d = [(300, 240, 0.95) for _ in range(20)]
+    b_3d, b_2d, _ = coasting.record_valid_frame(re_j3d, re_j2d, mask_in, dt=0.0166)
+    assert prev_x < b_3d[0][0] < 0.30, f"Re-entry frame must smoothly blend between {prev_x:.3f} and 0.30, got {b_3d[0][0]:.3f}"
+
+    # Verify expiration after > 250 ms of loss
+    for _ in range(20):
+        ok, _, _, _ = coasting.coast(dt=0.020, frame_w=640, frame_h=480)
+    assert ok is False, "Coasting must expire and reset cleanly after exceeding 250 ms"
+
+    # Verify modular toggle short-circuit bypass
+    coasting.set_enabled(False)
+    assert coasting.is_enabled is False
+    ok_dis, _, _, _ = coasting.coast(dt=0.016)
+    assert ok_dis is False
+
+    # 2. Test DancerIdentityLock (Color Signature + Spatial Continuity + Peripheral ROI)
+    lock = DancerIdentityLock(cfg={
+        "person_lock_enabled": True,
+        "dancer_lock_enabled": True,
+        "dancer_lock_color_thresh": 0.35,
+        "dancer_lock_roi_focus": True,
+    })
+
+    class MockLM:
+        def __init__(self, x, y, vis=0.95):
+            self.x = x
+            self.y = y
+            self.visibility = vis
+            self.presence = vis
+
+    def make_person_lms(cx, cy, sh_w=0.18):
+        lms = [MockLM(cx, cy)] * 33
+        lms = list(lms)
+        lms[0] = MockLM(cx, cy - 0.18)               # NOSE
+        lms[11] = MockLM(cx - sh_w * 0.5, cy - 0.10) # LEFT_SHOULDER
+        lms[12] = MockLM(cx + sh_w * 0.5, cy - 0.10) # RIGHT_SHOULDER
+        lms[23] = MockLM(cx - sh_w * 0.4, cy + 0.12) # LEFT_HIP
+        lms[24] = MockLM(cx + sh_w * 0.4, cy + 0.12) # RIGHT_HIP
+        return lms
+
+    # Create frame with Blue shirt dancer at center (x=0.5, y=0.5) and Red shirt impostor on right (x=0.88, y=0.5)
+    scene_bgr = np.zeros((400, 640, 3), dtype=np.uint8)
+    scene_bgr[:, :] = (30, 30, 30)
+    # Center dancer torso: pure Blue/Cyan in BGR (240, 180, 20)
+    scene_bgr[120:280, 240:400] = (240, 180, 20)
+    # Right edge bystander torso: pure Red in BGR (20, 20, 240)
+    scene_bgr[120:280, 500:630] = (20, 20, 240)
+
+    dancer_lms = make_person_lms(0.50, 0.50, sh_w=0.18)
+    for _ in range(6):
+        assert lock.validate_candidate(scene_bgr, dancer_lms, dt=0.016) is True
+    assert lock.is_locked is True
+
+    # Normal movement by the blue-shirt dancer must be accepted
+    dancer_step_lms = make_person_lms(0.55, 0.50, sh_w=0.18)
+    assert lock.validate_candidate(scene_bgr, dancer_step_lms, dt=0.016) is True
+
+    # Sudden jump to the red-shirt bystander at x=0.88 must be REJECTED as an impostor
+    impostor_lms = make_person_lms(0.88, 0.50, sh_w=0.18)
+    t0 = time.perf_counter()
+    accepted = lock.validate_candidate(scene_bgr, impostor_lms, dt=0.016)
+    dt_lock_ms = (time.perf_counter() - t0) * 1000.0
+    assert accepted is False, "Bystander with mismatched shirt color and spatial jump must be rejected"
+    assert dt_lock_ms < 1.5, f"DancerIdentityLock validation must execute in <1.5ms, took {dt_lock_ms:.3f}ms"
+
+    # Test peripheral ROI focus attenuation on private inference buffer
+    test_rgb = np.full((400, 640, 3), 200, dtype=np.uint8)
+    lock.apply_roi_focus(test_rgb)
+    assert test_rgb[200, 320, 0] == 200, "Active dancer center zone must remain unattenuated"
+    assert test_rgb[200, 5, 0] < 100, "Far peripheral edge outside dancer reach must be attenuated"
+
+    # 3. Test Smart Body Framing PTZ (360° Spin Head Fallback & Adaptive Full-Body Zoom)
+    ptz = FaceFollowPTZ(cfg={
+        "face_follow_enabled": True,
+        "face_follow_zoom": 1.25,
+        "face_follow_spin_fallback": True,
+        "face_follow_adaptive_zoom": True,
+    })
+    # Simulate 360° spin where face landmarks (NOSE=0, EARS=7,8) have 0.0 visibility, but shoulders & hips are visible
+    spin_lms = make_person_lms(0.45, 0.50, sh_w=0.18)
+    spin_lms[0] = MockLM(0.45, 0.30, vis=0.01)
+    spin_lms[7] = MockLM(0.43, 0.30, vis=0.01)
+    spin_lms[8] = MockLM(0.47, 0.30, vis=0.01)
+    ptz.update_from_norm(spin_lms, mirrored=False)
+    assert ptz.valid is True, "FaceFollowPTZ must stay valid during 360° spin using torso-extrapolated head fallback"
+    assert 0.35 <= ptz.cx <= 0.55
+
+    # Simulate wide arm/leg spread near frame boundaries and verify adaptive zoom-out toward 1.0x
+    wide_lms = make_person_lms(0.50, 0.50, sh_w=0.22)
+    wide_lms[15] = MockLM(0.05, 0.10, vis=0.95)  # Left wrist high & far left
+    wide_lms[16] = MockLM(0.95, 0.10, vis=0.95)  # Right wrist high & far right
+    wide_lms[27] = MockLM(0.20, 0.94, vis=0.95)  # Left ankle low
+    wide_lms[28] = MockLM(0.80, 0.94, vis=0.95)  # Right ankle low
+    for _ in range(10):
+        ptz.update_from_norm(wide_lms, mirrored=False)
+    assert ptz.current_zoom < 1.15, f"Adaptive zoom must widen (<1.15) when limbs approach edges, got {ptz.current_zoom:.2f}"
+
+    # 4. Test PersonLockController master toggle & PoseTracker integration
+    ctrl = PersonLockController(cfg={"person_lock_enabled": True})
+    assert ctrl.is_enabled is True
+    ctrl.set_enabled(False)
+    assert ctrl.is_enabled is False
+    assert ctrl.coasting.is_enabled is False
+    assert ctrl.identity.is_enabled is False
+
+    print(f"  -> Modular Person Lock-In Subsystem PASSED (Identity check latency: {dt_lock_ms:.3f}ms)")
+
+
 def run_all_tests():
     print("==========================================")
     print("   RUNNING LEGACY PSCAM SENSOR TEST SUITE ")
@@ -1407,8 +1555,9 @@ def run_all_tests():
     test_ds4_controller()
     test_kinect_emulator()
     test_session_logger()
+    test_person_lock_subsystem()
     print("==========================================")
-    print("   ALL TESTS PASSED SUCCESSFULLY (15/15)  ")
+    print("   ALL TESTS PASSED SUCCESSFULLY (16/16)  ")
     print("==========================================")
 
 if __name__ == "__main__":

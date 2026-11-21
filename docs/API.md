@@ -241,7 +241,7 @@ Para desenvolvedores que importam os módulos internamente:
   - `install_or_repair_driver(force_reinstall: bool = False, allow_fallback_installer: bool = True) -> Tuple[bool, str]`: Solicita elevação pontual via `pnputil.exe` apenas quando necessário e aciona automaticamente o instalador de fallback caso a política de assinatura digital do Windows rejeite um catálogo INF não assinado.
 
 ### `pose_tracker.PoseTracker`
-- `PoseTracker(model_path=None, detection_confidence=0.5, smoothing_alpha=0.55, target_height_m=1.75, cfg=None, model_variant=None)`: Construtor do motor de IA (`model_variant` aceita `"lite"`, `"full"` ou `"heavy"`).
+- `PoseTracker(model_path=None, detection_confidence=0.5, smoothing_alpha=0.55, target_height_m=1.75, cfg=None, model_variant=None)`: Construtor do motor de IA (`model_variant` aceita `"lite"` ou `"full"`, com fallback automático de `"heavy"` legado para `"full"`).
 - `PoseTracker.process_frame(frame: np.ndarray, mirror: bool = False) -> Tuple[bool, List[Tuple], List[Tuple], Optional[np.ndarray]]`: Processa o quadro bruto, executa Hand Anchor, suavização EMA, calibração de esqueleto e gera a máscara de segmentação anatômica. Retorna `(sucesso, kinect_joints, pixel_joints, body_mask)`.
 - `PoseTracker.build_body_mask(norm_landmarks, width, height) -> np.ndarray`: Gera a máscara binária 2D do corpo do jogador a partir dos landmarks.
 - `PoseTracker.reset_filters()`: Limpa o estado interno dos filtros de suavização após perda de rastreamento.
@@ -473,3 +473,22 @@ O arquivo CSV de telemetria possui cabeçalho de 25 colunas:
 - `record_telemetry_sample(...) -> None`: Enfileira amostras de forma não-bloqueante na thread em segundo plano.
 - `stop_telemetry_tracking(summary_metrics: Optional[Dict[str, Any]] = None) -> None`: Esvazia a fila pendente e grava resumo da sessão no `session.log`.
 - `install_exception_hooks() -> None`: Registra hooks de crash em `sys.excepthook` e `threading.excepthook`.
+
+---
+
+## 13. Subsistema Modular Person Lock-In (`sensor.person_lock`)
+
+O módulo `sensor.person_lock` fornece persistência cinemática e travamento de identidade do dançarino a 60 FPS, com chaves modulares individuais para ativação/desativação em tempo real:
+
+### 13.1 Classes Principais
+- `InertialCoastingFilter(cfg=None)`:
+  - `is_enabled -> bool`: Verifica `person_lock_enabled` e `inertial_coasting_enabled`.
+  - `set_enabled(enabled: bool) -> None`: Ativa ou desativa a predição inercial em tempo real.
+  - `record_valid_frame(joints_3d, joints_2d, body_mask, norm_landmarks=None, dt=None) -> (joints_3d, joints_2d, body_mask)`: Atualiza velocidades 3D/2D amortecidas e aplica *re-entry LERP blend* por 3 frames após micro-quedas.
+  - `coast(dt=None, frame_w=640, frame_h=480) -> (is_coasting, coasted_3d, coasted_2d, coasted_mask)`: Extrapola o esqueleto 3D/2D e translada a máscara `320x240` durante perdas de detecção de até `inertial_coasting_max_ms` (`250 ms`).
+- `DancerIdentityLock(cfg=None)`:
+  - `is_enabled -> bool` / `is_roi_focus_enabled -> bool`: Verifica `person_lock_enabled`, `dancer_lock_enabled` e `dancer_lock_roi_focus`.
+  - `validate_candidate(frame_bgr, norm_landmarks, dt=None) -> bool`: Extrai o histograma HSV 12x8 do tronco e valida a continuidade espacial/escala em $<0.05\text{ ms}$, rejeitando falsos positivos de fundo ou transeuntes.
+  - `apply_roi_focus(infer_rgb) -> np.ndarray`: Atenua bordas periféricas distantes da envergadura ativa do dançarino no buffer privado de inferência.
+- `PersonLockController(cfg=None)`:
+  - Fachada unificada que coordena `InertialCoastingFilter` e `DancerIdentityLock` dentro do `PoseTracker`.

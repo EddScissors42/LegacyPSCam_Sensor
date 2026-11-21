@@ -116,12 +116,14 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
     from sensor.pose_tracker import PoseTracker
     from sensor.tracking_overlay import TrackingOverlay
 
-    preset_model_map = {"balanced": "full", "competitive": "lite", "stable": "heavy"}
+    preset_model_map = {"balanced": "full", "competitive": "lite"}
     pose_model = str(config.get("pose_model", "")).strip().lower()
-    if pose_model not in ("lite", "full", "heavy"):
+    if pose_model == "heavy":
+        pose_model = "full"
+    if pose_model not in ("lite", "full"):
         pose_model = preset_model_map.get(config.get("tracking_preset", "balanced"), "lite")
 
-    if target_fps >= 50 and pose_model in ("full", "heavy"):
+    if target_fps >= 50 and pose_model == "full":
         print(f"[PERF] Câmera a {target_fps} FPS com modelo '{pose_model}'. Para 60 FPS estáveis na CPU, use o preset 'Competitive' (modelo lite).")
 
     try:

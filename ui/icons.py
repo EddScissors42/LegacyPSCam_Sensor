@@ -503,7 +503,6 @@ def generate_mode_icons_pil(size=(15, 15), scale: int = 4):
     Renders supersampled PIL.Image RGBA icons for the calibration mode preset cards:
     - balanced: mode_balanced.svg (active: PlayStation Blue #00439C, inactive: Slate #64748B)
     - competitive: mode_competitive.svg (active: PlayStation Blue #00439C, inactive: Slate #64748B)
-    - stable: mode_stable.svg / mode_.svg (active: PlayStation Blue #00439C, inactive: Slate #64748B)
     Returns dict: {pid: (pil_act, pil_inact)} rendered at size * scale.
     """
     base_dir = Path(__file__).resolve().parent
@@ -518,7 +517,6 @@ def generate_mode_icons_pil(size=(15, 15), scale: int = 4):
 
     path_bal = find_icon(["mode_balanced.svg"])
     path_comp = find_icon(["mode_competitive.svg"])
-    path_stable = find_icon(["mode_stable.svg", "mode_.svg"])
 
     col_act = "#00439C"
     col_inact = "#64748B"
@@ -527,8 +525,6 @@ def generate_mode_icons_pil(size=(15, 15), scale: int = 4):
     bal_inact = render_svg_icon_pil(path_bal, size=size, color_hex=col_inact, scale=scale)
     comp_act = render_svg_icon_pil(path_comp, size=size, color_hex=col_act, scale=scale)
     comp_inact = render_svg_icon_pil(path_comp, size=size, color_hex=col_inact, scale=scale)
-    stab_act = render_svg_icon_pil(path_stable, size=size, color_hex=col_act, scale=scale)
-    stab_inact = render_svg_icon_pil(path_stable, size=size, color_hex=col_inact, scale=scale)
 
     # Procedural fallbacks if SVGs are missing or fail to render
     w, h = size[0] * scale, size[1] * scale
@@ -564,20 +560,6 @@ def generate_mode_icons_pil(size=(15, 15), scale: int = 4):
         d.polygon(pts, fill=col_tuple)
         return img
 
-    def make_fallback_shield(col_tuple):
-        img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-        d = ImageDraw.Draw(img)
-        pts = [
-            (w * 0.50, h * 0.08),
-            (w * 0.85, h * 0.22),
-            (w * 0.85, h * 0.55),
-            (w * 0.50, h * 0.92),
-            (w * 0.15, h * 0.55),
-            (w * 0.15, h * 0.22),
-        ]
-        d.polygon(pts, fill=col_tuple)
-        return img
-
     col_act_tuple = (0, 67, 156, 255)
     col_inact_tuple = (100, 116, 139, 255)
 
@@ -589,15 +571,10 @@ def generate_mode_icons_pil(size=(15, 15), scale: int = 4):
         comp_act = make_fallback_lightning(col_act_tuple)
     if comp_inact is None:
         comp_inact = make_fallback_lightning(col_inact_tuple)
-    if stab_act is None:
-        stab_act = make_fallback_shield(col_act_tuple)
-    if stab_inact is None:
-        stab_inact = make_fallback_shield(col_inact_tuple)
 
     return {
         "balanced": (bal_act, bal_inact),
         "competitive": (comp_act, comp_inact),
-        "stable": (stab_act, stab_inact),
     }
 
 

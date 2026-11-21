@@ -11,7 +11,7 @@ O sistema é baseado em uma **arquitetura modular em pacotes**, onde cada etapa 
 ```
 LegacyPSCam_Sensor/
 ├── main.py                     # Ponto de entrada (CLI dispatcher e inicializador)
-├── test_suite.py               # Suíte de testes automatizados (15/15 suítes integradas)
+├── test_suite.py               # Suíte de testes automatizados (16/16 suítes integradas)
 ├── config.json                 # Gerenciamento e persistência das configurações locais
 ├── THIRD_PARTY_NOTICES.md      # Avisos de direitos autorais, licenças e separação de IP do firmware
 ├── driver/
@@ -30,7 +30,8 @@ LegacyPSCam_Sensor/
 │   ├── camera_manager.py       # Descoberta, negociação DirectShow/WinUSB e captura assíncrona
 │   ├── stereo_matcher.py       # Motor de Visão Estéreo (Retificação, Triangulação Esparsa 3D e Máscara Densa)
 │   ├── pose_tracker.py         # Motor MediaPipe Pose e máscara anatômica 320x240
-│   ├── pose_filters.py         # Filtros cinemáticos (HandAnchor, AdaptiveSmoother, SkeletonCalibrator, PTZ)
+│   ├── pose_filters.py         # Filtros cinemáticos (HandAnchor, AdaptiveSmoother, SkeletonCalibrator, Smart Body PTZ)
+│   ├── person_lock.py          # Subsistema modular Person Lock-In (InertialCoastingFilter, DancerIdentityLock)
 │   ├── virtual_phone.py        # Cliente WebSocket UbiArt (/smartphone), Calibrador Adaptativo e Acelerômetro 3D
 │   ├── telemetry_benchmark.py  # Benchmark comparativo de telemetria (Câmera vs DS4), alinhamento temporal e ganho
 │   ├── ds4_controller.py       # Driver Bluetooth/USB HID nativo DualShock 4 (500+ Hz, IMU, botões e vibração)
@@ -52,8 +53,7 @@ LegacyPSCam_Sensor/
 │   └── fonts/                  # Fontes TTF (Kanit, InterTight, NationalPark)
 ├── models/
 │   ├── pose_landmarker_lite.task  # Modelo MediaPipe Pose Lite (Perfil Competitivo)
-│   ├── pose_landmarker_full.task  # Modelo MediaPipe Pose Full (Perfil Equilibrado)
-│   └── pose_landmarker_heavy.task # Modelo MediaPipe Pose Heavy (Perfil Ultra Estável)
+│   └── pose_landmarker_full.task  # Modelo MediaPipe Pose Full (Perfil Equilibrado)
 └── tools/
     ├── Kinect10.dll               # DLL proxy de 32 bits para a pasta do Just Dance PC
     └── get_cameras.ps1            # Script PowerShell auxiliar para enumeração de câmeras WinRT

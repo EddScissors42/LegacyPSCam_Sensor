@@ -124,8 +124,13 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
         self.camera_list = []
         self.active_tab = "video"
         self.current_calib_preset = self.cfg.get("tracking_preset", "balanced")
+        if self.current_calib_preset == "stable":
+            self.current_calib_preset = "balanced"
+            self.cfg["tracking_preset"] = "balanced"
         if self.current_calib_preset in CALIB_PRESETS:
             self.cfg["pose_model"] = CALIB_PRESETS[self.current_calib_preset].get("pose_model", "full")
+        elif str(self.cfg.get("pose_model", "")).strip().lower() == "heavy":
+            self.cfg["pose_model"] = "full"
         self.is_adv_calib_open = False
         self._is_closing = False
         self._is_connecting_ds4 = False

@@ -1,4 +1,4 @@
-__version__ = "0.8.1"
+__version__ = "0.8.2"
 STAGE = "Alpha"
 VERSION_STRING = f"v{__version__} ({STAGE})"
 APP_NAME = "Legacy PSCam Sensor"

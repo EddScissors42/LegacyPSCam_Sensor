@@ -41,6 +41,9 @@ All non-essential overhead has been removed while perfecting the core components
 | DualShock 4 & Clones (Level A) | Native Bluetooth/USB HID driver supporting official DS4, licensed pads (Hori, Nacon, Razer, Astro, Scuf) and clone chips (ShanWan, DragonRise) with automatic IMU frozen (0G) diagnostic. | Implemented |
 | Emulate Kinect (Zero-File-Replacement) | Emulates Kinect directly in game memory via process detection; keeps original Kinect10.dll on disk intact. | Implemented |
 | High-Resolution Windows Timer (1ms) | Python timer synchronization ensuring `Sleep(33)` in `Kinect10.dll` delivers solid 30 FPS. | Implemented |
+| Person Lock-In Subsystem | Modular tracking lock combining 3D/2D inertial coasting, HSV torso color identity signature, and ROI attenuation. | Implemented |
+| Smart PTZ Auto-Framing | FaceFollow PTZ with 360° spin head fallback and adaptive zoom. | Implemented |
+| High-Speed Stereo Luminance | Direct monochrome extraction and zero-cost rectification achieving rock-solid 60 FPS on PS4 Camera. | Implemented |
 
 ---
 
@@ -60,7 +63,7 @@ All non-essential overhead has been removed while perfecting the core components
 LegacyPSCam_Sensor/
 ├── main.py                     # CLI launcher and entry point
 ├── version.py                  # Official versioning & build metadata (v0.7.3 Alpha)
-├── test_suite.py               # 14 complete automated test suites (14/14 PASSED)
+├── test_suite.py               # 16 complete automated test suites (16/16 PASSED)
 ├── config.json                 # Saved user preferences
 ├── THIRD_PARTY_NOTICES.md      # Licensing & third-party attribution notices
 ├── driver/
@@ -70,7 +73,8 @@ LegacyPSCam_Sensor/
 │   ├── camera_manager.py       # Camera discovery and async capture
 │   ├── stereo_matcher.py       # Stereo Vision Engine (Rectification, Sub-Pixel PyrLK 3D, Depth Mask)
 │   ├── pose_tracker.py         # MediaPipe engine, Hand Anchor, Calibrator & EMA
-│   ├── pose_filters.py         # Kinematic filters (HandAnchor, AdaptiveSmoother, SkeletonCalibrator, PTZ)
+│   ├── pose_filters.py         # Kinematic filters (HandAnchor, AdaptiveSmoother, SkeletonCalibrator, Smart Body PTZ)
+│   ├── person_lock.py          # Modular Person Lock-In (InertialCoastingFilter, DancerIdentityLock)
 │   ├── virtual_phone.py        # UbiArt Smartphone WebSocket client & 3D Hand Accelerometer
 │   ├── ds4_controller.py       # Native Bluetooth/USB HID DualShock 4 driver
 │   ├── telemetry_benchmark.py  # Comparative telemetry benchmark (Camera vs DS4)
@@ -90,8 +94,7 @@ LegacyPSCam_Sensor/
 │   └── fonts/                  # Bundled typography (Kanit, National Park, Inter Tight)
 ├── models/                     # Pre-trained neural network models
 │   ├── pose_landmarker_lite.task  # Google MediaPipe Pose Lite model (Competitive preset)
-│   ├── pose_landmarker_full.task  # Google MediaPipe Pose Full model (Balanced preset)
-│   └── pose_landmarker_heavy.task # Google MediaPipe Pose Heavy model (Ultra Stable preset)
+│   └── pose_landmarker_full.task  # Google MediaPipe Pose Full model (Balanced preset)
 └── tools/                      # Setup utilities & proxy DLL
     ├── Kinect10.dll            # 32-bit proxy DLL for Just Dance PC root folder
     └── get_cameras.ps1         # WinRT camera enumeration script
