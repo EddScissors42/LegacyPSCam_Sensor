@@ -433,6 +433,277 @@ class UIPagesMixin:
         layout.addWidget(self.webcam_card)
 
         # =====================================================================
+        # 2.5 Phone Camera Views (Android or iOS via Wi-Fi WebApp QR Code)
+        # =====================================================================
+        # 2.5.1 Disconnected View (Status Balloon + QR Code Pairing Card)
+        self.phone_cam_disconnected_box = QWidget(self.page_video)
+        ph_disc_layout = QVBoxLayout(self.phone_cam_disconnected_box)
+        ph_disc_layout.setContentsMargins(0, 0, 0, 0)
+        ph_disc_layout.setSpacing(12)
+
+        self.phone_cam_status_card = QFrame(self.phone_cam_disconnected_box)
+        self.phone_cam_status_card.setProperty("class", "status_balloon")
+        ph_bal_layout = QHBoxLayout(self.phone_cam_status_card)
+        ph_bal_layout.setContentsMargins(16, 14, 16, 14)
+        ph_bal_layout.setSpacing(14)
+
+        self.lbl_phone_cam_icon = QLabel(self.phone_cam_status_card)
+        self.lbl_phone_cam_icon.setPixmap(self.pix_status_warn)
+        self.lbl_phone_cam_icon.setFixedSize(38, 38)
+        self.lbl_phone_cam_icon.setStyleSheet("background: transparent; border: none;")
+        ph_bal_layout.addWidget(self.lbl_phone_cam_icon)
+
+        ph_text_col = QVBoxLayout()
+        ph_text_col.setSpacing(2)
+        self.lbl_phone_cam_conn_title = QLabel("Phone Camera waiting for connection", self.phone_cam_status_card)
+        self.lbl_phone_cam_conn_title.setStyleSheet(
+            f"font-family: '{self.font_heading}'; font-size: 14px; font-weight: bold; color: {PALETTE['text_main']}; background: transparent; border: none;"
+        )
+        self.lbl_phone_cam_info = QLabel("Scan the QR Code below with your Android or iOS camera on the same Wi-Fi network", self.phone_cam_status_card)
+        self.lbl_phone_cam_info.setStyleSheet(
+            f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
+        )
+        ph_text_col.addWidget(self.lbl_phone_cam_conn_title)
+        ph_text_col.addWidget(self.lbl_phone_cam_info)
+        ph_bal_layout.addLayout(ph_text_col, stretch=1)
+        ph_disc_layout.addWidget(self.phone_cam_status_card)
+
+        # QR Code & English Connection Instructions Card
+        self.phone_cam_qr_card = QFrame(self.phone_cam_disconnected_box)
+        self.phone_cam_qr_card.setProperty("class", "card")
+        qr_card_layout = QVBoxLayout(self.phone_cam_qr_card)
+        qr_card_layout.setContentsMargins(16, 14, 16, 14)
+        qr_card_layout.setSpacing(10)
+
+        lbl_qr_hdr = QLabel("CONNECT SMARTPHONE CAMERA (NO APP INSTALL REQUIRED)", self.phone_cam_qr_card)
+        lbl_qr_hdr.setStyleSheet(
+            f"font-family: '{self.font_heading}'; font-size: 12px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent; border: none;"
+        )
+        qr_card_layout.addWidget(lbl_qr_hdr)
+
+        qr_row = QHBoxLayout()
+        qr_row.setSpacing(16)
+
+        # Left: Crisp QR Code Box
+        self.qr_frame_box = QFrame(self.phone_cam_qr_card)
+        self.qr_frame_box.setFixedSize(172, 172)
+        self.qr_frame_box.setStyleSheet(f"""
+            QFrame {{
+                background-color: #FFFFFF;
+                border: 1px solid {PALETTE["border_subtle"]};
+                border-radius: 12px;
+            }}
+        """)
+        qr_box_layout = QVBoxLayout(self.qr_frame_box)
+        qr_box_layout.setContentsMargins(8, 8, 8, 8)
+        qr_box_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self.lbl_phone_qr_img = QLabel(self.qr_frame_box)
+        self.lbl_phone_qr_img.setFixedSize(154, 154)
+        self.lbl_phone_qr_img.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_phone_qr_img.setStyleSheet("background: transparent; border: none;")
+        qr_box_layout.addWidget(self.lbl_phone_qr_img)
+        qr_row.addWidget(self.qr_frame_box)
+
+        # Right: Step-by-Step Instructions in English + URL Action Bar
+        instr_col = QVBoxLayout()
+        instr_col.setSpacing(8)
+
+        lbl_steps = QLabel(
+            "<b>1. Same Wi-Fi Network:</b> Connect your Android or iPhone to the same local network as this PC.<br><br>"
+            "<b>2. Scan QR Code:</b> Open your phone's Camera app and point it at the QR Code (or open the URL below in Safari or Chrome).<br><br>"
+            "<b>3. Allow Camera Access:</b> On the local HTTPS security prompt, tap <b>Advanced → Proceed</b> (or <b>Show Details → Visit this website</b>) and grant camera permission.",
+            self.phone_cam_qr_card
+        )
+        lbl_steps.setWordWrap(True)
+        lbl_steps.setStyleSheet(
+            f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['text_main']}; background: transparent; border: none; line-height: 135%;"
+        )
+        instr_col.addWidget(lbl_steps)
+        instr_col.addStretch()
+
+        url_bar = QHBoxLayout()
+        url_bar.setSpacing(8)
+
+        self.lbl_phone_cam_url = QLabel("https://127.0.0.1:8443", self.phone_cam_qr_card)
+        self.lbl_phone_cam_url.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.lbl_phone_cam_url.setStyleSheet(
+            f"font-family: '{self.font_heading}'; font-size: 12px; font-weight: bold; color: {PALETTE['ps_blue']}; "
+            f"background-color: {PALETTE['blue_pastel']}; padding: 6px 10px; border-radius: 6px; border: none;"
+        )
+        url_bar.addWidget(self.lbl_phone_cam_url, stretch=1)
+
+        self.btn_copy_phone_url = QPushButton("Copy URL", self.phone_cam_qr_card)
+        self.btn_copy_phone_url.setProperty("class", "btn_secondary")
+        self.btn_copy_phone_url.setFixedHeight(32)
+        self.btn_copy_phone_url.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_copy_phone_url.clicked.connect(self._on_copy_phone_cam_url)
+        url_bar.addWidget(self.btn_copy_phone_url)
+
+        self.btn_refresh_phone_qr = QPushButton("↻", self.phone_cam_qr_card)
+        self.btn_refresh_phone_qr.setProperty("class", "btn_secondary")
+        self.btn_refresh_phone_qr.setFixedSize(34, 32)
+        self.btn_refresh_phone_qr.setToolTip("Refresh local IP and QR Code")
+        self.btn_refresh_phone_qr.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_refresh_phone_qr.clicked.connect(lambda: self._refresh_phone_cam_qr(rotate_token=True))
+        url_bar.addWidget(self.btn_refresh_phone_qr)
+
+        instr_col.addLayout(url_bar)
+        qr_row.addLayout(instr_col, stretch=1)
+        qr_card_layout.addLayout(qr_row)
+
+        ph_disc_layout.addWidget(self.phone_cam_qr_card)
+        layout.addWidget(self.phone_cam_disconnected_box)
+
+        # 2.5.2 Connected Card (Shown when smartphone connects; QR Code disappears)
+        self.phone_cam_card = QFrame(self.page_video)
+        self.phone_cam_card.setProperty("class", "card")
+        self.phone_cam_card.setMinimumHeight(280)
+        ph_conn_layout = QVBoxLayout(self.phone_cam_card)
+        ph_conn_layout.setContentsMargins(16, 14, 16, 14)
+        ph_conn_layout.setSpacing(10)
+
+        lbl_ph_title = QLabel("PHONE CAMERA VIDEO SETTINGS", self.phone_cam_card)
+        lbl_ph_title.setStyleSheet(
+            f"font-family: '{self.font_heading}'; font-size: 12px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent; border: none;"
+        )
+        ph_conn_layout.addWidget(lbl_ph_title)
+
+        self.lbl_phone_cam_ready_info = QLabel("Smartphone connected and ready (Wi-Fi WebApp)", self.phone_cam_card)
+        self.lbl_phone_cam_ready_info.setStyleSheet(
+            f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['status_ok']}; background: transparent; border: none;"
+        )
+        ph_conn_layout.addWidget(self.lbl_phone_cam_ready_info)
+
+        # Row 1: Connected Smartphone Info & Camera Lens Selector
+        block_ph_dev = QFrame(self.phone_cam_card)
+        block_ph_dev.setObjectName("settingBlockPhoneDev")
+        block_ph_dev.setFixedHeight(92)
+        block_ph_dev.setStyleSheet(f"""
+            QFrame#settingBlockPhoneDev {{
+                background-color: #FFFFFF;
+                border: 1px solid {PALETTE["border_subtle"]};
+                border-radius: 10px;
+            }}
+            QFrame#settingBlockPhoneDev:hover {{
+                border-color: {PALETTE["input_border"]};
+            }}
+        """)
+        ph_dev_layout = QVBoxLayout(block_ph_dev)
+        ph_dev_layout.setContentsMargins(14, 10, 14, 10)
+        ph_dev_layout.setSpacing(4)
+
+        lbl_ph_dev_title = QLabel("CONNECTED SMARTPHONE", block_ph_dev)
+        lbl_ph_dev_title.setStyleSheet(
+            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent; border: none;"
+        )
+        ph_dev_layout.addWidget(lbl_ph_dev_title)
+
+        self.lbl_phone_device_meta = QLabel("Active Wireless Video Source • Manage smartphone streaming connection.", block_ph_dev)
+        self.lbl_phone_device_meta.setStyleSheet(
+            f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
+        )
+        ph_dev_layout.addWidget(self.lbl_phone_device_meta)
+
+        ph_dev_row = QHBoxLayout()
+        ph_dev_row.setContentsMargins(0, 0, 0, 0)
+        ph_dev_row.setSpacing(8)
+
+        self.btn_disconnect_phone = QPushButton("Disconnect", block_ph_dev)
+        self.btn_disconnect_phone.setProperty("class", "btn_secondary")
+        self.btn_disconnect_phone.setFixedHeight(32)
+        self.btn_disconnect_phone.setFixedWidth(130)
+        self.btn_disconnect_phone.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_disconnect_phone.setToolTip("Disconnect current phone and show QR Code again")
+        self.btn_disconnect_phone.clicked.connect(self._on_disconnect_phone_cam)
+        ph_dev_row.addWidget(self.btn_disconnect_phone)
+        ph_dev_row.addStretch()
+
+        ph_dev_layout.addLayout(ph_dev_row)
+        ph_conn_layout.addWidget(block_ph_dev)
+
+        # Row 2: Resolution & FPS side-by-side blocks
+        row_ph_res_fps = QHBoxLayout()
+        row_ph_res_fps.setSpacing(10)
+
+        block_ph_res = QFrame(self.phone_cam_card)
+        block_ph_res.setObjectName("settingBlockPhoneRes")
+        block_ph_res.setFixedHeight(108)
+        block_ph_res.setStyleSheet(f"""
+            QFrame#settingBlockPhoneRes {{
+                background-color: #FFFFFF;
+                border: 1px solid {PALETTE["border_subtle"]};
+                border-radius: 10px;
+            }}
+            QFrame#settingBlockPhoneRes:hover {{
+                border-color: {PALETTE["input_border"]};
+            }}
+        """)
+        ph_res_layout = QVBoxLayout(block_ph_res)
+        ph_res_layout.setContentsMargins(14, 10, 14, 10)
+        ph_res_layout.setSpacing(4)
+
+        lbl_ph_res_title = QLabel("RESOLUTION", block_ph_res)
+        lbl_ph_res_title.setStyleSheet(
+            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent; border: none;"
+        )
+        ph_res_layout.addWidget(lbl_ph_res_title)
+
+        lbl_ph_res_sub = QLabel("640x480 provides the lowest Wi-Fi latency. The game receives 640x480.", block_ph_res)
+        lbl_ph_res_sub.setWordWrap(True)
+        lbl_ph_res_sub.setStyleSheet(
+            f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent; border: none; line-height: 120%;"
+        )
+        ph_res_layout.addWidget(lbl_ph_res_sub)
+
+        self.cb_phone_res = QComboBox(block_ph_res)
+        self.cb_phone_res.setFixedHeight(32)
+        self.cb_phone_res.addItems(["640x480 (Recommended)", "1280x720"])
+        self.cb_phone_res.currentIndexChanged.connect(self._on_phone_cam_settings_changed)
+        ph_res_layout.addWidget(self.cb_phone_res)
+        row_ph_res_fps.addWidget(block_ph_res, stretch=1)
+
+        block_ph_fps = QFrame(self.phone_cam_card)
+        block_ph_fps.setObjectName("settingBlockPhoneFps")
+        block_ph_fps.setFixedHeight(108)
+        block_ph_fps.setStyleSheet(f"""
+            QFrame#settingBlockPhoneFps {{
+                background-color: #FFFFFF;
+                border: 1px solid {PALETTE["border_subtle"]};
+                border-radius: 10px;
+            }}
+            QFrame#settingBlockPhoneFps:hover {{
+                border-color: {PALETTE["input_border"]};
+            }}
+        """)
+        ph_fps_layout = QVBoxLayout(block_ph_fps)
+        ph_fps_layout.setContentsMargins(14, 10, 14, 10)
+        ph_fps_layout.setSpacing(4)
+
+        lbl_ph_fps_title = QLabel("FRAMERATE (FPS)", block_ph_fps)
+        lbl_ph_fps_title.setStyleSheet(
+            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent; border: none;"
+        )
+        ph_fps_layout.addWidget(lbl_ph_fps_title)
+
+        lbl_ph_fps_sub = QLabel("Target wireless stream speed. 60 FPS requires strong 5 GHz Wi-Fi signal.", block_ph_fps)
+        lbl_ph_fps_sub.setWordWrap(True)
+        lbl_ph_fps_sub.setStyleSheet(
+            f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent; border: none; line-height: 120%;"
+        )
+        ph_fps_layout.addWidget(lbl_ph_fps_sub)
+
+        self.cb_phone_fps = QComboBox(block_ph_fps)
+        self.cb_phone_fps.setFixedHeight(32)
+        self.cb_phone_fps.addItems(["30 FPS (Recommended)", "60 FPS"])
+        self.cb_phone_fps.currentIndexChanged.connect(self._on_phone_cam_settings_changed)
+        ph_fps_layout.addWidget(self.cb_phone_fps)
+        row_ph_res_fps.addWidget(block_ph_fps, stretch=1)
+
+        ph_conn_layout.addLayout(row_ph_res_fps)
+        layout.addWidget(self.phone_cam_card)
+
+        # =====================================================================
         # 3. Additional Display Options (Shown ONLY when connected)
         # =====================================================================
         self.display_card = QFrame(self.page_video)
@@ -544,6 +815,84 @@ class UIPagesMixin:
 
         card_layout.addLayout(cards_row)
 
+        # 2-Player Lite AI Warning Banner (displayed right below model selection when 2 Players is active)
+        self.two_player_warn_box = QFrame(main_card)
+        self.two_player_warn_box.setObjectName("twoPlayerWarnBox")
+        self.two_player_warn_box.setStyleSheet("""
+            QFrame#twoPlayerWarnBox {
+                background-color: #FEF3C7;
+                border: 1px solid #FCD34D;
+                border-radius: 8px;
+            }
+        """)
+        tp_warn_layout = QHBoxLayout(self.two_player_warn_box)
+        tp_warn_layout.setContentsMargins(12, 8, 12, 8)
+        tp_warn_layout.setSpacing(10)
+
+        lbl_tp_icon = QLabel("[!]", self.two_player_warn_box)
+        lbl_tp_icon.setStyleSheet(
+            "font-family: monospace; font-size: 13px; font-weight: bold; color: #92400E; background: transparent; border: none;"
+        )
+        tp_warn_layout.addWidget(lbl_tp_icon, alignment=Qt.AlignmentFlag.AlignTop)
+
+        self.lbl_2p_model_warning = QLabel(
+            "2-Player Mode Active: Lite AI (Competitive) is strongly recommended to sustain stable 30–60 FPS on the CPU when tracking two dancers simultaneously.",
+            self.two_player_warn_box,
+        )
+        self.lbl_2p_model_warning.setWordWrap(True)
+        self.lbl_2p_model_warning.setStyleSheet(
+            f"font-family: '{self.font_body}'; font-size: 10.5px; font-weight: 600; color: #92400E; background: transparent; border: none;"
+        )
+        tp_warn_layout.addWidget(self.lbl_2p_model_warning, stretch=1)
+        self.two_player_warn_box.setVisible(int(self.cfg.get("max_players", 1)) >= 2)
+        card_layout.addWidget(self.two_player_warn_box)
+
+        # Players Mode Selector Block (1 Player Solo / 2 Players Duo)
+        self.block_players_mode = QFrame(main_card)
+        self.block_players_mode.setObjectName("settingBlockPlayersMode")
+        self.block_players_mode.setFixedHeight(96)
+        self.block_players_mode.setStyleSheet(f"""
+            QFrame#settingBlockPlayersMode {{
+                background-color: #FFFFFF;
+                border: 1px solid {PALETTE["border_subtle"]};
+                border-radius: 10px;
+            }}
+            QFrame#settingBlockPlayersMode:hover {{
+                border-color: {PALETTE["input_border"]};
+            }}
+        """)
+        pm_layout = QVBoxLayout(self.block_players_mode)
+        pm_layout.setContentsMargins(14, 10, 14, 10)
+        pm_layout.setSpacing(3)
+
+        lbl_pm_title = QLabel("PLAYERS MODE", self.block_players_mode)
+        lbl_pm_title.setStyleSheet(
+            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent; border: none;"
+        )
+        pm_layout.addWidget(lbl_pm_title)
+
+        lbl_pm_sub = QLabel(
+            "Choose whether to play by yourself or dance with a friend. The sensor tracks both players smoothly without mixing anyone up, even when dancing close together.",
+            self.block_players_mode,
+        )
+        lbl_pm_sub.setWordWrap(True)
+        lbl_pm_sub.setStyleSheet(
+            f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
+        )
+        pm_layout.addWidget(lbl_pm_sub)
+
+        self.cb_players_mode = QComboBox(self.block_players_mode)
+        self.cb_players_mode.setFixedHeight(32)
+        self.cb_players_mode.addItems([
+            "1 Player",
+            "2 Players",
+        ])
+        curr_mp = max(1, min(2, int(self.cfg.get("max_players", 1))))
+        self.cb_players_mode.setCurrentIndex(1 if curr_mp >= 2 else 0)
+        self.cb_players_mode.currentIndexChanged.connect(self._on_players_mode_changed)
+        pm_layout.addWidget(self.cb_players_mode)
+        card_layout.addWidget(self.block_players_mode)
+
         # Auto-height callout
         auto_h = QFrame(main_card)
         auto_h.setStyleSheet(f"""
@@ -627,10 +976,10 @@ class UIPagesMixin:
 
         # Reset button row
         adv_actions = QHBoxLayout()
-        btn_reset = QPushButton("↺ Reset to Recommended Profile (Balanced)", self.adv_drawer)
+        btn_reset = QPushButton("↺ Reset to Recommended Profile (Competitive — Lite AI)", self.adv_drawer)
         btn_reset.setProperty("class", "btn_secondary")
         btn_reset.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_reset.clicked.connect(lambda: self._select_calib_preset("balanced"))
+        btn_reset.clicked.connect(lambda: self._select_calib_preset("competitive"))
         adv_actions.addWidget(btn_reset)
         adv_actions.addStretch()
         adv_layout.addLayout(adv_actions)
@@ -692,40 +1041,6 @@ class UIPagesMixin:
         warn_layout.addWidget(lbl_warn_text, stretch=1)
         exp_layout.addWidget(warn_box)
 
-        # Emulate Kinect Feature Box (Zero-File-Replacement Mode)
-        self.emulate_kinect_box = QFrame(exp_card)
-        self.emulate_kinect_box.setStyleSheet(f"""
-            QFrame {{
-                background-color: {PALETTE["input_bg"]};
-                border: 1px solid {PALETTE["border_subtle"]};
-                border-radius: 8px;
-            }}
-        """)
-        ek_layout = QVBoxLayout(self.emulate_kinect_box)
-        ek_layout.setContentsMargins(14, 12, 14, 12)
-        ek_layout.setSpacing(6)
-
-        self.chk_emulate_kinect = QCheckBox("Emulate Kinect", self.emulate_kinect_box)
-        self.chk_emulate_kinect.setStyleSheet(
-            f"font-family: '{self.font_heading}'; font-size: 13px; font-weight: bold; color: {PALETTE['text_main']};"
-        )
-        self.chk_emulate_kinect.setChecked(bool(self.cfg.get("emulate_kinect_enabled", False)))
-        self.chk_emulate_kinect.stateChanged.connect(self._on_emulate_kinect_toggle_changed)
-        ek_layout.addWidget(self.chk_emulate_kinect)
-
-        lbl_ek_desc = QLabel(
-            "Emulates the Kinect sensor directly in Just Dance's memory without replacing or modifying the "
-            "Kinect10.dll file in the game folder. The sensor automatically detects when the game is launched and connects tracking in real time.",
-            self.emulate_kinect_box
-        )
-        lbl_ek_desc.setWordWrap(True)
-        lbl_ek_desc.setStyleSheet(
-            f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
-        )
-        ek_layout.addWidget(lbl_ek_desc)
-
-        exp_layout.addWidget(self.emulate_kinect_box)
-
         # Auto-Frame Feature Box
         self.auto_frame_box = QFrame(exp_card)
         self.auto_frame_box.setStyleSheet(f"""
@@ -777,13 +1092,6 @@ class UIPagesMixin:
         self.chk_vphone_enabled.setChecked(bool(self.cfg.get("virtual_phone_enabled", False)))
         self.chk_vphone_enabled.stateChanged.connect(self._on_vphone_toggle_changed)
         vp_layout.addWidget(self.chk_vphone_enabled)
-
-        self.lbl_vphone_kinect_conflict = QLabel("Emulate Kinect is active, this feature is unavailable.", vphone_box)
-        self.lbl_vphone_kinect_conflict.setStyleSheet(
-            f"font-family: '{self.font_heading}'; font-size: 10px; font-weight: bold; color: #DC2626; background: transparent; border: none;"
-        )
-        self.lbl_vphone_kinect_conflict.setVisible(False)
-        vp_layout.addWidget(self.lbl_vphone_kinect_conflict)
 
         self.lbl_vp_desc = QLabel(
             "Emulates a smartphone connected to Just Dance via WebSocket/TLS (/smartphone) and converts your hand motion "
@@ -876,7 +1184,7 @@ class UIPagesMixin:
         self.btn_vphone_ftue = QPushButton("Skip Finish", self.vphone_details_frame)
         self.btn_vphone_ftue.setStyleSheet(btn_outline_style)
         self.btn_vphone_ftue.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_vphone_ftue.setToolTip("for Just Dance 2022 phone tutorial")
+        self.btn_vphone_ftue.setToolTip("Skip phone tutorial prompt in Just Dance PC")
         self.btn_vphone_ftue.clicked.connect(self._on_skip_finish_clicked)
 
         self.btn_vphone_log = QPushButton("Record Log", self.vphone_details_frame)

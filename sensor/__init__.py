@@ -1,6 +1,6 @@
 """
 Legacy PSCam Sensor - Sensor & Tracking Engine Module.
-Unifies camera capture, MediaPipe AI tracking, IPC shared memory,
+Unifies camera capture, MediaPipe AI tracking (1P & 2P), IPC shared memory,
 and OpenCV HUD overlay.
 """
 # Python 3.15 lazy-import compatibility normalization for concurrent.futures
@@ -36,6 +36,15 @@ from .person_lock import (
     DancerIdentityLock,
     PersonLockController,
 )
+from .player_slot import (
+    AppearanceSignature,
+    LongTermIdentityProfile,
+    PlayerFrame,
+    MultiPoseFrame,
+    PlayerSlotState,
+    MultiPlayerAssociator,
+    compose_player_index_mask,
+)
 from .gesture_detector import (
     ArmRaiseGestureDetector,
     check_arm_raised,
@@ -43,11 +52,16 @@ from .gesture_detector import (
 )
 from .kinect_shared_memory import (
     KinectBridge, KinectSharedMemory, KinectMultiPoseSharedMemory, KinectImageSharedMemory, KinectCoachXSharedMemory,
+    get_kinect_bridge, close_kinect_bridge,
     SHARED_NAME, SHARED_SIZE, MULTI_SHARED_NAME, MULTI_SHARED_SIZE, IMAGE_SHARED_NAME, IMAGE_SHARED_SIZE,
     COACHX_SHARED_NAME, COACHX_SHARED_SIZE, NEUTRAL_POSE, JOINT_NAMES
 )
-from .config_manager import ConfigManager, parse_preset, PRESETS_PSCAM, PRESETS_WEBCAM
-from .kinect_emulator import KinectEmulatorDaemon
+from .config_manager import (
+    ConfigManager, parse_preset, PRESETS_PSCAM, PRESETS_WEBCAM, PRESETS_PHONE_CAM,
+    get_app_data_dir, get_config_path, get_logs_dir, is_portable_mode
+)
+from .phone_camera import PhoneCameraServer, QRCodeGenerator, SelfSignedTLSManager, get_phone_camera_server
+from .kinect_emulator import KinectEmulatorDaemon, get_kinect_emulator
 from .virtual_phone import (
     VirtualPhoneController, HandAccelerometer, AdaptiveCalibrationTuner, get_virtual_phone,
     find_just_dance_pids, detect_active_song_from_game_process
@@ -97,6 +111,7 @@ def __getattr__(name: str):
 def __dir__():
     return sorted(set(globals().keys()) | set(__all__))
 
+
 __all__ = [
     "CameraManager",
     "LatestFrameCamera",
@@ -122,6 +137,13 @@ __all__ = [
     "InertialCoastingFilter",
     "DancerIdentityLock",
     "PersonLockController",
+    "AppearanceSignature",
+    "LongTermIdentityProfile",
+    "PlayerFrame",
+    "MultiPoseFrame",
+    "PlayerSlotState",
+    "MultiPlayerAssociator",
+    "compose_player_index_mask",
     "ArmRaiseGestureDetector",
     "check_arm_raised",
     "dispatch_enter_keystroke",
@@ -132,6 +154,8 @@ __all__ = [
     "KinectMultiPoseSharedMemory",
     "KinectImageSharedMemory",
     "KinectCoachXSharedMemory",
+    "get_kinect_bridge",
+    "close_kinect_bridge",
     "SHARED_NAME",
     "SHARED_SIZE",
     "MULTI_SHARED_NAME",
@@ -144,9 +168,18 @@ __all__ = [
     "run_tracking_session",
     "TrackingOverlay",
     "ConfigManager",
+    "get_app_data_dir",
+    "get_config_path",
+    "get_logs_dir",
+    "is_portable_mode",
     "parse_preset",
     "PRESETS_PSCAM",
     "PRESETS_WEBCAM",
+    "PRESETS_PHONE_CAM",
+    "PhoneCameraServer",
+    "QRCodeGenerator",
+    "SelfSignedTLSManager",
+    "get_phone_camera_server",
     "VirtualPhoneController",
     "HandAccelerometer",
     "AdaptiveCalibrationTuner",
@@ -168,6 +201,7 @@ __all__ = [
     "STEREO_MODES",
     "PS4_STEREO_BASELINE_M",
     "KinectEmulatorDaemon",
+    "get_kinect_emulator",
     "SessionLogger",
     "get_session_logger",
 ]

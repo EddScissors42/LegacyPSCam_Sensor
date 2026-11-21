@@ -66,6 +66,7 @@ from ui.benchmark_dialog import (
 from ui.icons import (
     generate_icons_pil,
     generate_ds4_icons_pil,
+    generate_phone_cam_icons_pil,
     generate_tab_icons_pil,
     generate_controller_tab_icon_pil,
     generate_mode_icons_pil,
@@ -78,10 +79,11 @@ from assets import (
     ICON_CONTROLLER_PATH
 )
 from version import WINDOW_TITLE, VERSION_STRING, APP_NAME
-from sensor.config_manager import ConfigManager, parse_preset, PRESETS_PSCAM, PRESETS_WEBCAM
+from sensor.config_manager import ConfigManager, parse_preset, PRESETS_PSCAM, PRESETS_WEBCAM, PRESETS_PHONE_CAM
 from sensor.camera_manager import CameraManager
-from sensor.kinect_shared_memory import KinectBridge
-from sensor.kinect_emulator import KinectEmulatorDaemon
+from sensor.phone_camera import get_phone_camera_server, QRCodeGenerator
+from sensor.kinect_shared_memory import KinectBridge, get_kinect_bridge, close_kinect_bridge
+from sensor.kinect_emulator import KinectEmulatorDaemon, get_kinect_emulator
 from sensor.virtual_phone import get_virtual_phone
 from sensor.ds4_controller import get_ds4_controller, find_ds4_devices, detect_controller_name
 from sensor.telemetry_benchmark import parse_telemetry_csv, compare_telemetries, find_available_benchmarks
@@ -92,7 +94,6 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
     """Modern Crisp-White & PlayStation Blue primary window in Qt 6."""
     cameras_refreshed_signal = Signal(list)
     tracking_finished_signal = Signal(bool, str)
-    kinect_emulator_status_signal = Signal(bool, str, int)
 
     def __init__(self, parent=None, *args, auto_discover=True, **kwargs):
         if parent is not None and not isinstance(parent, QWidget):
@@ -111,7 +112,7 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
         self.font_body = loaded_fonts.get("body", FONT_BODY)
 
         # Initialize shared memory bridges immediately on startup so Just Dance connects seamlessly
-        self.bridge = KinectBridge()
+        self.bridge = get_kinect_bridge()
 
         self.cfg_mgr = ConfigManager()
         self.cfg = self.cfg_mgr.config
@@ -123,12 +124,12 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
         self._is_refreshing_cams = False
         self.camera_list = []
         self.active_tab = "video"
-        self.current_calib_preset = self.cfg.get("tracking_preset", "balanced")
+        self.current_calib_preset = self.cfg.get("tracking_preset", "competitive")
         if self.current_calib_preset == "stable":
-            self.current_calib_preset = "balanced"
-            self.cfg["tracking_preset"] = "balanced"
+            self.current_calib_preset = "competitive"
+            self.cfg["tracking_preset"] = "competitive"
         if self.current_calib_preset in CALIB_PRESETS:
-            self.cfg["pose_model"] = CALIB_PRESETS[self.current_calib_preset].get("pose_model", "full")
+            self.cfg["pose_model"] = CALIB_PRESETS[self.current_calib_preset].get("pose_model", "lite")
         elif str(self.cfg.get("pose_model", "")).strip().lower() == "heavy":
             self.cfg["pose_model"] = "full"
         self.is_adv_calib_open = False
@@ -160,12 +161,11 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
         ):
             self.vphone.set_enabled(True)
 
-        # Initialize Kinect Emulator Daemon (Zero-File-Replacement Mode)
-        self.kinect_emulator = KinectEmulatorDaemon(self.cfg)
-        self.kinect_emulator.register_status_callback(self._on_emulate_kinect_status_changed)
-        self.kinect_emulator_status_signal.connect(self._update_emulate_kinect_status_ui)
-        if bool(self.cfg.get("emulate_kinect_enabled", False)) and self.cfg.get("camera_mode", "pscam") != "ds4":
-            self.kinect_emulator.start()
+        # Initialize Kinect Emulator Daemon (Zero-File-Replacement Mode — Always Active)
+        self.cfg["emulate_kinect_enabled"] = True
+        self.kinect_emulator = get_kinect_emulator(self.cfg)
+        self.kinect_emulator.enabled = True
+        self.kinect_emulator.start()
 
         self._load_pixmaps()
         self._setup_palette()
@@ -235,17 +235,25 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
             self.pix_ds4_act = self.pix_ds4_inact = QPixmap()
 
         try:
+            p_ph_act, p_ph_inact = generate_phone_cam_icons_pil(target_box=(38, 26), scale=4)
+            self.pix_phone_act = pil_to_qpixmap(p_ph_act, dpr=4.0)
+            self.pix_phone_inact = pil_to_qpixmap(p_ph_inact, dpr=4.0)
+        except Exception as e:
+            print(f"[WARN] Failed to load Phone Camera icons: {e}")
+            self.pix_phone_act = self.pix_phone_inact = QPixmap()
+
+        try:
             p_gear_act, p_gear_inact, p_slid_act, p_slid_inact, p_slid_dis, p_lab_act, p_lab_inact = generate_tab_icons_pil(size=(18, 18), scale=4)
             self.pix_gear_act = pil_to_qpixmap(p_gear_act, dpr=4.0)
             self.pix_gear_inact = pil_to_qpixmap(p_gear_inact, dpr=4.0)
-            self.pix_slid_act = pil_to_qpixmap(p_slid_act, dpr=4.0)
-            self.pix_slid_inact = pil_to_qpixmap(p_slid_inact, dpr=4.0)
-            self.pix_slid_disabled = pil_to_qpixmap(p_slid_dis, dpr=4.0)
+            self.pix_track_act = self.pix_slid_act = pil_to_qpixmap(p_slid_act, dpr=4.0)
+            self.pix_track_inact = self.pix_slid_inact = pil_to_qpixmap(p_slid_inact, dpr=4.0)
+            self.pix_track_disabled = self.pix_slid_disabled = pil_to_qpixmap(p_slid_dis, dpr=4.0)
             self.pix_lab_act = pil_to_qpixmap(p_lab_act, dpr=4.0)
             self.pix_lab_inact = pil_to_qpixmap(p_lab_inact, dpr=4.0)
         except Exception as e:
             print(f"[WARN] Failed to load tab icons: {e}")
-            self.pix_gear_act = self.pix_gear_inact = self.pix_slid_act = self.pix_slid_inact = self.pix_slid_disabled = self.pix_lab_act = self.pix_lab_inact = QPixmap()
+            self.pix_gear_act = self.pix_gear_inact = self.pix_track_act = self.pix_track_inact = self.pix_track_disabled = self.pix_slid_act = self.pix_slid_inact = self.pix_slid_disabled = self.pix_lab_act = self.pix_lab_inact = QPixmap()
 
         try:
             p_ctrl_act, p_ctrl_inact = generate_controller_tab_icon_pil(size=(18, 18), scale=4)
@@ -582,19 +590,19 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
         self.card_ds4.set_icons(self.pix_ds4_act, self.pix_ds4_inact)
         self.card_ds4.clicked.connect(lambda: self._set_mode("ds4"))
         sidebar_layout.addWidget(self.card_ds4)
-        sidebar_layout.addSpacing(14)
+        sidebar_layout.addSpacing(8)
 
-        # Temporary helper reminder for camera tracking
-        self.lbl_emulate_tip = QLabel(
-            "Remember to enable\nExperimental > Emulate Kinect\nto play with camera.",
+        # 1.6 Card Phone Camera (Android or iOS via Wi-Fi WebApp QR Code)
+        self.card_phone_cam = DeviceNavCard(
+            "Phone Camera",
+            "Android or iOS with Wi-Fi",
+            self.font_heading,
+            self.font_body,
             self.sidebar_frame
         )
-        self.lbl_emulate_tip.setWordWrap(True)
-        self.lbl_emulate_tip.setStyleSheet(
-            f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent; line-height: 130%;"
-        )
-        sidebar_layout.addWidget(self.lbl_emulate_tip)
-
+        self.card_phone_cam.set_icons(self.pix_phone_act, self.pix_phone_inact)
+        self.card_phone_cam.clicked.connect(lambda: self._set_mode("phone_cam"))
+        sidebar_layout.addWidget(self.card_phone_cam)
         sidebar_layout.addStretch()
 
         # 1.6 Quick Action: Open Logs Folder
@@ -640,12 +648,13 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
         self.btn_tab_video.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_tab_video.clicked.connect(lambda: self._switch_tab("video"))
 
-        self.btn_tab_calib = QPushButton("  Calibration", self.content_widget)
+        self.btn_tab_calib = QPushButton("  Tracking", self.content_widget)
         self.btn_tab_calib.setFixedSize(130, 42)
         self.btn_tab_calib.setIcon(QIcon(self.pix_slid_inact))
         self.btn_tab_calib.setIconSize(QSize(18, 18))
         self.btn_tab_calib.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_tab_calib.clicked.connect(lambda: self._switch_tab("calib"))
+        self.btn_tab_tracking = self.btn_tab_calib
 
         self.btn_tab_exp = QPushButton("  Experimental", self.content_widget)
         self.btn_tab_exp.setFixedSize(142, 42)
@@ -723,12 +732,8 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
         is_ds4 = (mode == "ds4")
         if hasattr(self, "auto_frame_box"):
             self.auto_frame_box.setVisible(not is_ds4)
-        if hasattr(self, "emulate_kinect_box"):
-            self.emulate_kinect_box.setVisible(not is_ds4)
 
         if is_ds4:
-            if hasattr(self, "kinect_emulator") and self.kinect_emulator is not None and self.kinect_emulator._running:
-                self.kinect_emulator.stop()
             if hasattr(self, "cb_ds4_hand") and hasattr(self, "cb_vphone_hand"):
                 self.cb_vphone_hand.blockSignals(True)
                 self.cb_vphone_hand.setCurrentIndex(self.cb_ds4_hand.currentIndex())
@@ -766,91 +771,43 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
                 )
             if hasattr(self, "vphone_details_frame"):
                 self.vphone_details_frame.setVisible(True)
-            if hasattr(self, "lbl_vphone_kinect_conflict"):
-                self.lbl_vphone_kinect_conflict.setVisible(False)
         else:
-            ek_active = bool(self.cfg.get("emulate_kinect_enabled", False))
-            if hasattr(self, "chk_emulate_kinect"):
-                ek_active = self.chk_emulate_kinect.isChecked()
+            self.chk_vphone_enabled.blockSignals(True)
+            self.chk_vphone_enabled.setEnabled(True)
+            self.chk_vphone_enabled.setText("Virtual Phone Controller (JD Controller via Camera)")
+            self.chk_vphone_enabled.setStyleSheet(f"""
+                QCheckBox {{
+                    font-family: '{self.font_heading}';
+                    font-size: 13px;
+                    font-weight: bold;
+                    color: {PALETTE['text_main']};
+                    background: transparent;
+                }}
+                QCheckBox::indicator {{
+                    width: 18px;
+                    height: 18px;
+                    border-radius: 4px;
+                    border: 1px solid {PALETTE["input_border"]};
+                    background-color: #FFFFFF;
+                }}
+                QCheckBox::indicator:hover {{
+                    border-color: {PALETTE["ps_blue"]};
+                }}
+                QCheckBox::indicator:checked {{
+                    background-color: {PALETTE["ps_blue"]};
+                    border-color: {PALETTE["ps_blue"]};
+                }}
+            """)
+            saved_state = bool(self.cfg.get("virtual_phone_enabled", False))
+            self.chk_vphone_enabled.setChecked(saved_state)
+            self.chk_vphone_enabled.blockSignals(False)
 
-            if ek_active:
-                if hasattr(self, "kinect_emulator") and self.kinect_emulator is not None:
-                    self.kinect_emulator.enabled = True
-                    if not self.kinect_emulator._running:
-                        self.kinect_emulator.start()
-                self.chk_vphone_enabled.blockSignals(True)
-                self.chk_vphone_enabled.setChecked(False)
-                self.chk_vphone_enabled.setEnabled(False)
-                self.chk_vphone_enabled.setText("Virtual Phone Controller (JD Controller via Camera)")
-                self.chk_vphone_enabled.setStyleSheet(f"""
-                    QCheckBox {{
-                        font-family: '{self.font_heading}';
-                        font-size: 13px;
-                        font-weight: bold;
-                        color: #94A3B8;
-                        background: transparent;
-                    }}
-                    QCheckBox::indicator {{
-                        width: 18px;
-                        height: 18px;
-                        border-radius: 4px;
-                        border: 1px solid #CBD5E1;
-                        background-color: #E2E8F0;
-                    }}
-                """)
-                self.chk_vphone_enabled.blockSignals(False)
-
-                if hasattr(self, "lbl_vp_desc"):
-                    self.lbl_vp_desc.setText(
-                        "Emulates a smartphone connected to Just Dance via WebSocket/TLS (/smartphone) and converts your hand motion in the camera into 3D accelerometer commands for songs that only support hand controllers."
-                    )
-                if hasattr(self, "vphone_details_frame"):
-                    self.vphone_details_frame.setVisible(False)
-                if hasattr(self, "lbl_vphone_kinect_conflict"):
-                    self.lbl_vphone_kinect_conflict.setVisible(True)
-
-                if hasattr(self, "vphone") and self.vphone.enabled:
-                    self.vphone.set_enabled(False)
-                self.cfg["virtual_phone_enabled"] = False
-            else:
-                self.chk_vphone_enabled.blockSignals(True)
-                self.chk_vphone_enabled.setEnabled(True)
-                self.chk_vphone_enabled.setText("Virtual Phone Controller (JD Controller via Camera)")
-                self.chk_vphone_enabled.setStyleSheet(f"""
-                    QCheckBox {{
-                        font-family: '{self.font_heading}';
-                        font-size: 13px;
-                        font-weight: bold;
-                        color: {PALETTE['text_main']};
-                        background: transparent;
-                    }}
-                    QCheckBox::indicator {{
-                        width: 18px;
-                        height: 18px;
-                        border-radius: 4px;
-                        border: 1px solid {PALETTE["input_border"]};
-                        background-color: #FFFFFF;
-                    }}
-                    QCheckBox::indicator:hover {{
-                        border-color: {PALETTE["ps_blue"]};
-                    }}
-                    QCheckBox::indicator:checked {{
-                        background-color: {PALETTE["ps_blue"]};
-                        border-color: {PALETTE["ps_blue"]};
-                    }}
-                """)
-                saved_state = bool(self.cfg.get("virtual_phone_enabled", False))
-                self.chk_vphone_enabled.setChecked(saved_state)
-                self.chk_vphone_enabled.blockSignals(False)
-
-                if hasattr(self, "lbl_vp_desc"):
-                    self.lbl_vp_desc.setText(
-                        "Emulates a smartphone connected to Just Dance via WebSocket/TLS (/smartphone) and converts your hand motion in the camera into 3D accelerometer commands for songs that only support hand controllers."
-                    )
-                if hasattr(self, "vphone_details_frame"):
-                    self.vphone_details_frame.setVisible(saved_state)
-                if hasattr(self, "lbl_vphone_kinect_conflict"):
-                    self.lbl_vphone_kinect_conflict.setVisible(False)
+            if hasattr(self, "lbl_vp_desc"):
+                self.lbl_vp_desc.setText(
+                    "Emulates a smartphone connected to Just Dance via WebSocket/TLS (/smartphone) and converts your hand motion in the camera into 3D accelerometer commands for songs that only support hand controllers."
+                )
+            if hasattr(self, "vphone_details_frame"):
+                self.vphone_details_frame.setVisible(saved_state)
 
         if hasattr(self, "chk_stereo"):
             is_on = str(self.cfg.get("stereo_mode", "disabled")).strip().lower() in (
@@ -890,6 +847,8 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
             return True
         elif mode == "pscam":
             return getattr(self, "_current_pscam_state", "DISCONNECTED") == "READY"
+        elif mode == "phone_cam":
+            return bool(get_phone_camera_server().is_client_connected)
         else:
             cams = getattr(self, "camera_list", [])
             webcams = [c for c in cams if not c.is_pscam]
@@ -1062,6 +1021,10 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
                 self.btn_tab_calib.setVisible(True)
             if hasattr(self, "btn_tab_exp"):
                 self.btn_tab_exp.setVisible(True)
+            if mode == "phone_cam":
+                self._ensure_phone_cam_server_started()
+                self._refresh_phone_cam_qr()
+                self._update_phone_cam_status()
             self._refresh_presets()
             self._update_camera_dropdown_for_mode()
             self._update_pscam_status()
@@ -1076,17 +1039,24 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
         mode = self.cfg.get("camera_mode", "pscam")
         self.card_pscam.set_active(mode == "pscam")
         self.card_webcam.set_active(mode == "webcam")
+        if hasattr(self, "card_phone_cam"):
+            self.card_phone_cam.set_active(mode == "phone_cam")
         if hasattr(self, "card_ds4"):
             self.card_ds4.set_active(mode == "ds4")
 
     def _update_video_view_visibility(self):
         """
         State-aware visibility controller:
-        - When DISCONNECTED: The balloon (and its action button) is the ONLY THING displayed.
-        - When CONNECTED: The balloon disappears; the options card and Additional Display Options are displayed.
+        - When DISCONNECTED: The balloon (and QR Code for Phone Camera) is the ONLY THING displayed.
+        - When CONNECTED: The balloon/QR disappears; the options card and Additional Display Options are displayed.
         """
         mode = self.cfg.get("camera_mode", "pscam")
         cams = getattr(self, "camera_list", [])
+
+        if hasattr(self, "phone_cam_disconnected_box"):
+            self.phone_cam_disconnected_box.setVisible(False)
+        if hasattr(self, "phone_cam_card"):
+            self.phone_cam_card.setVisible(False)
 
         if mode == "pscam":
             self.webcam_disconnected_box.setVisible(False)
@@ -1100,6 +1070,25 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
             else:
                 self.pscam_disconnected_box.setVisible(False)
                 self.pscam_card.setVisible(True)
+                self.display_card.setVisible(True)
+        elif mode == "phone_cam":
+            self.pscam_disconnected_box.setVisible(False)
+            self.pscam_card.setVisible(False)
+            self.webcam_disconnected_box.setVisible(False)
+            self.webcam_card.setVisible(False)
+
+            is_phone_conn = bool(get_phone_camera_server().is_client_connected)
+            if not is_phone_conn:
+                if hasattr(self, "phone_cam_card"):
+                    self.phone_cam_card.setVisible(False)
+                self.display_card.setVisible(False)
+                if hasattr(self, "phone_cam_disconnected_box"):
+                    self.phone_cam_disconnected_box.setVisible(True)
+            else:
+                if hasattr(self, "phone_cam_disconnected_box"):
+                    self.phone_cam_disconnected_box.setVisible(False)
+                if hasattr(self, "phone_cam_card"):
+                    self.phone_cam_card.setVisible(True)
                 self.display_card.setVisible(True)
         else:
             self.pscam_disconnected_box.setVisible(False)
@@ -1122,11 +1111,29 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
 
     def _refresh_presets(self):
         mode = self.cfg.get("camera_mode", "pscam")
-        presets = PRESETS_PSCAM if mode == "pscam" else PRESETS_WEBCAM
-        current = self.cfg.get("pscam_preset" if mode == "pscam" else "webcam_preset", presets[0])
+        if mode == "pscam":
+            presets = PRESETS_PSCAM
+            current = self.cfg.get("pscam_preset", presets[0])
+        elif mode == "phone_cam":
+            presets = PRESETS_PHONE_CAM
+            current = self.cfg.get("phone_cam_preset", presets[0])
+        else:
+            presets = PRESETS_WEBCAM
+            current = self.cfg.get("webcam_preset", presets[0])
         w, h, fps = parse_preset(current)
         res_str = f"{w}x{h}"
         fps_str = f"{fps} FPS"
+
+        if hasattr(self, "cb_phone_res") and hasattr(self, "cb_phone_fps"):
+            p_w, p_h, p_fps = parse_preset(self.cfg.get("phone_cam_preset", PRESETS_PHONE_CAM[0]))
+            self.cb_phone_res.blockSignals(True)
+            self.cb_phone_fps.blockSignals(True)
+            idx_pr = self.cb_phone_res.findText(f"{p_w}x{p_h}", Qt.MatchFlag.MatchStartsWith)
+            self.cb_phone_res.setCurrentIndex(max(0, idx_pr))
+            idx_pf = self.cb_phone_fps.findText(f"{p_fps} FPS", Qt.MatchFlag.MatchStartsWith)
+            self.cb_phone_fps.setCurrentIndex(max(0, idx_pf))
+            self.cb_phone_res.blockSignals(False)
+            self.cb_phone_fps.blockSignals(False)
 
         if hasattr(self, "cb_res") and hasattr(self, "cb_fps"):
             self.cb_res.blockSignals(True)
@@ -1247,6 +1254,9 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
     def _periodic_check(self):
         if self.is_tracking_active:
             return
+
+        if self.cfg.get("camera_mode") == "phone_cam":
+            self._update_phone_cam_status()
 
         current_snapshot = CameraManager.get_hardware_snapshot()
         hw_changed = (current_snapshot != self._last_hw_snapshot)
@@ -1372,54 +1382,99 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
         self._update_pscam_status()
 
     # =========================================================================
-    # EMULATE KINECT (ZERO-FILE-REPLACEMENT) HANDLERS
+    # PHONE CAMERA (WI-FI WEBAPP & QR CODE) HANDLERS
     # =========================================================================
-    def _on_emulate_kinect_status_changed(self, connected: bool, game_name: str, pid: int):
-        self.kinect_emulator_status_signal.emit(connected, game_name, pid)
+    def _ensure_phone_cam_server_started(self):
+        srv = get_phone_camera_server(port=int(self.cfg.get("phone_cam_port", 8443)))
+        if not srv.running:
+            srv.start()
+        w, h, fps = parse_preset(self.cfg.get("phone_cam_preset", "640x480 @ 30 FPS"))
+        lens = str(self.cfg.get("phone_cam_lens", "user")).strip().lower()
+        srv.configure_stream(width=w, height=h, fps=fps, lens=lens)
+        return srv
 
-    def _update_emulate_kinect_status_ui(self, connected: bool, game_name: str, pid: int):
-        if not hasattr(self, "lbl_emulate_kinect_status"):
+    def _refresh_phone_cam_qr(self, _checked: bool = False, rotate_token: bool = False):
+        srv = self._ensure_phone_cam_server_started()
+        if rotate_token:
+            srv.rotate_session_token()
+        url = srv.get_connect_url()
+        if hasattr(self, "lbl_phone_cam_url"):
+            self.lbl_phone_cam_url.setText(url)
+        if hasattr(self, "lbl_phone_qr_img"):
+            try:
+                pil_qr = QRCodeGenerator.render_pil_image(
+                    url,
+                    box_size_px=154 * 2,
+                    fg_color=(15, 23, 42, 255),
+                    bg_color=(255, 255, 255, 255),
+                    quiet_zone=2,
+                )
+                pix_qr = pil_to_qpixmap(pil_qr, dpr=2.0)
+                self.lbl_phone_qr_img.setPixmap(pix_qr)
+            except Exception as e:
+                print(f"[WARN] Failed to render Phone Camera QR Code: {e}")
+
+    def _on_copy_phone_cam_url(self):
+        srv = self._ensure_phone_cam_server_started()
+        url = srv.get_connect_url()
+        cb = QApplication.clipboard()
+        if cb is not None:
+            cb.setText(url)
+        if hasattr(self, "btn_copy_phone_url"):
+            self.btn_copy_phone_url.setText("Copied!")
+            QTimer.singleShot(1500, lambda: self.btn_copy_phone_url.setText("Copy URL") if hasattr(self, "btn_copy_phone_url") else None)
+
+    def _on_phone_cam_settings_changed(self):
+        if not hasattr(self, "cb_phone_res") or not hasattr(self, "cb_phone_fps"):
             return
-        if not self.chk_emulate_kinect.isChecked():
-            self.lbl_emulate_kinect_status.setText("Status: Disabled")
-            self.lbl_emulate_kinect_status.setStyleSheet(
-                f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['text_muted']}; background: transparent; border: none;"
-            )
-        elif connected:
-            self.lbl_emulate_kinect_status.setText(f"Status: Connected to {game_name} (PID: {pid}) — Kinect Emulated")
-            self.lbl_emulate_kinect_status.setStyleSheet(
-                f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: #16A34A; background: transparent; border: none;"
-            )
-        else:
-            self.lbl_emulate_kinect_status.setText("Status: Active — Waiting for Just Dance...")
-            self.lbl_emulate_kinect_status.setStyleSheet(
-                f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['ps_blue']}; background: transparent; border: none;"
-            )
-
-    def _on_emulate_kinect_toggle_changed(self):
-        enabled = self.chk_emulate_kinect.isChecked()
-        self.cfg["emulate_kinect_enabled"] = enabled
+        res = self.cb_phone_res.currentText().split()[0]
+        fps_val = self.cb_phone_fps.currentText().split()[0]
+        preset = f"{res} @ {fps_val} FPS"
+        self.cfg["phone_cam_preset"] = preset
         self._save_settings()
-        self.kinect_emulator.enabled = enabled
-        if enabled:
-            self.kinect_emulator.start()
-            st = self.kinect_emulator.get_status()
-            self._update_emulate_kinect_status_ui(st["connected"], st["game_name"], st["pid"])
-        else:
-            self.kinect_emulator.stop()
-            self._update_emulate_kinect_status_ui(False, "", 0)
 
-        # Synchronize Virtual Phone Controller availability based on active mode
-        mode = self.cfg.get("camera_mode", "pscam")
-        self._update_exp_view_for_mode(mode)
+        w, h, fps = parse_preset(preset)
+        srv = get_phone_camera_server()
+        srv.configure_stream(width=w, height=h, fps=fps)
+
+    def _on_disconnect_phone_cam(self):
+        if self.is_tracking_active and self.cfg.get("camera_mode") == "phone_cam":
+            self._tracking_stop_event.set()
+        srv = get_phone_camera_server()
+        srv.disconnect_client(rotate_token=True)
+        self._refresh_phone_cam_qr(rotate_token=False)
+        self._update_phone_cam_status()
+
+    def _update_phone_cam_status(self):
+        srv = get_phone_camera_server()
+        is_conn = bool(srv.is_client_connected)
+        prev_conn = getattr(self, "_last_phone_cam_conn", None)
+
+        if is_conn:
+            lens_lbl = "Rear Camera" if srv.client_lens == "environment" else "Front Camera"
+            if srv.streaming_active:
+                fps_disp = srv.measured_fps if srv.measured_fps > 0.5 else float(srv.target_fps)
+                stream_lbl = f"{srv.actual_w}x{srv.actual_h} @ {fps_disp:.0f} FPS"
+            else:
+                stream_lbl = "Standby (Cool Mode)"
+            info_txt = (
+                f"{srv.client_device_name} connected ({srv.client_ip} • "
+                f"{stream_lbl} • {lens_lbl})"
+            )
+            if hasattr(self, "lbl_phone_cam_ready_info"):
+                self.lbl_phone_cam_ready_info.setText(info_txt)
+
+        if prev_conn != is_conn:
+            self._last_phone_cam_conn = is_conn
+            if not is_conn and self.is_tracking_active and self.cfg.get("camera_mode") == "phone_cam":
+                self._tracking_stop_event.set()
+            self._update_video_view_visibility()
 
     # =========================================================================
     # VIRTUAL PHONE CONTROLLER (CELULAR VIRTUAL) HANDLERS
     # =========================================================================
     def _on_vphone_toggle_changed(self):
         if self.cfg.get("camera_mode") == "ds4":
-            return
-        if hasattr(self, "chk_emulate_kinect") and self.chk_emulate_kinect.isChecked():
             return
         enabled = self.chk_vphone_enabled.isChecked()
         self.cfg["virtual_phone_enabled"] = enabled
@@ -1463,8 +1518,6 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
         )
 
     def _on_vphone_reconnect_clicked(self):
-        if self.cfg.get("camera_mode") != "ds4" and hasattr(self, "chk_emulate_kinect") and self.chk_emulate_kinect.isChecked():
-            return
         self._apply_vphone_settings_to_controller()
         self._save_settings()
         if not self.chk_vphone_enabled.isChecked():
@@ -1525,8 +1578,6 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
 
     def _on_skip_finish_clicked(self):
         """Sends the FTUE_FINISH shortcut packet for Just Dance 2022 phone tutorial."""
-        if self.cfg.get("camera_mode") != "ds4" and hasattr(self, "chk_emulate_kinect") and self.chk_emulate_kinect.isChecked():
-            return
         if not self.vphone.enabled:
             self.vphone.set_enabled(True)
             if hasattr(self, "chk_vphone_enabled"):
@@ -1584,8 +1635,8 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
         self.vphone.set_adaptive_calibration(enabled)
 
     def _open_logs_folder(self):
-        logs_dir = (BASE_DIR / "logs").resolve()
-        logs_dir.mkdir(parents=True, exist_ok=True)
+        from sensor.config_manager import get_logs_dir
+        logs_dir = get_logs_dir()
         try:
             from sensor.session_logger import get_session_logger
             get_session_logger().log_event("INFO", "GUI", f"User opened logs directory: {logs_dir}")
@@ -1690,6 +1741,8 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
                 f"3D Accelerometer: X: {ax:+.2f}G | Y: {ay:+.2f}G | Z: {az:+.2f}G ({spd:.1f} m/s)"
             )
         self._update_ds4_ui_readout()
+        if self.cfg.get("camera_mode") == "phone_cam":
+            self._update_phone_cam_status()
 
     def _update_ds4_ui_readout(self):
         if not hasattr(self, "lbl_ds4_status") or not hasattr(self, "lbl_ds4_accel"):
@@ -1861,11 +1914,36 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
         self._update_conf_label(p["detection_confidence"])
 
         self._update_calib_cards_ui()
+        self._update_2p_warning_ui()
         self._save_settings()
+
+    def _on_players_mode_changed(self, idx: int):
+        max_p = 2 if idx == 1 else 1
+        self.cfg["max_players"] = max_p
+        self._update_2p_warning_ui()
+        self._save_settings()
+
+    def _update_2p_warning_ui(self):
+        max_p = max(1, min(2, int(self.cfg.get("max_players", 1))))
+        is_2p = (max_p >= 2)
+        if hasattr(self, "two_player_warn_box"):
+            self.two_player_warn_box.setVisible(is_2p)
+        if hasattr(self, "lbl_2p_model_warning"):
+            cur_model = str(self.cfg.get("pose_model", "lite")).strip().lower()
+            if cur_model == "full":
+                self.lbl_2p_model_warning.setText(
+                    "2-Player Mode Active with Full AI: Tracking 2 dancers with Full AI doubles CPU load and may reduce FPS. "
+                    "Switch to 'Competitive (Lite AI)' above for optimal 2-player performance."
+                )
+            else:
+                self.lbl_2p_model_warning.setText(
+                    "2-Player Mode Active: Lite AI (Competitive) is active and recommended to sustain stable FPS when tracking two dancers simultaneously."
+                )
 
     def _update_calib_cards_ui(self):
         for pid, card in self.calib_cards.items():
             card.set_active(pid == self.current_calib_preset)
+        self._update_2p_warning_ui()
 
     def _toggle_advanced_calib(self):
         self.is_adv_calib_open = not self.is_adv_calib_open
@@ -1982,6 +2060,17 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
                 self.cfg["camera_index"] = ps_cams[0].index
             elif cam_idx < 0 and hw_connected:
                 self.cfg["camera_index"] = 0
+        elif mode == "phone_cam":
+            srv = self._ensure_phone_cam_server_started()
+            if not srv.is_client_connected:
+                QMessageBox.warning(
+                    self,
+                    "Phone Camera Not Connected",
+                    "No smartphone is currently connected to the Wi-Fi WebApp!\n\n"
+                    "• Scan the QR Code on screen with your Android or iPhone camera.\n"
+                    "• Ensure your phone is connected to the same Wi-Fi network as this PC."
+                )
+                return
         else:
             cam_idx = self.cfg.get("camera_index", -1)
             if cam_idx < 0 or not getattr(self, "camera_list", []):
@@ -2030,6 +2119,10 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
         self.showNormal()
         self.activateWindow()
         self._refresh_cameras()
+        if self.cfg.get("camera_mode") == "phone_cam":
+            self._update_phone_cam_status()
+            if not get_phone_camera_server().is_client_connected:
+                self._refresh_phone_cam_qr(rotate_token=False)
 
         if not success:
             detail = f"\n\nDetails: {err_msg}" if err_msg else ""
@@ -2061,6 +2154,10 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
         if hasattr(self, "kinect_emulator") and self.kinect_emulator is not None:
             self.kinect_emulator.stop()
         try:
+            get_phone_camera_server().stop()
+        except Exception:
+            pass
+        try:
             get_ds4_controller().disconnect()
         except Exception:
             pass
@@ -2070,7 +2167,8 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
         except Exception:
             pass
         if hasattr(self, "bridge") and self.bridge is not None:
-            self.bridge.close()
+            close_kinect_bridge()
+            self.bridge = None
         event.accept()
 
 

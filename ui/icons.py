@@ -2,7 +2,7 @@
 High-Resolution Anti-Aliased Icon and Pill Generators for Legacy PSCam Sensor UI.
 Renders supersampled Pillow graphics for sidebar navigation, top tabs, and rounded buttons
 for Qt 6 / PySide6.
-Loads custom user SVG icons for 'settings' (Video Settings) and 'sliders' (Calibration) with vector fallback.
+Loads custom user SVG icons for 'settings' (Video Settings) and 'trackingicon' (Tracking) with vector fallback.
 """
 import math
 from pathlib import Path
@@ -357,7 +357,7 @@ def generate_tab_icons_pil(size=(18, 18), scale: int = 4):
     """
     Renders supersampled PIL.Image RGBA icons for the top navigation tabs:
     1. Settings SVG icon for 'Video Settings' (active & inactive)
-    2. Sliders SVG icon for 'Calibration' (active, inactive, & disabled)
+    2. Tracking SVG icon for 'Tracking' (active, inactive, & disabled)
     3. Lab SVG icon for 'Experimental' (active & inactive)
     Returns (settings_act, settings_inact, sliders_act, sliders_inact, sliders_disabled, lab_act, lab_inact).
     """
@@ -370,13 +370,13 @@ def generate_tab_icons_pil(size=(18, 18), scale: int = 4):
     ]
     settings_path = next((p for p in settings_candidates if p.exists()), None)
 
-    sliders_candidates = [
-        base_dir.parent / "assets" / "icons" / "sliders.svg",
-        base_dir.parent / "assets" / "sliders.svg",
-        base_dir / "assets" / "icons" / "sliders.svg",
-        base_dir / "assets" / "sliders.svg",
+    tracking_candidates = [
+        base_dir.parent / "assets" / "icons" / "trackingicon.svg",
+        base_dir.parent / "assets" / "trackingicon.svg",
+        base_dir / "assets" / "icons" / "trackingicon.svg",
+        base_dir / "assets" / "trackingicon.svg",
     ]
-    sliders_path = next((p for p in sliders_candidates if p.exists()), None)
+    tracking_path = next((p for p in tracking_candidates if p.exists()), None)
 
     lab_candidates = [
         base_dir.parent / "assets" / "icons" / "lab.svg",
@@ -392,9 +392,9 @@ def generate_tab_icons_pil(size=(18, 18), scale: int = 4):
 
     set_act = render_svg_icon_pil(settings_path, size=size, color_hex=col_act, scale=scale)
     set_inact = render_svg_icon_pil(settings_path, size=size, color_hex=col_inact, scale=scale)
-    slid_act = render_svg_icon_pil(sliders_path, size=size, color_hex=col_act, scale=scale)
-    slid_inact = render_svg_icon_pil(sliders_path, size=size, color_hex=col_inact, scale=scale)
-    slid_dis = render_svg_icon_pil(sliders_path, size=size, color_hex=col_disabled, scale=scale)
+    slid_act = render_svg_icon_pil(tracking_path, size=size, color_hex=col_act, scale=scale)
+    slid_inact = render_svg_icon_pil(tracking_path, size=size, color_hex=col_inact, scale=scale)
+    slid_dis = render_svg_icon_pil(tracking_path, size=size, color_hex=col_disabled, scale=scale)
     lab_act = render_svg_icon_pil(lab_path, size=size, color_hex=col_act, scale=scale)
     lab_inact = render_svg_icon_pil(lab_path, size=size, color_hex=col_inact, scale=scale)
 
@@ -432,20 +432,30 @@ def generate_tab_icons_pil(size=(18, 18), scale: int = 4):
             d.ellipse([cx - r_hole, cy - r_hole, cx + r_hole, cy + r_hole], fill=(0, 0, 0, 0))
             return img
 
-        def make_sliders(color):
+        def make_tracking_target(color):
             img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
             d = ImageDraw.Draw(img)
-            line_w = int(2.2 * scale)
-            knob_r = int(3.5 * scale)
-            y_coords = [int(h * 0.23), int(h * 0.50), int(h * 0.77)]
-            knob_xs = [int(w * 0.34), int(w * 0.68), int(w * 0.44)]
-            x_left = int(w * 0.10)
-            x_right = int(w * 0.90)
-            for y, kx in zip(y_coords, knob_xs):
-                d.line([(x_left, y), (x_right, y)], fill=color, width=line_w)
-                d.ellipse([kx - knob_r, y - knob_r, kx + knob_r, y + knob_r], fill=color)
-                hole_r = int(1.6 * scale)
-                d.ellipse([kx - hole_r, y - hole_r, kx + hole_r, y + hole_r], fill=(0, 0, 0, 0))
+            lw = max(2, int(1.8 * scale))
+            # 4 Corners for tracking viewfinder target
+            m = int(2.5 * scale)
+            corner_len = int(4.5 * scale)
+            # Top-left
+            d.line([(m, m), (m + corner_len, m)], fill=color, width=lw)
+            d.line([(m, m), (m, m + corner_len)], fill=color, width=lw)
+            # Top-right
+            d.line([(w - m, m), (w - m - corner_len, m)], fill=color, width=lw)
+            d.line([(w - m, m), (w - m, m + corner_len)], fill=color, width=lw)
+            # Bottom-left
+            d.line([(m, h - m), (m + corner_len, h - m)], fill=color, width=lw)
+            d.line([(m, h - m), (m, h - m - corner_len)], fill=color, width=lw)
+            # Bottom-right
+            d.line([(w - m, h - m), (w - m - corner_len, h - m)], fill=color, width=lw)
+            d.line([(w - m, h - m), (w - m, h - m - corner_len)], fill=color, width=lw)
+            # Center crosshair
+            cx, cy = w // 2, h // 2
+            ch_len = int(3.5 * scale)
+            d.line([(cx - ch_len, cy), (cx + ch_len, cy)], fill=color, width=lw)
+            d.line([(cx, cy - ch_len), (cx, cy + ch_len)], fill=color, width=lw)
             return img
 
         def make_lab(color):
@@ -480,11 +490,11 @@ def generate_tab_icons_pil(size=(18, 18), scale: int = 4):
         if set_inact is None:
             set_inact = make_gear(col_inact_tuple)
         if slid_act is None:
-            slid_act = make_sliders(col_act_tuple)
+            slid_act = make_tracking_target(col_act_tuple)
         if slid_inact is None:
-            slid_inact = make_sliders(col_inact_tuple)
+            slid_inact = make_tracking_target(col_inact_tuple)
         if slid_dis is None:
-            slid_dis = make_sliders(col_dis_tuple)
+            slid_dis = make_tracking_target(col_dis_tuple)
         if lab_act is None:
             lab_act = make_lab(col_act_tuple)
         if lab_inact is None:
@@ -637,6 +647,66 @@ def generate_status_icons_pil(size=(38, 38), scale: int = 4):
     pil_warn = img_warn if scale > 1 else img_warn.resize(size, Image.Resampling.LANCZOS)
 
     return pil_err, pil_ok, pil_warn
+
+
+def generate_phone_cam_icons_pil(target_box=(38, 26), scale: int = 4):
+    """
+    Renders supersampled PIL.Image RGBA icons for the 'Phone Camera' sidebar navigation card.
+    Loads assets/icons/phone.svg using render_svg_icon_pil with crisp supersampling,
+    falling back to procedural vector smartphone silhouette if the SVG cannot be rendered.
+    Returns (pil_phone_act, pil_phone_inact) rendered at target_box * scale.
+    """
+    base_dir = Path(__file__).resolve().parent
+    phone_svg_candidates = [
+        base_dir.parent / "assets" / "icons" / "phone.svg",
+        base_dir.parent / "assets" / "phone.svg",
+        base_dir / "assets" / "icons" / "phone.svg",
+        base_dir / "assets" / "phone.svg",
+    ]
+    phone_svg_path = next((p for p in phone_svg_candidates if p.exists()), None)
+
+    phone_act = render_svg_icon_pil(phone_svg_path, size=target_box, color_hex="#FFFFFF", scale=scale) if phone_svg_path else None
+    phone_inact = render_svg_icon_pil(phone_svg_path, size=target_box, color_hex="#00439C", scale=scale) if phone_svg_path else None
+
+    if phone_act is None or phone_inact is None:
+        w, h = target_box[0] * scale, target_box[1] * scale
+
+        def make_phone_icon(fg_col, cutout_col):
+            img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+            d = ImageDraw.Draw(img)
+            # Smartphone vertical body
+            px0, py0 = int(w * 0.24), int(h * 0.06)
+            px1, py1 = int(w * 0.64), int(h * 0.94)
+            d.rounded_rectangle([px0, py0, px1, py1], radius=int(3.2 * scale), fill=fg_col)
+
+            # Screen / camera lens aperture
+            cx = (px0 + px1) // 2
+            cy = int(h * 0.46)
+            r_outer = int(4.2 * scale)
+            r_inner = int(2.0 * scale)
+            d.ellipse([cx - r_outer, cy - r_outer, cx + r_outer, cy + r_outer], fill=cutout_col)
+            d.ellipse([cx - r_inner, cy - r_inner, cx + r_inner, cy + r_inner], fill=fg_col)
+
+            # Bottom home bar indicator
+            hb_w = int(3.5 * scale)
+            hb_y = int(h * 0.82)
+            d.line([(cx - hb_w, hb_y), (cx + hb_w, hb_y)], fill=cutout_col, width=max(1, int(1.3 * scale)))
+
+            # Wireless signal arcs on the right side of the phone
+            wx = int(w * 0.66)
+            wy = int(h * 0.50)
+            lw = max(1, int(1.6 * scale))
+            for r_arc in (int(4.5 * scale), int(8.0 * scale)):
+                bbox = [wx - r_arc, wy - r_arc, wx + r_arc, wy + r_arc]
+                d.arc(bbox, start=-42, end=42, fill=fg_col, width=lw)
+            return img
+
+        if phone_act is None:
+            phone_act = make_phone_icon((255, 255, 255, 255), (0, 67, 156, 255))
+        if phone_inact is None:
+            phone_inact = make_phone_icon((0, 67, 156, 255), (221, 240, 247, 255))
+
+    return phone_act, phone_inact
 
 
 def generate_status_icons(size=(38, 38), scale: int = 4):

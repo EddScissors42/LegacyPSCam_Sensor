@@ -33,17 +33,19 @@ All non-essential overhead has been removed while perfecting the core components
 | Multi-Tier Auto-Height Calibration | Automatic height and metric normalization for full-body, flexible-torso, and desk setups. | Implemented |
 | Modern Device Status Cards | Visual connection badges (supersampled error 'X', warning, and success checks) with diagnostic status and integrated action buttons matching the console-inspired sidebar style. | Implemented |
 | 6-Player Coach Selection Support | Expanded lateral tracking range allowing selection of all dancer slots (Slots 1 to 6). | Implemented |
-| Auto-Framing / FaceFollow PTZ | Dynamic software pan/tilt/zoom (1.22x) keeping player face focused and centered in Just Dance. | Implemented |
+| 2-Player Tracking (Duo Mode) & Anti-Swap Memory | Simultaneous tracking of 2 dancers (`JDP2` 664B + `JMI2` indexed mask 1 & 2, P1 Blue / P2 Light Orange) with long-term appearance & trajectory memory across waltz turns and crossovers (`sensor/player_slot.py`). | Implemented |
+| Auto-Framing / FaceFollow PTZ | Dynamic software pan/tilt/zoom (1.22x) keeping player face focused and centered in Just Dance (1P mode). | Implemented |
 | Device Settings & Navigation Polish | Aligned controls anatomy, experimental safety notice, and auto-return to Video Settings on device toggle. | Implemented |
 | Camera Orientation Control | Real-time 0°, 90°, 180°, and 270° rotation block supporting inverted or sideways camera mounts. | Implemented |
 | Responsive Scroll & Anti-Collision | Transparent QScrollArea with minimum card heights preventing widget overlap on compact window sizes. | Implemented |
-| Virtual Phone Controller ("Celular Virtual") | Emulates the Just Dance Smartphone Controller over WebSocket for Just Dance 2017-2022 (`/smartphone`), converting 3D camera hand tracking into 3-axis accelerometer scoring data and menu navigation commands. | Implemented |
+| Virtual Phone Controller ("Celular Virtual") | Emulates the Just Dance Smartphone Controller over WebSocket (`/smartphone`), converting 3D camera hand tracking into 3-axis accelerometer scoring data and menu navigation commands. | Implemented |
 | DualShock 4 & Clones (Level A) | Native Bluetooth/USB HID driver supporting official DS4, licensed pads (Hori, Nacon, Razer, Astro, Scuf) and clone chips (ShanWan, DragonRise) with automatic IMU frozen (0G) diagnostic. | Implemented |
 | Emulate Kinect (Zero-File-Replacement) | Emulates Kinect directly in game memory via process detection; keeps original Kinect10.dll on disk intact. | Implemented |
 | High-Resolution Windows Timer (1ms) | Python timer synchronization ensuring `Sleep(33)` in `Kinect10.dll` delivers solid 30 FPS. | Implemented |
 | Person Lock-In Subsystem | Modular tracking lock combining 3D/2D inertial coasting, HSV torso color identity signature, and ROI attenuation. | Implemented |
 | Smart PTZ Auto-Framing | FaceFollow PTZ with 360° spin head fallback and adaptive zoom. | Implemented |
 | High-Speed Stereo Luminance | Direct monochrome extraction and zero-cost rectification achieving rock-solid 60 FPS on PS4 Camera. | Implemented |
+| Phone Camera via Wi-Fi WebApp | Use any iOS or Android phone as camera via QR code & local HTTPS without app installation. Sidebar card located below DualShock 4 with crisp phone.svg vector rendering. | Implemented |
 
 ---
 
@@ -62,8 +64,8 @@ All non-essential overhead has been removed while perfecting the core components
 ```
 LegacyPSCam_Sensor/
 ├── main.py                     # CLI launcher and entry point
-├── version.py                  # Official versioning & build metadata (v0.8.3 Alpha)
-├── test_suite.py               # 16 complete automated test suites (16/16 PASSED)
+├── version.py                  # Official versioning & build metadata (v0.9.0 Alpha)
+├── test_suite.py               # 19 complete automated test suites (19/19 PASSED)
 ├── config.json                 # Saved user preferences
 ├── THIRD_PARTY_NOTICES.md      # Licensing & third-party attribution notices
 ├── driver/
@@ -72,7 +74,8 @@ LegacyPSCam_Sensor/
 │   ├── ps4_backend/            # Native WinUSB PlayStation 4 Camera Backend
 │   ├── camera_manager.py       # Camera discovery (DirectShow COM + SetupAPI) and async capture
 │   ├── stereo_matcher.py       # Stereo Vision Engine (Rectification, Sub-Pixel PyrLK 3D, Depth Mask)
-│   ├── pose_tracker.py         # MediaPipe engine, Hand Anchor, Calibrator & EMA
+│   ├── pose_tracker.py         # MediaPipe 1P/2P engine, Hand Anchor, Calibrator & EMA
+│   ├── player_slot.py          # Per-player slot pipeline & Long-Term Identity Memory (Anti-Swap Re-ID)
 │   ├── pose_filters.py         # Kinematic filters (HandAnchor, AdaptiveSmoother, SkeletonCalibrator, Smart Body PTZ)
 │   ├── person_lock.py          # Modular Person Lock-In (InertialCoastingFilter, DancerIdentityLock)
 │   ├── virtual_phone.py        # UbiArt Smartphone WebSocket client & 3D Hand Accelerometer
@@ -96,7 +99,8 @@ LegacyPSCam_Sensor/
 ├── models/                     # Pre-trained neural network models
 │   ├── pose_landmarker_lite.task  # Google MediaPipe Pose Lite model (Competitive preset)
 │   └── pose_landmarker_full.task  # Google MediaPipe Pose Full model (Balanced preset)
-└── tools/                      # Setup utilities
+└── tools/                      # Setup utilities & in-memory proxy DLL
+    ├── Legacy10.dll            # 32-bit in-memory proxy DLL for Emulate Kinect
     └── get_cameras.ps1         # WinRT camera enumeration fallback script
 ```
 
@@ -106,7 +110,7 @@ LegacyPSCam_Sensor/
 
 1. Run the Sensor:
    Launch `LegacySensor.exe` or execute `python main.py`.
-2. Select Camera:
-   Choose PlayStation 4 Camera (if connected) or Standard Webcam.
-3. Start Tracking:
-   Click START TRACKING, launch Just Dance PC, and dance via the Windows Shared Memory IPC Bridge (`Local\LegacyWebcamKinectPose` & `Local\LegacyWebcamKinectImage`).
+2. Enable Emulate Kinect:
+   In **Experimental**, keep **Emulate Kinect** enabled so the sensor automatically hooks into Just Dance in memory and streams via the Shared Memory IPC Bridge.
+3. Select Camera & Start Tracking:
+   Choose PlayStation 4 Camera (if connected) or Standard Webcam, click START TRACKING, and launch Just Dance PC.

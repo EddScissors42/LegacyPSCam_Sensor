@@ -11,7 +11,7 @@ O sistema é baseado em uma **arquitetura modular em pacotes**, onde cada etapa 
 ```
 LegacyPSCam_Sensor/
 ├── main.py                     # Ponto de entrada (CLI dispatcher e inicializador)
-├── test_suite.py               # Suíte de testes automatizados (16/16 suítes integradas)
+├── test_suite.py               # Suíte de testes automatizados (19/19 suítes integradas)
 ├── config.json                 # Gerenciamento e persistência das configurações locais
 ├── THIRD_PARTY_NOTICES.md      # Avisos de direitos autorais, licenças e separação de IP do firmware
 ├── driver/
@@ -29,33 +29,36 @@ LegacyPSCam_Sensor/
 │   │   └── driver_installer.py # Verificação PnP e instalação/reparo via pnputil com UAC sob demanda
 │   ├── camera_manager.py       # Descoberta, negociação DirectShow/WinUSB e captura assíncrona
 │   ├── stereo_matcher.py       # Motor de Visão Estéreo (Retificação, Triangulação Esparsa 3D e Máscara Densa)
-│   ├── pose_tracker.py         # Motor MediaPipe Pose e máscara anatômica 320x240
+│   ├── pose_tracker.py         # Motor MediaPipe Pose (1P & 2P) e máscara anatômica 320x240
+│   ├── player_slot.py          # Estado por jogador (PlayerSlotState), memória de identidade anti-swap e máscara indexada
 │   ├── pose_filters.py         # Filtros cinemáticos (HandAnchor, AdaptiveSmoother, SkeletonCalibrator, Smart Body PTZ)
 │   ├── person_lock.py          # Subsistema modular Person Lock-In (InertialCoastingFilter, DancerIdentityLock)
+│   ├── gesture_detector.py     # Reconhecimento de gesto de braço levantado (ENTER em 1P e 2P)
+│   ├── phone_camera.py         # Servidor WebApp HTTPS/WSS e gerador de QR Code para câmera de smartphone via Wi-Fi
 │   ├── virtual_phone.py        # Cliente WebSocket UbiArt (/smartphone), Calibrador Adaptativo e Acelerômetro 3D
 │   ├── telemetry_benchmark.py  # Benchmark comparativo de telemetria (Câmera vs DS4), alinhamento temporal e ganho
 │   ├── ds4_controller.py       # Driver Bluetooth/USB HID nativo DualShock 4 (500+ Hz, IMU, botões e vibração)
-│   ├── kinect_emulator.py      # Emulador de Kinect na memória (detecção de processos e hot-patching IAT)
-│   ├── kinect_shared_memory.py # Driver IPC com KinectBridge (JDP1 344B + JDP2 664B + JMI1/2 1.3MB + JXC1 28B)
-│   ├── tracking_session.py     # Orquestrador do loop de rastreamento e eventos de teclado
-│   ├── tracking_overlay.py     # Renderização visual do esqueleto, silhueta sombreada e HUD
-│   └── config_manager.py       # Gerenciamento e persistência das configurações (config.json)
+│   ├── kinect_emulator.py      # Emulador de Kinect na memória para Just Dance Legacy 32-bit (hot-patching IAT)
+│   ├── kinect_shared_memory.py # Driver IPC singleton KinectBridge (JDP1 344B + JDP2 664B + JMI1/2 1.3MB + JXC1 28B)
+│   ├── tracking_session.py     # Orquestrador do loop de rastreamento (1P/2P) e eventos de teclado
+│   ├── tracking_overlay.py     # Renderização visual do esqueleto (P1 Azul / P2 Laranja Claro), silhueta e HUD
+│   └── config_manager.py       # Gerenciamento de configurações e resolução de caminhos (%APPDATA% / logs / portable)
 ├── ui/                         # Pacote da Interface Gráfica
 │   ├── __init__.py             # Exporta LegacySensorGUI, UIPagesMixin, widgets reutilizáveis e launch_app
 │   ├── gui_qt.py               # Janela principal e controlador de eventos em PySide6 / Qt 6
 │   ├── pages.py                # Construtores declarativos das 4 páginas Qt 6 (UIPagesMixin)
 │   ├── widgets.py              # Componentes Qt 6 reutilizáveis (SlidingStackedWidget, DeviceNavCard, CalibPresetCard)
 │   ├── benchmark_dialog.py     # Diálogo e gráfico 2D QPainter de benchmark comparativo (Câmera vs DS4)
-│   ├── theme.py                # Paleta de cores, tipografia e presets
+│   ├── theme.py                # Paleta de cores, tipografia e presets (Competitive Lite AI recomendado por padrão)
 │   └── icons.py                # Gerador e renderizador de ícones vetoriais e supersampled
 ├── assets/                     # Recursos visuais e mídias
 │   ├── icons/                  # Ícones SVG e PNG da aplicação
 │   └── fonts/                  # Fontes TTF (Kanit, InterTight, NationalPark)
 ├── models/
-│   ├── pose_landmarker_lite.task  # Modelo MediaPipe Pose Lite (Perfil Competitivo)
+│   ├── pose_landmarker_lite.task  # Modelo MediaPipe Pose Lite (Perfil Competitivo — Padrão Recomendado)
 │   └── pose_landmarker_full.task  # Modelo MediaPipe Pose Full (Perfil Equilibrado)
 └── tools/
-    ├── Kinect10.dll               # DLL proxy de 32 bits para a pasta do Just Dance PC
+    ├── Legacy10.dll               # DLL proxy de 32 bits injetada em memória pelo Emulate Kinect (Legacy.exe)
     └── get_cameras.ps1            # Script PowerShell auxiliar para enumeração de câmeras WinRT
 ```
 
@@ -216,6 +219,21 @@ flowchart TD
   3. **Mapeamento Ativo de Controles:** Detecta e registra o dispositivo de controle em uso (DualShock 4 Bluetooth/USB, Virtual Phone ou Câmera Óptica), atualizações de bateria, modo de conexão e eventos de botões físicos (L1/R1 de troca de coach).
   4. **Streaming de Telemetria de Dança (CSV Assíncrono):** A partir do momento do `START TRACKING`, grava em buffer assíncrono em lote (batching) todas as métricas de movimento ($a_x, a_y, a_z, |G|$, velocidade da mão, coordenadas dos joints, FPS e feedbacks de pontuação) com impacto computacional nulo (<0,1% CPU).
   5. **Resiliência a Falhas (Crash Diagnostics):** Instala interceptores globais para `sys.excepthook` e `threading.excepthook`, garantindo que qualquer encerramento inesperado grave o stack trace completo e feche os arquivos de forma limpa.
+
+### 13. `kinect_emulator.py` — Emulador de Kinect Zero-File em Memória (RAM Hook — Just Dance Legacy 32-bit)
+- **Responsabilidade:** Detecção instantânea do processo do Just Dance Legacy (2018 / 32-bit) e injeção do sensor diretamente na memória RAM, sem modificar arquivos no disco:
+  1. **Detecção Leve via Toolhelp32:** Varredura em tempo real (< 0.5 ms a cada 0.35s) identificando processos 32-bit (`Legacy.exe` e `justdance.exe`).
+  2. **Injeção de DLL Proxy Dinâmica:** Injeta remotamente `tools/Legacy10.dll` (32 bits) através de `VirtualAllocEx`, `WriteProcessMemory` e `CreateRemoteThread(LoadLibraryW)`, com diagnóstico explícito de `ERROR_ACCESS_DENIED (5)` caso o jogo esteja rodando como Administrador e o sensor não.
+  3. **Sobrescrita Atômica da IAT (Import Address Table):** Localiza e atualiza os 8 ponteiros IAT (`16, 5, 6, 21, 22, 9, 17, 26`) para rotear as chamadas das funções do Kinect para a `Legacy10.dll`, que consome os canais `JDP2`/`JMI2` (1 e 2 jogadores) do Legacy PSCam Sensor.
+
+### 14. `player_slot.py` — Pipeline Multi-Jogador (1P/2P) & Memória Re-ID Anti-Swap
+- **Responsabilidade:** Gerenciamento isolado dos slots de dançarinos (`PlayerSlotState`), associação estável (`MultiPlayerAssociator`) e síntese da máscara de índice (`compose_player_index_mask`):
+  1. **Isolamento de Slots:** Cada dançarino opera seu próprio pipeline desacoplado com `HandAnchorFilter`, `AdaptiveSmoother`, `SkeletonCalibrator`, `CameraSpaceXTracker` e `PersonLockController`.
+  2. **Oversampling de 4 Poses com Filtro Anatômico (`is_plausible_human_dancer`):** Em modo 2P, o MediaPipe é instanciado com `num_poses=4`. Todos os candidatos propostos passam por um filtro anatômico rigoroso (validação de verticalidade, ombros acima dos quadris, razão de aspecto e score de confiança dos joints-chave), eliminando 100% de falsos-positivos provocados por móveis, casacos ou cadeiras antes da atribuição de slots.
+  3. **Resolução de Inferência Otimizada (640px):** Buffer de inferência pré-redimensionado em 640px de largura, garantindo alta densidade de amostragem e estabilidade nas articulações periféricas (punhos e pés) para ambos os dançarinos.
+  4. **Inércia de Slot & Trava de Aglomeração:** Reduz o custo para manter o slot atual (`CURRENT_SLOT_INERTIA_BONUS = 0.35`) e congela trocas impulsivas de slots durante sobreposições (`is_crowded`), impedindo que movimentos rápidos invertam os jogadores.
+  5. **Momentum Cinemático Direcional:** Recompensa o vetor de deslocamento $(\vec{v} \cdot \vec{d})$ alinhado com a velocidade física dos dançarinos durante cruzamentos.
+  6. **Auditoria de Separação:** Compara as assinaturas visuais multi-região contra as âncoras permanentes (`anchor_sig`) após o término do contato corporal, corrigindo qualquer inversão involuntária.
 
 ---
 

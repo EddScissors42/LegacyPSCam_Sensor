@@ -27,8 +27,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 
 # UbiArt Smartphone Scoring WebSocket constants
-# Protocol v2: Just Dance 2020-2022 (CivetWeb with built-in TLS, requires exact subprotocol match)
-# Protocol v1: Just Dance 2017 / 2018 Legacy / Dreyn (plain TCP WebSocket)
+# Protocol v2: UbiArt CivetWeb with built-in TLS, requires exact subprotocol match
+# Protocol v1: Just Dance 2017 / 2018 Legacy (plain TCP WebSocket)
 WS_SUBPROTOCOL_V2 = "v2.phonescoring.jd.ubisoft.com"
 WS_SUBPROTOCOL_V1 = "v1.phonescoring.jd.ubisoft.com"
 WS_SUBPROTOCOL = WS_SUBPROTOCOL_V2
@@ -37,7 +37,7 @@ UDP_DISCOVERY_PORT_TX = 6000
 UDP_DISCOVERY_PORT_RX = 7000
 UDP_DISCOVERY_MAGIC = b"phonescoring.jd.ubisoft.com"
 
-# UbiArt StringID hashes for JD_Input_PhoneCommandData (verified from jd2022.exe)
+# UbiArt StringID hashes for JD_Input_PhoneCommandData
 PHONE_INPUT_HASHES: Dict[str, int] = {
     "VALID": 1084313942,  # 0x40A15156 (OK / Confirm)
     "UP": 3690595578,     # 0xDBFA04FA
@@ -654,7 +654,7 @@ class AdaptiveCalibrationTuner:
 
 
 def find_just_dance_pids() -> List[int]:
-    """Finds PIDs of running Just Dance PC processes (jd2022.exe, jd2021.exe, etc.)."""
+    """Finds PIDs of running Just Dance PC processes (Legacy.exe, JustDance.exe)."""
     pids: List[int] = []
     if sys.platform != "win32":
         return pids
@@ -991,9 +991,8 @@ class VirtualPhoneController:
                 if custom_path:
                     path = custom_path
                 else:
-                    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-                    logs_dir = os.path.join(base_dir, "logs")
-                    os.makedirs(logs_dir, exist_ok=True)
+                    from sensor.config_manager import get_logs_dir
+                    logs_dir = str(get_logs_dir())
                     path = os.path.join(logs_dir, f"{clean_song}_{src}_{int(time.time())}.csv")
 
                 self._log_path = path

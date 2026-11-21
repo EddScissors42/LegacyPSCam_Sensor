@@ -1,14 +1,17 @@
 """
-Shared Memory IPC Bridge for Just Dance PC (Legacy Offline).
-Provides atomic seqlock buffers consumed by Kinect10.dll:
-1. Pose Bridge: Local\\LegacyWebcamKinectPose (344 bytes, JDP1)
-2. Image & Mask Bridge: Local\\LegacyWebcamKinectImage (1,305,632 bytes, JMI1)
-3. Coach X Bridge: Local\\LegacyWebcamKinectCoachX (28 bytes, JXC1)
+Shared Memory IPC Bridge for Just Dance PC (Legacy Offline 2018).
+Provides atomic seqlock buffers consumed by Legacy10.dll / Kinect10.dll:
+1. Pose Bridge V1: Local\\LegacyWebcamKinectPose (344 bytes, JDP1)
+2. Pose Bridge V2: Local\\LegacyWebcamKinectPoseV2 (664 bytes, JDP2, 1-2 Players)
+3. Image & Mask Bridge V1 & V2: Local\\LegacyWebcamKinectImage & V2 (1,305,632 bytes, JMI1 & JMI2)
+4. Coach X Bridge: Local\\LegacyWebcamKinectCoachX (28 bytes, JXC1)
 """
 import mmap
 import os
 import struct
+import threading
 import time
+from typing import Optional
 import cv2
 import numpy as np
 
@@ -178,9 +181,9 @@ class KinectSharedMemory:
 class KinectMultiPoseSharedMemory:
     """
     Manages the 664-byte dual skeleton tracking memory buffer (JDP2).
-    Consumed preferentially by Kinect10.dll.
+    Consumed preferentially by Legacy10.dll / Kinect10.dll.
     Preserves absolute metric camera-space coordinates without auto-centering,
-    enabling dancer slot selection in Just Dance PC.
+    enabling dancer slot selection and 2-player tracking in Just Dance PC.
     """
     def __init__(self, tagname=MULTI_SHARED_NAME):
         self.tagname = tagname
@@ -204,17 +207,20 @@ class KinectMultiPoseSharedMemory:
             return False
 
         try:
-            if not players:
+            if not players or not tracked:
                 return self.write_empty()
 
-            if isinstance(players[0], tuple) and len(players[0]) == 4:
+            if isinstance(players[0], (tuple, list)) and len(players[0]) == 4 and isinstance(players[0][0], (int, float)):
                 bodies = [players, None]
             else:
                 bodies = list(players[:MAX_PLAYERS])
                 while len(bodies) < MAX_PLAYERS:
                     bodies.append(None)
 
-            tracked_mask = sum(1 << i for i, b in enumerate(bodies) if b is not None and tracked)
+            tracked_mask = sum(1 << i for i, b in enumerate(bodies) if b is not None and len(b) > 0 and tracked)
+            if tracked_mask == 0:
+                return self.write_empty()
+
             self.seq = (self.seq + 2) | 1
             ts_ms = int(time.time() * 1000)
 
@@ -276,9 +282,9 @@ class KinectImageSharedMemory:
     """
     Manages the 1,305,632-byte image and player segmentation mask buffer.
     Populates both:
-      - Local\\LegacyWebcamKinectImage (JMI1, version 1, mask with 255 for player)
-      - Local\\LegacyWebcamKinectImageV2 (JMI2, version 2, player index mask with 1 for Player 1)
-    Ensures 100% binary compatibility with any version of Kinect10.dll.
+      - Local\\LegacyWebcamKinectImage (JMI1, version 1, mask with 255 for any active player)
+      - Local\\LegacyWebcamKinectImageV2 (JMI2, version 2, player index mask with 1 for Player 1 and 2 for Player 2)
+    Ensures 100% binary compatibility with Legacy10.dll / Kinect10.dll.
     """
     def __init__(self, tagname=IMAGE_SHARED_NAME):
         self.tagname = tagname
@@ -322,19 +328,31 @@ class KinectImageSharedMemory:
         if self.is_connected:
             self.write_empty()
 
-    def write_image_and_mask(self, frame_bgr, mask_binary, tracked=True):
+    def write_image_and_mask(
+        self,
+        frame_bgr,
+        mask_binary,
+        tracked=True,
+        tracked_mask: Optional[int] = None,
+        is_player_index_mask: bool = False,
+    ):
         """
         Writes 640x480 BGRA camera frame and 320x240 player index mask to both JMI1 and JMI2 channels
         using pre-allocated buffers and zero-copy memoryviews.
-        In JMI1, player pixels must be >= 64 (0x40 in Kinect10.dll) -> written as 255.
-        In JMI2, player pixels correspond to player index -> written as 1 (Player 1).
+        - In JMI1, player pixels must be >= 64 (0x40 in Legacy10.dll) -> written as 255.
+        - In JMI2, player pixels correspond to player index -> 1 (Player 1), 2 (Player 2), 0 (Background).
         """
         if not self.is_connected:
             return False
 
         try:
             ts_ms = int(time.time() * 1000)
-            tracked_val = 1 if tracked else 0
+            if tracked_mask is not None:
+                v2_tracked_mask = int(tracked_mask) if tracked else 0
+                v1_tracked_val = 1 if v2_tracked_mask > 0 else 0
+            else:
+                v1_tracked_val = 1 if tracked else 0
+                v2_tracked_mask = 1 if tracked else 0
 
             # 1. Prepare 640x480 BGRA buffer in-place (zero heap allocation)
             if frame_bgr is not None:
@@ -349,19 +367,23 @@ class KinectImageSharedMemory:
                 bgra_payload = ZERO_BGRA_BYTES
 
             # 2. Prepare 320x240 masks for both V1 and V2 in-place (SIMD threshold, zero allocation)
-            if mask_binary is not None and tracked_val == 1:
+            if mask_binary is not None and v1_tracked_val == 1:
                 if mask_binary.shape[0] != MASK_H or mask_binary.shape[1] != MASK_W:
                     cv2.resize(mask_binary, (MASK_W, MASK_H), dst=self._small_mask, interpolation=cv2.INTER_NEAREST)
                     src_mask = self._small_mask
                 else:
                     src_mask = mask_binary
 
-                # JMI1 expects values >= 0x40 (64) for player -> 255
-                cv2.threshold(src_mask, 64, 255, cv2.THRESH_BINARY, dst=self._v1_mask)
-                v1_mask_payload = self._v1_mask_view
+                if is_player_index_mask:
+                    # src_mask already holds player indices (0=bg, 1=P1, 2=P2)
+                    cv2.threshold(src_mask, 0, 255, cv2.THRESH_BINARY, dst=self._v1_mask)
+                    np.clip(src_mask, 0, 6, out=self._v2_mask)
+                else:
+                    # Legacy binary mask where player pixels are >= 64 (255)
+                    cv2.threshold(src_mask, 64, 255, cv2.THRESH_BINARY, dst=self._v1_mask)
+                    cv2.threshold(src_mask, 64, 1, cv2.THRESH_BINARY, dst=self._v2_mask)
 
-                # JMI2 expects player index: 1 for Player 1 -> 1
-                cv2.threshold(src_mask, 64, 1, cv2.THRESH_BINARY, dst=self._v2_mask)
+                v1_mask_payload = self._v1_mask_view
                 v2_mask_payload = self._v2_mask_view
             else:
                 v1_mask_payload = ZERO_MASK_BYTES
@@ -376,7 +398,7 @@ class KinectImageSharedMemory:
                     IMAGE_MAGIC,
                     IMAGE_VERSION,
                     self.seq_v1,
-                    tracked_val,
+                    v1_tracked_val,
                     IMAGE_W,
                     IMAGE_H,
                     ts_ms
@@ -398,7 +420,7 @@ class KinectImageSharedMemory:
                     MULTI_IMAGE_MAGIC,
                     MULTI_IMAGE_VERSION,
                     self.seq_v2,
-                    tracked_val,  # tracked_mask: bit 0 = Player 1
+                    v2_tracked_mask,  # bit 0 = Player 1, bit 1 = Player 2
                     IMAGE_W,
                     IMAGE_H,
                     ts_ms
@@ -499,8 +521,8 @@ class KinectBridge:
     r"""
     Unified manager handling all shared memory channels for Just Dance PC:
     - Pose V1: Local\LegacyWebcamKinectPose (344 bytes, JDP1)
-    - Pose V2: Local\LegacyWebcamKinectPoseV2 (664 bytes, JDP2)
-    - Image V1 & V2: Local\LegacyWebcamKinectImage (1.3MB, JMI1 & JMI2)
+    - Pose V2: Local\LegacyWebcamKinectPoseV2 (664 bytes, JDP2, 1-2 Players)
+    - Image V1 & V2: Local\LegacyWebcamKinectImage & V2 (1.3MB, JMI1 & JMI2)
     - CoachX: Local\LegacyWebcamKinectCoachX (28 bytes, JXC1)
     """
     def __init__(self):
@@ -517,9 +539,35 @@ class KinectBridge:
         p1_ok = self.pose.write_pose(joints, tracked=tracked)
         p2_ok = self.pose_v2.write_poses(joints, tracked=tracked)
         i_ok = self.image.write_image_and_mask(frame_bgr, mask_binary, tracked=tracked)
-        # CoachX offset is kept disabled during live tracking because the 20 joints in
-        # JDP1/JDP2 already contain camera-space X translation. Enabling CoachX causes
-        # Kinect10.dll to double-add hip_x to all joints, projecting the head way off to the door.
+        self.coach_x.write_coach_x(coach_x=0.0, enabled=False)
+        return p1_ok and p2_ok and i_ok
+
+    def write_multi(self, players_joints, frame_bgr, player_index_mask, tracked_mask: Optional[int] = None):
+        """
+        Writes 1 or 2 player skeletons and their combined player_index_mask (0=bg, 1=P1, 2=P2)
+        to all shared memory channels atomically.
+        """
+        bodies = list(players_joints[:MAX_PLAYERS]) if players_joints else []
+        while len(bodies) < MAX_PLAYERS:
+            bodies.append(None)
+
+        if tracked_mask is None:
+            tracked_mask = sum(1 << i for i, b in enumerate(bodies) if b is not None and len(b) > 0)
+
+        any_tracked = (tracked_mask > 0)
+        primary_joints = bodies[0] if (bodies[0] is not None and (tracked_mask & 1)) else (
+            bodies[1] if (bodies[1] is not None and (tracked_mask & 2)) else None
+        )
+
+        p1_ok = self.pose.write_pose(primary_joints, tracked=bool(primary_joints is not None))
+        p2_ok = self.pose_v2.write_poses(bodies, tracked=any_tracked)
+        i_ok = self.image.write_image_and_mask(
+            frame_bgr,
+            player_index_mask,
+            tracked=any_tracked,
+            tracked_mask=tracked_mask,
+            is_player_index_mask=True,
+        )
         self.coach_x.write_coach_x(coach_x=0.0, enabled=False)
         return p1_ok and p2_ok and i_ok
 
@@ -536,3 +584,25 @@ class KinectBridge:
         self.image.close()
         self.coach_x.close()
         print("[INFO] All IPC shared memory channels closed.")
+
+
+_bridge_singleton: Optional[KinectBridge] = None
+_bridge_lock = threading.Lock()
+
+
+def get_kinect_bridge() -> KinectBridge:
+    """Returns the process-wide singleton KinectBridge instance so seq numbers remain strictly monotonic."""
+    global _bridge_singleton
+    with _bridge_lock:
+        if _bridge_singleton is None or not _bridge_singleton.is_connected:
+            _bridge_singleton = KinectBridge()
+        return _bridge_singleton
+
+
+def close_kinect_bridge() -> None:
+    """Closes and resets the singleton KinectBridge instance."""
+    global _bridge_singleton
+    with _bridge_lock:
+        if _bridge_singleton is not None:
+            _bridge_singleton.close()
+            _bridge_singleton = None

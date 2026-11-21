@@ -17,7 +17,10 @@ BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-from sensor.config_manager import ConfigManager, parse_preset, PRESETS_PSCAM, PRESETS_WEBCAM
+from sensor.config_manager import (
+    ConfigManager, parse_preset, PRESETS_PSCAM, PRESETS_WEBCAM,
+    get_app_data_dir, get_config_path, get_logs_dir, is_portable_mode
+)
 from sensor.kinect_shared_memory import (
     KinectSharedMemory, SHARED_NAME, SHARED_SIZE, HEADER_FMT, JOINT_FMT, MAGIC, NEUTRAL_POSE,
     KinectMultiPoseSharedMemory, MULTI_SHARED_NAME, MULTI_SHARED_SIZE, MULTI_MAGIC, MULTI_VERSION,
@@ -40,7 +43,19 @@ from sensor.virtual_phone import (
 from sensor.session_logger import SessionLogger, get_session_logger, TELEMETRY_CSV_HEADER
 
 def test_config():
-    print("[TEST] ConfigManager...")
+    print("[TEST] ConfigManager & AppData Storage...")
+    import tempfile
+
+    app_dir = get_app_data_dir()
+    assert app_dir.exists(), "AppData directory must exist"
+    logs_dir = get_logs_dir()
+    assert logs_dir.exists(), "Logs directory in AppData must exist"
+    assert logs_dir.parent == app_dir
+
+    cfg_path = get_config_path()
+    assert cfg_path.name == "config.json"
+    assert cfg_path.parent == app_dir
+
     cfg_mgr = ConfigManager()
     cfg = cfg_mgr.config
     assert "camera_mode" in cfg
@@ -51,7 +66,18 @@ def test_config():
     assert parse_preset("640x480 @ 30 FPS") == (640, 480, 30)
     assert "1280x800 @ 60 FPS" in PRESETS_PSCAM
     assert "640x480 @ 30 FPS" in PRESETS_WEBCAM
-    print("  -> ConfigManager PASSED")
+
+    # Test custom path isolation
+    with tempfile.TemporaryDirectory() as td:
+        custom_cfg = Path(td) / "test_custom_config.json"
+        custom_mgr = ConfigManager(config_path=custom_cfg)
+        custom_mgr.set("camera_mode", "pscam")
+        assert custom_mgr.save()
+        assert custom_cfg.exists()
+        loaded = ConfigManager(config_path=custom_cfg)
+        assert loaded.get("camera_mode") == "pscam"
+
+    print("  -> ConfigManager & AppData Storage PASSED")
 
 def test_shared_memory():
     print("[TEST] KinectSharedMemory...")
@@ -185,19 +211,19 @@ def test_shared_memory():
     bridge.close()
     print("  -> KinectBridge (Unified IPC) PASSED")
 
-    # Verify Kinect10.dll pacer byte (33ms / 30 FPS standard for Just Dance scoring compatibility)
+    # Verify Legacy10.dll pacer byte (33ms / 30 FPS standard for Just Dance scoring compatibility)
     # and Ordinal 9 (NuiImageGetColorPixelCoordinatesFromDepthPixel) 320x240 -> 640x480 2x scaling
-    for dll_name in ("Kinect10.dll", "Legacy10.dll"):
-        dll_path = BASE_DIR / "tools" / dll_name
-        if dll_path.exists():
-            dll_bytes = dll_path.read_bytes()
-            assert len(dll_bytes) == 121344, f"Unexpected {dll_name} size: {len(dll_bytes)}"
-            assert dll_bytes[0x1746] == 0x6A, f"Expected push opcode 0x6A at 0x1746, got {dll_bytes[0x1746]:#x}"
-            assert dll_bytes[0x1747] == 0x21, f"Expected 33ms pacer byte 0x21 at 0x1747 (30 FPS standard), got {dll_bytes[0x1747]:#x}"
-            assert dll_bytes[0x1748:0x174A] == b"\xff\xd3", "Expected call ebx (Sleep) at 0x1748"
-            assert dll_bytes[0x19AC:0x19AE] == b"\xd1\xe0", f"Expected shl eax, 1 (0xd1 0xe0) for lColorX in {dll_name} Ordinal 9"
-            assert dll_bytes[0x19BC:0x19BE] == b"\xd1\xe0", f"Expected shl eax, 1 (0xd1 0xe0) for lColorY in {dll_name} Ordinal 9"
-    print("  -> Kinect10.dll & Legacy10.dll Pacer Byte (30 FPS) + Ordinal 9 (2x Depth->Color Scale) PASSED")
+    assert not (BASE_DIR / "tools" / "Kinect10.dll").exists(), "Manual tools/Kinect10.dll must be removed"
+    dll_path = BASE_DIR / "tools" / "Legacy10.dll"
+    assert dll_path.exists(), "tools/Legacy10.dll must exist for Emulate Kinect in-memory bridge"
+    dll_bytes = dll_path.read_bytes()
+    assert len(dll_bytes) == 121344, f"Unexpected Legacy10.dll size: {len(dll_bytes)}"
+    assert dll_bytes[0x1746] == 0x6A, f"Expected push opcode 0x6A at 0x1746, got {dll_bytes[0x1746]:#x}"
+    assert dll_bytes[0x1747] == 0x21, f"Expected 33ms pacer byte 0x21 at 0x1747 (30 FPS standard), got {dll_bytes[0x1747]:#x}"
+    assert dll_bytes[0x1748:0x174A] == b"\xff\xd3", "Expected call ebx (Sleep) at 0x1748"
+    assert dll_bytes[0x19AC:0x19AE] == b"\xd1\xe0", "Expected shl eax, 1 (0xd1 0xe0) for lColorX in Legacy10.dll Ordinal 9"
+    assert dll_bytes[0x19BC:0x19BE] == b"\xd1\xe0", "Expected shl eax, 1 (0xd1 0xe0) for lColorY in Legacy10.dll Ordinal 9"
+    print("  -> Legacy10.dll Pacer Byte (30 FPS) + Ordinal 9 (2x Depth->Color Scale) PASSED")
 
 def test_hand_anchor():
     print("[TEST] HandAnchorFilter (3D and 2D)...")
@@ -528,7 +554,8 @@ def test_project_structure():
     assert (BASE_DIR / "assets" / "icons").is_dir(), "Directory assets/icons/ must exist"
     assert (BASE_DIR / "assets" / "icons" / "IconePSCAMERA.png").exists(), "Asset IconePSCAMERA.png must exist in assets/icons/"
     assert (BASE_DIR / "assets" / "icons" / "settings.svg").exists(), "Asset settings.svg must exist in assets/icons/"
-    assert (BASE_DIR / "assets" / "icons" / "sliders.svg").exists(), "Asset sliders.svg must exist in assets/icons/"
+    assert (BASE_DIR / "assets" / "icons" / "trackingicon.svg").exists(), "Asset trackingicon.svg must exist in assets/icons/"
+    assert not (BASE_DIR / "assets" / "icons" / "sliders.svg").exists(), "Asset sliders.svg must be removed from assets/icons/"
     assert (BASE_DIR / "assets" / "icons" / "mode_balanced.svg").exists(), "Asset mode_balanced.svg must exist in assets/icons/"
     assert (BASE_DIR / "assets" / "icons" / "mode_competitive.svg").exists(), "Asset mode_competitive.svg must exist in assets/icons/"
     assert (BASE_DIR / "assets" / "icons" / "lab.svg").exists(), "Asset lab.svg must exist in assets/icons/"
@@ -584,6 +611,9 @@ def test_project_structure():
         assert win.windowTitle() == version.WINDOW_TITLE
         assert not win.pix_ps_act.isNull(), "PS Camera icon pixmap must not be null"
         assert not win.pix_web_act.isNull(), "Webcam icon pixmap must not be null"
+        assert not win.pix_phone_act.isNull(), "Phone Camera icon pixmap must not be null"
+        assert not win.pix_phone_inact.isNull(), "Phone Camera inactive icon pixmap must not be null"
+        assert hasattr(win, "card_phone_cam"), "Phone Camera sidebar card must exist"
         assert not win.pix_gear_act.isNull(), "Settings icon pixmap must not be null"
         assert not win.pix_slid_act.isNull(), "Sliders icon pixmap must not be null"
         assert not win.pix_slid_disabled.isNull(), "Disabled sliders icon pixmap must not be null"
@@ -681,35 +711,22 @@ def test_project_structure():
         assert not win.chk_vphone_enabled.isEnabled(), "Virtual phone checkbox must be disabled/locked in ds4 mode"
         assert not win.vphone_details_frame.isHidden(), "Virtual phone telemetry details must not be hidden in ds4 mode"
         assert win.auto_frame_box.isHidden(), "Auto-frame box must be hidden in ds4 mode"
-        assert win.emulate_kinect_box.isHidden(), "Emulate Kinect box must be hidden in ds4 mode"
+        assert not hasattr(win, "emulate_kinect_box"), "Emulate Kinect box must be removed from Experimental UI"
+        assert not hasattr(win, "chk_emulate_kinect"), "Emulate Kinect checkbox must be removed from Experimental UI"
+        assert not hasattr(win, "lbl_emulate_tip"), "Sidebar Emulate Kinect reminder must be removed"
+        assert not hasattr(win, "lbl_vphone_kinect_conflict"), "Conflict label must be removed (no mutual exclusion)"
         win._switch_tab("exp")
         assert win.active_tab == "exp", "Should be able to switch to experimental tab in ds4 mode"
         assert win.btn_tab_exp.isEnabled(), "Experimental tab must be enabled in ds4 mode"
 
-        # Verify Emulate Kinect & Virtual Phone Controller mutual exclusion
-        assert hasattr(win, "lbl_vphone_kinect_conflict"), "Conflict label must exist"
+        # Verify Emulate Kinect is ALWAYS active and does NOT disable Virtual Phone Controller
+        assert win.cfg.get("emulate_kinect_enabled") is True, "Emulate Kinect must always be enabled"
+        assert win.kinect_emulator.enabled is True and win.kinect_emulator._running is True, "KinectEmulatorDaemon must always be running"
         win._set_mode("webcam")
-        assert not win.emulate_kinect_box.isHidden(), "Emulate Kinect box must be visible in webcam mode"
-        win.chk_emulate_kinect.setChecked(True)
-        assert not win.chk_vphone_enabled.isEnabled(), "vphone must be disabled when Emulate Kinect is ON"
-        assert not win.chk_vphone_enabled.isChecked(), "vphone must be unchecked when Emulate Kinect is ON"
-        assert not win.lbl_vphone_kinect_conflict.isHidden(), "vphone conflict label must be visible when Emulate Kinect is ON"
-
-        # In ds4 mode, vphone is used as DS4 bridge and conflict label is hidden
+        assert win.chk_vphone_enabled.isEnabled(), "Virtual Phone must remain enabled alongside always-on Emulate Kinect"
         win._set_mode("ds4")
         assert win.chk_vphone_enabled.isChecked(), "vphone must be checked in ds4 mode"
-        assert win.lbl_vphone_kinect_conflict.isHidden(), "conflict label must be hidden in ds4 mode"
-
-        # Switching back to webcam maintains lock if Emulate Kinect is still ON
-        win._set_mode("webcam")
-        assert not win.chk_vphone_enabled.isEnabled(), "vphone must remain disabled when Emulate Kinect is ON"
-        assert not win.chk_vphone_enabled.isChecked(), "vphone must remain unchecked"
-        assert not win.lbl_vphone_kinect_conflict.isHidden(), "conflict label must be visible again"
-
-        # Turning Emulate Kinect OFF reverts and re-enables vphone
-        win.chk_emulate_kinect.setChecked(False)
-        assert win.chk_vphone_enabled.isEnabled(), "vphone must be re-enabled when Emulate Kinect is OFF"
-        assert win.lbl_vphone_kinect_conflict.isHidden(), "conflict label must be hidden when Emulate Kinect is OFF"
+        assert win.kinect_emulator._running is True, "KinectEmulatorDaemon must stay active in ds4 mode"
 
         win._set_mode("webcam")
 
@@ -759,6 +776,7 @@ def test_project_structure():
     assert hasattr(assets, "ICONS_DIR")
     assert assets.ICON_PSCAMERA_PATH.exists()
     assert assets.ICON_SETTINGS_PATH.exists()
+    assert assets.ICON_TRACKING_PATH.exists()
     assert assets.ICON_SLIDERS_PATH.exists()
     assert assets.ICON_MODE_BALANCED_PATH.exists()
     assert assets.ICON_MODE_COMPETITIVE_PATH.exists()
@@ -1241,8 +1259,10 @@ def test_kinect_emulator():
     assert "emulate_kinect_enabled" in cm.config
     assert isinstance(cm.config["emulate_kinect_enabled"], bool)
 
-    # 2. Test Proxy DLL Presence & Validity
+    # 2. Test Proxy DLL Presence & Validity (Legacy10.dll present, manual Kinect10.dll & x64 artifacts removed)
     base_dir = Path(__file__).parent
+    assert not (base_dir / "tools" / "Kinect10.dll").exists(), "Manual tools/Kinect10.dll must be removed"
+    assert not (base_dir / "tools" / "Legacy10_x64.dll").exists(), "Unused tools/Legacy10_x64.dll must be removed"
     proxy_path = base_dir / "tools" / "Legacy10.dll"
     assert proxy_path.exists(), f"Legacy10.dll not found at {proxy_path}"
     assert proxy_path.stat().st_size == 121344, f"Legacy10.dll unexpected size: {proxy_path.stat().st_size}"
@@ -1251,11 +1271,9 @@ def test_kinect_emulator():
         data = f.read()
     assert data[:2] == b"MZ", "Legacy10.dll is not a valid PE binary"
 
-    # 3. Test Ordinal and target definitions
+    # 3. Test Ordinal and target definitions (exclusively 32-bit Just Dance Legacy)
     assert KINECT_ORDINALS_ORDER == [16, 5, 6, 21, 22, 9, 17, 26]
-    assert "legacy.exe" in TARGET_PROCESS_NAMES
-    assert "justdance.exe" in TARGET_PROCESS_NAMES
-    assert "jd2022.exe" in TARGET_PROCESS_NAMES
+    assert TARGET_PROCESS_NAMES == ["legacy.exe", "justdance.exe"]
 
     # 4. Test Daemon Instantiation & Lifecycle
     daemon = KinectEmulatorDaemon({"emulate_kinect_enabled": False})
@@ -1528,6 +1546,40 @@ def test_person_lock_subsystem():
         ptz.update_from_norm(wide_lms, mirrored=False)
     assert ptz.current_zoom < 1.15, f"Adaptive zoom must widen (<1.15) when limbs approach edges, got {ptz.current_zoom:.2f}"
 
+    # Verify seated/offscreen low-confidence landmarks do NOT trigger zoom-in/zoom-out pumping
+    ptz_seated = FaceFollowPTZ(cfg={
+        "face_follow_enabled": True,
+        "face_follow_zoom": 1.22,
+        "face_follow_adaptive_zoom": True,
+    })
+    for tick in range(20):
+        seated_lms = make_person_lms(0.50, 0.45, sh_w=0.20)
+        # Alternate occluded offscreen hips/ankles flickering around 0.25..0.40 visibility
+        off_vis = 0.35 if (tick % 2 == 0) else 0.15
+        seated_lms[23] = MockLM(0.45, 1.15, vis=off_vis)
+        seated_lms[24] = MockLM(0.55, 1.15, vis=off_vis)
+        seated_lms[27] = MockLM(0.45, 1.45, vis=off_vis)
+        seated_lms[28] = MockLM(0.55, 1.45, vis=off_vis)
+        ptz_seated.update_from_norm(seated_lms, mirrored=False)
+    assert abs(ptz_seated.current_zoom - 1.22) < 0.01, (
+        f"Seated offscreen landmarks must not pump zoom, got {ptz_seated.current_zoom:.3f}"
+    )
+
+    # Verify SkeletonCalibrator stabilizes monocular Head.z (prevents Just Dance native face-box zoom breathing)
+    calib_z = SkeletonCalibrator(target_height_m=1.75, cfg={"baseline_z_m": 2.2, "depth_gain": 0.65})
+    z_samples = []
+    for tick in range(12):
+        j_osc = list(NEUTRAL_POSE)
+        # Simulate severe monocular Head.z breathing (-0.45m <-> +0.45m)
+        dz = 0.45 if (tick % 2 == 0) else -0.45
+        j_osc[0] = (0.0, 0.0, 0.0, 0.9)
+        j_osc[2] = (0.0, -0.45, 0.0, 0.9)
+        j_osc[3] = (0.0, -0.75, dz, 0.9)
+        t_osc = calib_z.transform(j_osc)
+        z_samples.append(t_osc[3][2])
+    z_span = max(z_samples) - min(z_samples)
+    assert z_span < 0.06, f"Monocular Head.z must remain damped against zoom breathing (span={z_span:.3f}m)"
+
     # 4. Test PersonLockController master toggle & PoseTracker integration
     ctrl = PersonLockController(cfg={"person_lock_enabled": True})
     assert ctrl.is_enabled is True
@@ -1605,6 +1657,437 @@ def test_arm_raise_gesture():
     print("  -> Arm Raise Gesture Recognition & State Machine PASSED")
 
 
+def test_phone_camera_webapp():
+    print("[TEST] Phone Camera WebApp (Pure-Python QR Code, Self-Signed TLS, WSS Video & Edge Metrics)...")
+    import cv2
+    import socket
+    import ssl
+    import json
+    import struct
+    from sensor.phone_camera import QRCodeGenerator, SelfSignedTLSManager, PhoneCameraServer
+    from sensor.camera_manager import LatestFrameCamera
+
+    # 1. Verify Pure-Python ISO/IEC 18004 QR Code generation and OpenCV QR decoding
+    test_url = "https://192.168.1.42:8443"
+    qr_pil = QRCodeGenerator.render_pil_image(test_url, box_size_px=240)
+    assert qr_pil.size == (240, 240)
+    qr_bgr = cv2.cvtColor(np.array(qr_pil), cv2.COLOR_RGBA2BGR)
+    decoded_url, _, _ = cv2.QRCodeDetector().detectAndDecode(qr_bgr)
+    assert decoded_url == test_url, f"OpenCV QRCodeDetector failed to decode QR: got {decoded_url!r}"
+
+    # 2. Verify Pure-Python X.509v3 Self-Signed TLS Certificate & SSLContext loading
+    tls_ctx = SelfSignedTLSManager.create_ssl_context("127.0.0.1")
+    assert isinstance(tls_ctx, ssl.SSLContext)
+
+    # 3. Start PhoneCameraServer on an ephemeral port and test HTTPS GET / + WSS /ws
+    srv = PhoneCameraServer(port=0)
+    assert srv.start(port=0) is True
+    port = srv.actual_port
+    assert port > 0
+
+    try:
+        # 3a. HTTPS GET / WITHOUT token must be rejected (prevents Safari stale tab auto-connect)
+        client_ctx = ssl.create_default_context()
+        client_ctx.check_hostname = False
+        client_ctx.verify_mode = ssl.CERT_NONE
+        with socket.create_connection(("127.0.0.1", port), timeout=3.0) as raw_s:
+            with client_ctx.wrap_socket(raw_s, server_hostname="127.0.0.1") as tls_s:
+                tls_s.sendall(b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+                resp_unauth = b""
+                while True:
+                    chunk = tls_s.recv(4096)
+                    if not chunk:
+                        break
+                    resp_unauth += chunk
+        assert b"403 Forbidden" in resp_unauth and b"Pairing Session Expired" in resp_unauth
+
+        # 3b. HTTPS GET / WITH valid session token serves the Mobile WebApp HTML
+        tok = srv.session_token
+        assert tok and f"?t={tok}" in srv.get_connect_url()
+        with socket.create_connection(("127.0.0.1", port), timeout=3.0) as raw_s:
+            with client_ctx.wrap_socket(raw_s, server_hostname="127.0.0.1") as tls_s:
+                tls_s.sendall(f"GET /?t={tok} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n".encode("ascii"))
+                resp = b""
+                while True:
+                    chunk = tls_s.recv(4096)
+                    if not chunk:
+                        break
+                    resp += chunk
+        assert b"200 OK" in resp and b"Legacy PSCam Sensor" in resp
+        assert b"Front Camera" in resp and b"Rear Camera" in resp and b"Dim Screen" in resp
+        assert b"computeScaledDimensions" in resp and b"Standby" in resp
+
+        # 3c. WSS /ws WITHOUT token must be rejected with 403 Forbidden
+        with socket.create_connection(("127.0.0.1", port), timeout=3.0) as raw_ws_bad:
+            with client_ctx.wrap_socket(raw_ws_bad, server_hostname="127.0.0.1") as wss_bad:
+                bad_hs = (
+                    "GET /ws HTTP/1.1\r\n"
+                    "Host: 127.0.0.1\r\n"
+                    "Upgrade: websocket\r\n"
+                    "Connection: Upgrade\r\n"
+                    "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+                    "Sec-WebSocket-Version: 13\r\n\r\n"
+                )
+                wss_bad.sendall(bad_hs.encode("ascii"))
+                bad_resp = wss_bad.recv(1024)
+                assert b"403 Forbidden" in bad_resp
+
+        # 3d. WSS WebSocket Upgrade WITH valid token, Standby->Active lifecycle, Binary JPEG & Edge Metrics
+        assert srv.streaming_active is False, "PhoneCameraServer must start in cool Standby mode"
+        with socket.create_connection(("127.0.0.1", port), timeout=3.0) as raw_ws:
+            with client_ctx.wrap_socket(raw_ws, server_hostname="127.0.0.1") as wss:
+                handshake = (
+                    f"GET /ws?t={tok} HTTP/1.1\r\n"
+                    "Host: 127.0.0.1\r\n"
+                    "Upgrade: websocket\r\n"
+                    "Connection: Upgrade\r\n"
+                    "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+                    "Sec-WebSocket-Version: 13\r\n\r\n"
+                )
+                wss.sendall(handshake.encode("ascii"))
+                hs_resp = wss.recv(1024)
+                assert b"101 Switching Protocols" in hs_resp
+
+                def send_masked_frame(opcode: int, data: bytes):
+                    mask_key = b"\x12\x34\x56\x78"
+                    length = len(data)
+                    if length < 126:
+                        hdr = struct.pack("!BB", 0x80 | opcode, 0x80 | length)
+                    elif length < 65536:
+                        hdr = struct.pack("!BBH", 0x80 | opcode, 0x80 | 126, length)
+                    else:
+                        hdr = struct.pack("!BBQ", 0x80 | opcode, 0x80 | 127, length)
+                    masked = bytes(b ^ mask_key[i % 4] for i, b in enumerate(data))
+                    wss.sendall(hdr + mask_key + masked)
+
+                # Send hello packet
+                hello_json = json.dumps({
+                    "type": "hello",
+                    "device": "iPhone (iOS Safari)",
+                    "lens": "user",
+                    "width": 640,
+                    "height": 480,
+                    "fps": 30,
+                    "capabilities": ["pc_video", "phone_edge"],
+                }).encode("utf-8")
+                send_masked_frame(0x01, hello_json)
+
+                # Send a synthetic 640x480 JPEG frame over binary WebSocket
+                synth_img = np.full((480, 640, 3), (40, 120, 200), dtype=np.uint8)
+                ok_enc, jpeg_buf = cv2.imencode(".jpg", synth_img, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+                assert ok_enc
+                send_masked_frame(0x02, jpeg_buf.tobytes())
+
+                # Send a future-ready edge_metrics JSON packet
+                edge_json = json.dumps({
+                    "type": "edge_metrics",
+                    "ts_ms": 123456789,
+                    "imu_accel": [0.1, 0.2, 0.98],
+                    "kinect_joints": [[0.0, 1.0, 2.0, 0.95]] * 20,
+                }).encode("utf-8")
+                send_masked_frame(0x01, edge_json)
+
+                # Wrap with LatestFrameCamera(is_phone_cam=True) and verify frame delivery
+                cam = LatestFrameCamera(
+                    camera_index=0,
+                    target_w=640,
+                    target_h=480,
+                    target_fps=30,
+                    is_phone_cam=True,
+                    phone_cam_server=srv,
+                )
+                try:
+                    got_frame = None
+                    for _ in range(30):
+                        ret, frm, _ = cam.read(only_new=True)
+                        if ret and frm is not None:
+                            got_frame = frm
+                            break
+                        time.sleep(0.02)
+                    assert got_frame is not None, "LatestFrameCamera failed to read frame from PhoneCameraServer"
+                    assert got_frame.shape == (480, 640, 3)
+                    assert srv.is_client_connected is True
+                    assert srv.client_device_name == "iPhone (iOS Safari)"
+
+                    assert srv.streaming_active is True, "LatestFrameCamera must activate phone streaming"
+                    edge_data = cam.read_edge_metrics(only_new=True)
+                    assert edge_data is not None and edge_data.get("ts_ms") == 123456789
+                finally:
+                    cam.release()
+                assert srv.streaming_active is False, "LatestFrameCamera.release() must return phone to cool Standby"
+        # Verify disconnect_client rotates session token so old URLs cannot auto-reconnect
+        old_tok = srv.session_token
+        srv.disconnect_client(rotate_token=True)
+        assert srv.session_token != old_tok, "disconnect_client must rotate pairing session token"
+    finally:
+        srv.stop()
+
+    print("  -> Phone Camera WebApp PASSED (QR Code, Self-Signed TLS, WSS Video & Edge Metrics verified)")
+
+
+def test_multi_player_tracking():
+    print("[TEST] Multi-Player (2P Duo) Pose Engine, Long-Term Anti-Swap Identity Memory & JDP2/JMI2 IPC...")
+    import cv2
+    from sensor.kinect_shared_memory import (
+        get_kinect_bridge,
+        close_kinect_bridge,
+        MULTI_SHARED_NAME,
+        MULTI_SHARED_SIZE,
+        MULTI_MAGIC,
+        MULTI_VERSION,
+        MULTI_IMAGE_SHARED_NAME,
+        MULTI_IMAGE_MAGIC,
+        MULTI_IMAGE_VERSION,
+        IMAGE_SHARED_NAME,
+        IMAGE_SHARED_SIZE,
+        HEADER_FMT,
+        JOINT_FMT,
+        IMAGE_HEADER_FMT,
+        NEUTRAL_POSE,
+    )
+    from sensor.player_slot import (
+        PlayerFrame,
+        MultiPoseFrame,
+        PlayerSlotState,
+        MultiPlayerAssociator,
+        compose_player_index_mask,
+        is_plausible_human_dancer,
+    )
+    from sensor.tracking_overlay import (
+        TrackingOverlay,
+        COLOR_P1_SILHOUETTE,
+        COLOR_P2_SILHOUETTE,
+    )
+    from sensor.gesture_detector import ArmRaiseGestureDetector
+
+    # 1. Verify Singleton KinectBridge & 2-Player JDP2 / JMI2 binary contract
+    b1 = get_kinect_bridge()
+    b2 = get_kinect_bridge()
+    assert b1 is b2, "get_kinect_bridge() must return the process-wide singleton instance"
+    assert b1.is_connected
+
+    pose_p1 = [(-0.55 + j[0], j[1], 2.0, 0.95) for j in NEUTRAL_POSE]
+    pose_p2 = [(+0.55 + j[0], j[1], 2.2, 0.92) for j in NEUTRAL_POSE]
+
+    mask_p1 = np.zeros((240, 320), dtype=np.uint8)
+    mask_p1[40:200, 30:140] = 255
+    mask_p2 = np.zeros((240, 320), dtype=np.uint8)
+    mask_p2[40:200, 180:290] = 255
+
+    pf1 = PlayerFrame(slot_index=0, tracked=True, kinect_joints=pose_p1, body_mask=mask_p1, center_z=2.0)
+    pf2 = PlayerFrame(slot_index=1, tracked=True, kinect_joints=pose_p2, body_mask=mask_p2, center_z=2.2)
+    idx_mask = compose_player_index_mask([pf1, pf2], width=320, height=240)
+    assert idx_mask is not None and idx_mask.shape == (240, 320)
+    assert np.all(idx_mask[60:180, 50:120] == 1), "Player 1 region must have index 1"
+    assert np.all(idx_mask[60:180, 200:270] == 2), "Player 2 region must have index 2"
+    assert np.all(idx_mask[0:20, 0:20] == 0), "Background region must have index 0"
+
+    # Verify depth-priority overlap resolution (closer player with smaller center_z wins overlapping pixels)
+    overlap_m1 = np.zeros((240, 320), dtype=np.uint8)
+    overlap_m1[80:160, 100:200] = 255
+    overlap_m2 = np.zeros((240, 320), dtype=np.uint8)
+    overlap_m2[80:160, 140:240] = 255
+    # P2 is closer (center_z=1.75m) than P1 (center_z=2.30m) -> P2 (2) must win overlap [80:160, 140:200]
+    ov_mask = compose_player_index_mask([
+        PlayerFrame(slot_index=0, tracked=True, body_mask=overlap_m1, center_z=2.30),
+        PlayerFrame(slot_index=1, tracked=True, body_mask=overlap_m2, center_z=1.75),
+    ])
+    assert np.all(ov_mask[90:150, 110:135] == 1), "Non-overlapping P1 region must remain 1"
+    assert np.all(ov_mask[90:150, 145:195] == 2), "Overlapping region must belong to closer P2 (index 2)"
+
+    dummy_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    assert b1.write_multi([pose_p1, pose_p2], dummy_frame, idx_mask, tracked_mask=3)
+
+    # Read JDP2 (664 bytes): header (24B) + Player 1 (320B at 0x18) + Player 2 (320B at 0x158)
+    mm_p2 = mmap.mmap(-1, MULTI_SHARED_SIZE, tagname=MULTI_SHARED_NAME)
+    mm_p2.seek(0)
+    magic_p2, ver_p2, seq_p2, mask_p2, _ = struct.unpack(HEADER_FMT, mm_p2.read(24))
+    assert magic_p2 == MULTI_MAGIC and ver_p2 == MULTI_VERSION
+    assert mask_p2 == 3, f"Expected tracked_mask == 3 (P1 + P2), got {mask_p2}"
+    assert seq_p2 % 2 == 0
+    j0_p1 = struct.unpack(JOINT_FMT, mm_p2.read(16))
+    assert abs(j0_p1[0] - (-0.55)) < 1e-4, f"Expected P1 HipCenter X = -0.55, got {j0_p1[0]}"
+    mm_p2.seek(24 + 320)  # Offset 0x158 (344): Player 2 Joint 0
+    j0_p2 = struct.unpack(JOINT_FMT, mm_p2.read(16))
+    assert abs(j0_p2[0] - (+0.55)) < 1e-4, f"Expected P2 HipCenter X = +0.55, got {j0_p2[0]}"
+    mm_p2.close()
+
+    # Read JMI2 & JMI1 masks
+    mm_i2 = mmap.mmap(-1, IMAGE_SHARED_SIZE, tagname=MULTI_IMAGE_SHARED_NAME)
+    mm_i2.seek(0)
+    magic_i2, ver_i2, seq_i2, tracked_i2, _, _, _ = struct.unpack(IMAGE_HEADER_FMT, mm_i2.read(32))
+    assert magic_i2 == MULTI_IMAGE_MAGIC and ver_i2 == MULTI_IMAGE_VERSION
+    assert tracked_i2 == 3, f"Expected JMI2 tracked_mask == 3, got {tracked_i2}"
+    mm_i2.seek(32 + 640 * 480 * 4)
+    jmi2_arr = np.frombuffer(mm_i2.read(320 * 240), dtype=np.uint8).reshape((240, 320))
+    assert np.any(jmi2_arr == 1) and np.any(jmi2_arr == 2), "JMI2 must preserve both index 1 (P1) and index 2 (P2)"
+    mm_i2.close()
+
+    mm_i1 = mmap.mmap(-1, IMAGE_SHARED_SIZE, tagname=IMAGE_SHARED_NAME)
+    mm_i1.seek(32 + 640 * 480 * 4)
+    jmi1_arr = np.frombuffer(mm_i1.read(320 * 240), dtype=np.uint8).reshape((240, 320))
+    assert np.all(jmi1_arr[60:180, 50:120] == 255) and np.all(jmi1_arr[60:180, 200:270] == 255)
+    mm_i1.close()
+    close_kinect_bridge()
+
+    # 2. Verify Long-Term Identity Memory & Waltz / Crossover Anti-Swap Re-ID
+    class SynthLM:
+        def __init__(self, x, y, vis=0.95):
+            self.x = float(x)
+            self.y = float(y)
+            self.visibility = float(vis)
+            self.presence = float(vis)
+
+    def make_person_lms(cx: float, cy: float = 0.45, sh_w: float = 0.16):
+        lms = [SynthLM(cx, cy)] * 33
+        lms[0] = SynthLM(cx, cy - 0.22)                  # NOSE
+        lms[11] = SynthLM(cx - sh_w * 0.5, cy - 0.12)    # LEFT_SHOULDER
+        lms[12] = SynthLM(cx + sh_w * 0.5, cy - 0.12)    # RIGHT_SHOULDER
+        lms[23] = SynthLM(cx - sh_w * 0.4, cy + 0.12)    # LEFT_HIP
+        lms[24] = SynthLM(cx + sh_w * 0.4, cy + 0.12)    # RIGHT_HIP
+        lms[25] = SynthLM(cx - sh_w * 0.4, cy + 0.30)    # LEFT_KNEE
+        lms[26] = SynthLM(cx + sh_w * 0.4, cy + 0.30)    # RIGHT_KNEE
+        lms[27] = SynthLM(cx - sh_w * 0.4, cy + 0.44)    # LEFT_ANKLE
+        lms[28] = SynthLM(cx + sh_w * 0.4, cy + 0.44)    # RIGHT_ANKLE
+        return lms
+
+    def paint_dancer(canvas: np.ndarray, cx: float, shirt_bgr, pants_bgr):
+        h, w = canvas.shape[:2]
+        x0 = max(0, int((cx - 0.10) * w))
+        x1 = min(w, int((cx + 0.10) * w))
+        # Torso region
+        canvas[int(0.28 * h):int(0.60 * h), x0:x1] = shirt_bgr
+        # Pants region
+        canvas[int(0.60 * h):int(0.82 * h), x0:x1] = pants_bgr
+
+    slots = [PlayerSlotState(0), PlayerSlotState(1)]
+    assoc = MultiPlayerAssociator(max_players=2)
+    blue_shirt, dark_pants = (240, 110, 20), (40, 40, 50)
+    orange_shirt, light_pants = (30, 165, 250), (200, 210, 220)
+
+    # Phase A: 20 frames well separated (P1 at x=0.25 Blue, P2 at x=0.75 Orange) -> consolidates anchor_sig
+    t_sim = 100.0
+    for _ in range(20):
+        t_sim += 1.0 / 30.0
+        frm = np.zeros((240, 320, 3), dtype=np.uint8)
+        paint_dancer(frm, 0.25, blue_shirt, dark_pants)
+        paint_dancer(frm, 0.75, orange_shirt, light_pants)
+        dets = [make_person_lms(0.25), make_person_lms(0.75)]
+        assign, crowded = assoc.match(slots, dets, frm, dt=1.0 / 30.0, now=t_sim)
+        assert not crowded
+        assert assign[0] == 0 and assign[1] == 1
+
+    # Phase B: Waltz / Close Crossover (P1 and P2 merge at center x=0.48 / 0.52) -> must trigger is_crowded freeze!
+    frm_crowd = np.zeros((240, 320, 3), dtype=np.uint8)
+    paint_dancer(frm_crowd, 0.49, blue_shirt, dark_pants)
+    paint_dancer(frm_crowd, 0.51, orange_shirt, light_pants)
+    _, crowded_now = assoc.match(
+        slots, [make_person_lms(0.49), make_person_lms(0.51)], frm_crowd, dt=1.0 / 30.0, now=t_sim + 0.033
+    )
+    assert crowded_now is True, "Close waltz overlap must activate is_crowded appearance freeze!"
+
+    # Phase C: Players finish crossing sides (P1 Blue is now on the RIGHT x=0.75, P2 Orange is on the LEFT x=0.25)
+    # AND MediaPipe returns P2 first (index 0) and P1 second (index 1)!
+    for step in range(4):
+        t_sim += 0.033
+        frm_crossed = np.zeros((240, 320, 3), dtype=np.uint8)
+        paint_dancer(frm_crossed, 0.25, orange_shirt, light_pants)  # det[0] is P2 (Orange) on left
+        paint_dancer(frm_crossed, 0.75, blue_shirt, dark_pants)     # det[1] is P1 (Blue) on right
+        dets_crossed = [make_person_lms(0.25), make_person_lms(0.75)]
+        assign_c, crowded_c = assoc.match(slots, dets_crossed, frm_crossed, dt=1.0 / 30.0, now=t_sim)
+        assert not crowded_c
+
+    # Slot 0 (P1) must be matched to det[1] (Blue at x=0.75), and Slot 1 (P2) to det[0] (Orange at x=0.25)!
+    assert assign_c[0] == 1 and assign_c[1] == 0, f"Anti-swap Re-ID failed after crossover: got {assign_c}"
+
+    # Phase D: Temporary exit & re-entry of P2 (Orange)
+    slots[1].reset_transient()
+    assert not slots[1].identity_profile.active
+    assert slots[1].identity_profile.has_valid_memory(now=t_sim + 2.0)
+    frm_p2_only = np.zeros((240, 320, 3), dtype=np.uint8)
+    paint_dancer(frm_p2_only, 0.60, orange_shirt, light_pants)
+    assign_reentry, _ = assoc.match(slots, [make_person_lms(0.60)], frm_p2_only, dt=1.0 / 30.0, now=t_sim + 2.0)
+    assert 1 in assign_reentry and assign_reentry[1] == 0, f"P2 should re-claim Slot 1 upon re-entry, got {assign_reentry}"
+
+    # 3. Verify PoseTracker(max_players=2), 640px pre-downscale, ROI bypass & MultiPoseFrame
+    tracker_2p = PoseTracker(max_players=2, model_variant="lite")
+    assert tracker_2p.max_players == 2
+    dummy_hd = np.full((800, 1280, 3), 64, dtype=np.uint8)
+    m_res = tracker_2p.process_frame_multi(dummy_hd)
+    assert isinstance(m_res, MultiPoseFrame)
+    assert len(m_res.players) == 2
+    assert m_res.tracked_mask == 0
+    assert tracker_2p._infer_bgr is not None and tracker_2p._infer_bgr.shape == (400, 640, 3), (
+        f"Expected 640x400 2P pre-downscale buffer, got {tracker_2p._infer_bgr.shape}"
+    )
+    # Verify ROI focus was bypassed in 2P mode (peripheral pixels remain 64, not bit-shifted to 16)
+    assert int(tracker_2p._infer_rgb[10, 2, 0]) == 64
+    tracker_2p.close()
+
+    # 3.1 Verify is_plausible_human_dancer accepts valid upright human and rejects inanimate objects (chairs/coats)
+    valid_human_lms = make_person_lms(0.50)
+    ok_human, score_human = is_plausible_human_dancer(valid_human_lms)
+    assert ok_human is True and score_human >= 5.0, f"Valid human should pass plausibility check, got {ok_human}, {score_human}"
+
+    # Chair / coat mock: horizontal, flat, or hips above shoulders
+    chair_lms = [type("MockLM", (), {"x": 0.5 + 0.05 * i, "y": 0.8, "z": 0.0, "visibility": 0.35, "presence": 0.35})() for i in range(33)]
+    ok_chair, _ = is_plausible_human_dancer(chair_lms)
+    assert ok_chair is False, "Horizontal/flat non-human object must be rejected as implausible dancer"
+
+    # 4. Verify ArmRaiseGestureDetector.update_multi accepts arm raise from Player 2
+    g_det = ArmRaiseGestureDetector(enabled=True, hold_seconds=1.5, cooldown_seconds=2.0)
+    p1_down = [(200, 200, 0.9)] * 20
+    p1_down[3] = (200, 120, 0.9)   # Head
+    p1_down[7] = (170, 260, 0.9)   # Hand L down
+    p1_down[11] = (230, 260, 0.9)  # Hand R down
+
+    p2_up = [(440, 200, 0.9)] * 20
+    p2_up[3] = (440, 120, 0.9)     # Head
+    p2_up[7] = (410, 260, 0.9)     # Hand L down
+    p2_up[11] = (470, 70, 0.95)    # Hand R raised above head!
+
+    st0 = g_det.update_multi([p1_down, p2_up], is_tracked=True, now=500.0)
+    assert st0["player_idx"] == 1
+    st1 = g_det.update_multi([p1_down, p2_up], is_tracked=True, now=501.6)
+    assert st1["triggered"] is True and st1["player_idx"] == 1
+
+    # 5. Verify TrackingOverlay 2P Colors (P1 Blue, P2 Light Orange), badges & HUD
+    assert COLOR_P1_SILHOUETTE == (255, 150, 30), "P1 silhouette color must be Blue (BGR 255, 150, 30)"
+    assert COLOR_P2_SILHOUETTE == (95, 185, 255), "P2 silhouette color must be Light Orange (BGR 95, 185, 255)"
+    ovl = TrackingOverlay(show_hud=True)
+    canvas_2p = np.zeros((480, 640, 3), dtype=np.uint8)
+    canvas_2p = ovl.draw_multi_player_silhouettes(canvas_2p, idx_mask)
+    canvas_2p = ovl.draw_skeleton(canvas_2p, p1_down, player_idx=0, show_badge=True)
+    canvas_2p = ovl.draw_skeleton(canvas_2p, p2_up, player_idx=1, show_badge=True)
+    canvas_2p = ovl.draw_hud(
+        canvas_2p, "PS Camera (1280x800)", True, 60.0, 58.5, True, True, max_players=2, tracked_mask=3
+    )
+    assert np.any(canvas_2p > 0)
+
+    # 6. Verify Qt 6 UI 2P Controls, Lite AI Recommended Default & 2P Warning Banner
+    import ui
+    assert ui.CALIB_PRESETS["competitive"]["pose_model"] == "lite"
+    assert ui.CALIB_PRESETS["competitive"]["tag"] == "RECOMMENDED", "Lite AI (Competitive) must be the recommended default"
+    if ui.HAS_QT:
+        from PySide6.QtWidgets import QApplication
+        _ = QApplication.instance() or QApplication([])
+        win = ui.LegacySensorQtGUI(auto_discover=False)
+        assert win.btn_tab_calib.text().strip() == "Tracking", f"Expected tab text 'Tracking', got '{win.btn_tab_calib.text()}'"
+        assert win.cb_players_mode.itemText(0) == "1 Player", f"Expected '1 Player', got '{win.cb_players_mode.itemText(0)}'"
+        assert win.cb_players_mode.itemText(1) == "2 Players", f"Expected '2 Players', got '{win.cb_players_mode.itemText(1)}'"
+        assert hasattr(win, "cb_players_mode"), "Players Mode selector must exist in Calibration/Tracking tab"
+        assert hasattr(win, "two_player_warn_box"), "2-Player Lite AI warning banner must exist in Calibration/Tracking tab"
+        win.cb_players_mode.setCurrentIndex(1)  # Switch to 2 Players (Duo)
+        assert win.cfg["max_players"] == 2
+        assert not win.two_player_warn_box.isHidden(), "2P warning box must be visible when 2 Players is active"
+        win.cb_players_mode.setCurrentIndex(0)  # Restore 1 Player (Solo)
+        assert win.cfg["max_players"] == 1
+        assert win.two_player_warn_box.isHidden(), "2P warning box must be hidden in 1-Player mode"
+        win.close()
+
+    print("  -> Multi-Player (2P Duo) Pose Engine, Anti-Swap Memory & JDP2/JMI2 IPC PASSED")
+
+
 def run_all_tests():
     print("==========================================")
     print("   RUNNING LEGACY PSCAM SENSOR TEST SUITE ")
@@ -1626,8 +2109,10 @@ def run_all_tests():
     test_session_logger()
     test_person_lock_subsystem()
     test_arm_raise_gesture()
+    test_phone_camera_webapp()
+    test_multi_player_tracking()
     print("==========================================")
-    print("   ALL TESTS PASSED SUCCESSFULLY (17/17)  ")
+    print("   ALL TESTS PASSED SUCCESSFULLY (19/19)  ")
     print("==========================================")
 
 if __name__ == "__main__":

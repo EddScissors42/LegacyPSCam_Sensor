@@ -82,13 +82,13 @@ Antes de aprovar qualquer modificação de código, execute a suíte de testes i
 python LegacyPSCam_Sensor/test_suite.py
 ```
 
-A suíte cobre 16 áreas fundamentais:
+A suíte cobre 19 áreas fundamentais (19/19 PASSED):
 
 | Teste | Módulo Testado | Critério de Sucesso |
 |---|---|---|
-| `test_project_structure` | `sensor/`, `ui/`, `assets/` | Integridade da estrutura modular, interface Qt 6 (`LegacySensorQtGUI`, `UIPagesMixin`), `launch_app`, assets, exclusão mútua entre Emulate Kinect e Virtual Phone Controller, e instanciação offscreen Qt6. |
+| `test_project_structure` | `sensor/`, `ui/`, `assets/` | Integridade da estrutura modular, interface Qt 6 (`LegacySensorQtGUI`, `UIPagesMixin`), `launch_app`, assets e instanciação offscreen Qt6. |
 | `test_config` | `sensor/config_manager.py` | Leitura, escrita, persistência e parsing de presets de resolução/FPS. |
-| `test_shared_memory` | `sensor/kinect_shared_memory.py` | Tamanho exato de 344 bytes (JDP1) e 664 bytes (JDP2), paridade seqlock, máscara JMI1/JMI2 e pacer de 33ms do Kinect10.dll. |
+| `test_shared_memory` | `sensor/kinect_shared_memory.py` | Tamanho exato de 344 bytes (JDP1) e 664 bytes (JDP2), paridade seqlock, máscara JMI1/JMI2 e pacer de 33ms da `Legacy10.dll`. |
 | `test_hand_anchor` | `sensor/pose_filters.py` | Extrapolação correta do antebraço em coordenadas 3D e 2D. |
 | `test_adaptive_smoother` | `sensor/pose_filters.py` | Alpha baixo para jitter em repouso (< 0.002) vs alpha alto em alta velocidade (> 0.5) e consistência 30/60 FPS. |
 | `test_calibrator` | `sensor/pose_filters.py` | Validação de eixos do Kinect: `ShoulderRight` positivo no X e `ShoulderLeft` negativo no X, nos 3 tiers. |
@@ -99,9 +99,12 @@ A suíte cobre 16 áreas fundamentais:
 | `test_ps4_native_backend` | `sensor/ps4_backend/` | Verificação de pacote INF, validação SHA-1/SHA-256 do firmware OV580, depacketizer UVC, demultiplexação independente dos dois sensores (Olho Direito e Esquerdo) e captura ao vivo em hardware físico a 60 FPS. |
 | `test_stereo_vision_engine` | `sensor/stereo_matcher.py` | Calibração de fábrica rígida ($B=85.2\text{ mm}$), retificação epipolar via `cv2.remap`, triangulação sub-pixel `PyrLK` + auto-calibração vertical epipolar, máscara de profundidade densa (320x240) e integração com `SkeletonCalibrator`. |
 | `test_ds4_controller` | `sensor/ds4_controller.py` | Identificação de VID/PID oficiais e clones (ShanWan, DragonRise), filtro permissivo, pontuação de interface HID, CRC-32 de Output Report `0x11` e detecção automática de layout/escala de IMU. |
-| `test_kinect_emulator` | `sensor/kinect_emulator.py` | Ciclo de vida do daemon em segundo plano, persistência de configuração, integridade binária da `Legacy10.dll` e roteamento de callbacks de status. |
+| `test_kinect_emulator` | `sensor/kinect_emulator.py` | Ciclo de vida do daemon em segundo plano para Just Dance Legacy 32-bit, persistência de configuração, integridade binária da `Legacy10.dll` e roteamento de callbacks de status. |
 | `test_session_logger` | `sensor/session_logger.py` | Rotação/limpeza automática de sessão anterior, diagnóstico de sistema (SO, CPU, RAM), mapeamento de controles, streaming CSV assíncrono e exception hooks. |
 | `test_person_lock_subsystem` | `sensor/person_lock.py` & `sensor/pose_filters.py` | Predição inercial em micro-quedas (coasting 3D/2D + translação de máscara + LERP de reentrada), trava de identidade por histograma HSV do tronco e continuidade espacial, fallback anti-giro 360° e zoom adaptativo no `FaceFollowPTZ`, e chaves modulares de bypass. |
+| `test_arm_raise_gesture` | `sensor/gesture_detector.py` | Máquina de estados do gesto de braço levantado (`[ENTER]`), progresso percentual, disparo e cooldown. |
+| `test_phone_camera_webapp` | `sensor/phone_camera.py` | Gerador QR Code ISO/IEC 18004 puro em Python, certificado TLS X.509 autoassinado, autenticação de token, streaming WebSocket JPEG e modo Standby térmico. |
+| `test_multi_player_tracking` | `sensor/player_slot.py` & `pose_tracker.py` | Rastreamento de 2 jogadores (2P Duo), contrato binário `JDP2` (664B) e `JMI2` (máscara indexada 1 e 2), singleton `get_kinect_bridge()`, memória de identidade anti-swap em valsas/cruzamentos, gesto `[ENTER]` de P2, cores P1 Azul / P2 Laranja Claro e controles 2P na UI Qt 6. |
 
 ### Adicionando Novos Testes
 Ao criar novos recursos (como um novo algoritmo de suavização ou novo controle de GUI), adicione uma função `test_<funcionalidade>()` no arquivo `test_suite.py` e inclua sua execução na função principal `run_all_tests()`.

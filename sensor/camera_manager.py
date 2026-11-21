@@ -714,6 +714,8 @@ class LatestFrameCamera:
         orientation=0,
         ps4_eye=DEFAULT_EYE,
         ps4_backend_mode="native",
+        is_phone_cam=False,
+        phone_cam_server=None,
     ):
         self.camera_index = camera_index
         self.target_w = target_w
@@ -721,6 +723,8 @@ class LatestFrameCamera:
         self.target_fps = target_fps
         self.mirror = mirror
         self.is_pscam = is_pscam
+        self.is_phone_cam = bool(is_phone_cam)
+        self.phone_cam_server = phone_cam_server
         self.orientation = int(orientation)
         self.ps4_eye = str(ps4_eye or DEFAULT_EYE).strip().lower()
         self.ps4_backend_mode = str(ps4_backend_mode or "native").strip().lower()
@@ -747,6 +751,33 @@ class LatestFrameCamera:
         self._open_and_negotiate()
 
     def _open_and_negotiate(self):
+        # 0. Smartphone WebApp Camera Backend (Wi-Fi HTTPS/WSS)
+        if self.is_phone_cam:
+            from sensor.phone_camera import get_phone_camera_server
+            srv = self.phone_cam_server or get_phone_camera_server()
+            if not srv.running:
+                srv.start()
+            srv.configure_stream(
+                width=self.target_w,
+                height=self.target_h,
+                fps=self.target_fps,
+                streaming_active=True,
+            )
+            self.phone_cam_server = srv
+            self.actual_w = srv.actual_w or self.target_w
+            self.actual_h = srv.actual_h or self.target_h
+            self.actual_fps = float(self.target_fps)
+            print(
+                f"[CAMERA] Phone Camera [Wi-Fi WebApp] inicializada: "
+                f"{self.actual_w}x{self.actual_h}@{self.actual_fps:.0f}fps"
+            )
+            self.running = True
+            self.thread = threading.Thread(
+                target=self._capture_loop, daemon=True, name="CameraCaptureThread"
+            )
+            self.thread.start()
+            return
+
         # 1. Native WinUSB Backend for PlayStation 4 Camera (Primary Path)
         if self.is_pscam and os.name == 'nt' and self.ps4_backend_mode != "pscam4win":
             backend = PS4CameraBackend(
@@ -830,8 +861,18 @@ class LatestFrameCamera:
             ret = False
             frame = None
 
+            # 0. Smartphone WebApp Camera Backend
+            if self.is_phone_cam and self.phone_cam_server is not None:
+                ph_frame = self.phone_cam_server.read_frame(only_new=True)
+                if ph_frame is not None and not self._is_black_frame(ph_frame):
+                    frame = ph_frame
+                    ret = True
+                else:
+                    time.sleep(0.002)
+                    continue
+
             # 1. Native WinUSB PS4 Camera Backend (Primary Path)
-            if self.ps4_backend is not None:
+            elif self.ps4_backend is not None:
                 ps_frame = self.ps4_backend.read_frame(only_new=True)
                 if ps_frame is not None and not self._is_black_frame(ps_frame):
                     frame = ps_frame
@@ -957,6 +998,12 @@ class LatestFrameCamera:
             return st
         return None
 
+    def read_edge_metrics(self, only_new: bool = True):
+        """Returns pre-computed edge metrics from the smartphone when running in phone_edge mode."""
+        if self.is_phone_cam and self.phone_cam_server is not None:
+            return self.phone_cam_server.read_edge_metrics(only_new=only_new)
+        return None
+
     def set_eye(self, eye: str):
         """
         Switches the active PS4 Camera eye ("right" or "left") live.
@@ -976,6 +1023,11 @@ class LatestFrameCamera:
         self.running = False
         if self.thread and self.thread.is_alive():
             self.thread.join(timeout=1.5)
+        if self.is_phone_cam and self.phone_cam_server is not None:
+            try:
+                self.phone_cam_server.set_streaming_active(False)
+            except Exception:
+                pass
         if self.ps4_backend:
             try:
                 self.ps4_backend.stop()

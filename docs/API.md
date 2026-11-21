@@ -103,7 +103,8 @@ O `Kinect10.dll` implementa suporte duplo e busca primeiro o canal **V2 (`JMI2`)
   - `timestamp_ms` (uint64): Timestamp Unix em milissegundos
 - **Payload 1 — Frame BGRA (1.228.800 bytes):** Idêntico ao canal V1.
 - **Payload 2 — Player Index Mask (76.800 bytes):**
-  - Matriz de 320x240 pixels em formato `uint8`. Pixels do Jogador 1 contêm valor `1`; fundo contém valor `0`.
+  - Matriz de 320x240 pixels em formato `uint8`. Pixels do Jogador 1 contêm valor `1`, pixels do Jogador 2 contêm valor `2` (com resolução de sobreposição pela menor profundidade $Z$), e o fundo contém valor `0`.
+- **Cabeçalho `tracked_mask` (uint32):** Máscara de bits dos jogadores ativos (`1` = P1 ativo, `2` = P2 ativo, `3` = P1 e P2 ativos simultaneamente).
 
 
 ---
@@ -153,9 +154,9 @@ Para eliminar travamentos e deadlocks entre o Python (produtor dos dados) e o jo
 
 ---
 
-## 2. Monitor da Ponte de Memória Compartilhada (`sensor.kinect_emulator`)
+## 2. Emulador de Kinect em Memória e Ponte IPC (`sensor.kinect_emulator`)
 
-O projeto opera **exclusivamente** através dos canais da Ponte de Memória Compartilhada do Windows (`KinectBridge`: `JDP1`, `JDP2`, `JMI1`, `JMI2` e `JXC1`), sem incluir nem injetar arquivos binários `Kinect10.dll` ou `Legacy10.dll` personalizados.
+O projeto opera através dos canais da Ponte de Memória Compartilhada do Windows (`get_kinect_bridge()`: `JDP1`, `JDP2`, `JMI1`, `JMI2` e `JXC1`) em conjunto com o `KinectEmulatorDaemon`, que injeta em memória RAM a biblioteca proxy de 32 bits `tools/Legacy10.dll` no processo do Just Dance Legacy (`Legacy.exe` / `JustDance.exe`) sem modificar arquivos no disco do jogo.
 
 ### 2.1 Sincronização de Timer de Alta Resolução (1 ms) no Python
 - O agendador padrão do Windows possui resolução de tick de 15,625 ms, o que pode degradar sleeps de 33 ms (~30 FPS) para 3 ticks (46,875 ms = **21,33 FPS**).
@@ -400,16 +401,19 @@ O pacote `sensor.stereo_matcher` implementa o pipeline óptico de visão estére
 
 ---
 
-## 11. Monitor de Memória Compartilhada (`sensor.kinect_emulator`)
+## 11. Emulador de Kinect em Memória (`sensor.kinect_emulator`)
 
-O módulo `sensor.kinect_emulator` monitora a execução do Just Dance PC de forma 100% read-only e coordena a disponibilidade da Ponte de Memória Compartilhada (`KinectBridge`), sem arquivos `Kinect10.dll` / `Legacy10.dll` personalizados e sem injeção de memória:
+O módulo `sensor.kinect_emulator` emula o sensor Kinect diretamente na memória RAM do Just Dance Legacy (32-bit, modo *Zero-File-Replacement* com `tools/Legacy10.dll`, integrado à Ponte de Memória Compartilhada), sem exigir a substituição ou alteração de qualquer arquivo no disco do jogo:
 
-- `TARGET_PROCESS_NAMES = ["legacy.exe", "justdance.exe", "jd2022.exe"]`: Executáveis monitorados pelo daemon.
+- `KINECT_ORDINALS_ORDER = [16, 5, 6, 21, 22, 9, 17, 26]`: Ordem dos 8 ordinais da API NUI mapeados na tabela IAT do `Legacy.exe` (32-bit).
+- `TARGET_PROCESS_NAMES = ["legacy.exe", "justdance.exe"]`: Executáveis 32-bit monitorados pelo daemon.
 - `KinectEmulatorDaemon(cfg=None)`:
-  - `start() -> None` / `stop() -> None`: Inicia e encerra a thread daemon de monitoramento de processos (`KinectEmulatorDaemon`) e garante a abertura dos canais IPC.
-  - `get_status() -> Dict[str, Any]`: Retorna o estado atual (`enabled`, `running`, `connected`, `game_name`, `pid`, `mode` `"shared_memory"`).
-  - `register_status_callback(cb: Callable[[bool, str, int], None]) -> None`: Registra callback acionado ao detectar ou encerrar o processo do jogo.
-  - `_scan_for_game_process() -> Optional[Dict[str, Any]]`: Varre processos ativos em $<0.5\text{ ms}$ via snapshot de kernel `CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)` com zero acesso de escrita à memória de processos.
+  - `start() -> None` / `stop() -> None`: Inicia e encerra a thread daemon de monitoramento de processos (`KinectEmulatorDaemon`).
+  - `get_status() -> Dict[str, Any]`: Retorna o estado atual (`enabled`, `running`, `connected`, `game_name`, `pid`, `mode` `"iat_hook_32"`).
+  - `register_status_callback(cb: Callable[[bool, str, int], None]) -> None`: Registra callback acionado ao conectar ou desconectar do processo do jogo.
+  - `_scan_for_game_process() -> Optional[Dict[str, Any]]`: Varre processos ativos em $<0.5\text{ ms}$ via snapshot de kernel `CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)`.
+  - `_is_target_32bit(pid: int) -> bool`: Verifica via `IsWow64Process` se o processo alvo é 32-bit (WoW64 / PE32).
+  - `_log_diag_once(pid, reason_key, message)`: Registra diagnósticos de injeção sem spam (incluindo detecção de `ERROR_ACCESS_DENIED (5)` quando o jogo roda como Administrador).
 
 ---
 

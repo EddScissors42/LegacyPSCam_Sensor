@@ -27,13 +27,13 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
 | **Perfis Simplificados e Auto-Altura** | ✅ Totalmente Implementado | `ui/gui_qt.py` / `config_manager.py` | 2 perfis otimizados (Balanced / Full, Competitive / Lite) e calibração de altura 100% automática. |
 | **HUD de Jogo e Overlay OpenCV** | ✅ Totalmente Implementado | `tracking_overlay.py` | Renderização do esqueleto, silhueta e contadores reais de FPS. |
 | **Interface de Linha de Comando (CLI)**| ✅ Totalmente Implementado | `main.py` | Flags `--start`, `--mode {pscam,webcam,ds4}` e `--camera`. |
-| **Rastreamento Multi-Jogador (2P)** | 🟡 Parcialmente Implementado | `pose_tracker.py` | O MediaPipe suporta `num_poses=2`, mas o Lite foca em 1P. |
-| **Auto-Framing / FaceFollow PTZ** | ✅ Totalmente Implementado | `pose_filters.py` / `tracking_session.py` | Auto-framing digital com zoom suave (1.22x) e alinhamento de frustum 3D→2D (`warpAffine`) que posiciona o rosto exatamente na coordenada UV em que o Just Dance recorta o quadrado do avatar (`Head(3)` / `ShoulderCenter(2)`), em conjunto com a escala 2x (`320x240 -> 640x480`) no Ordinal 9 (`NuiImageGetColorPixelCoordinatesFromDepthPixel`) do `Kinect10.dll` / `Legacy10.dll`. |
+| **Rastreamento Multi-Jogador (2P Duo) & Memória Anti-Swap** | ✅ Totalmente Implementado | `sensor/player_slot.py` / `pose_tracker.py` | Rastreia até 2 dançarinos simultâneos (P1 Azul e P2 Laranja Claro) via `JDP2` (664B) e `JMI2` (máscara indexada 1 e 2), com memória persistente de identidade (`LongTermIdentityProfile`) resistente a valsas, cruzamentos e saídas temporárias. |
+| **Auto-Framing / FaceFollow PTZ** | ✅ Totalmente Implementado | `pose_filters.py` / `tracking_session.py` | Auto-framing digital com zoom suave (1.22x) e alinhamento de frustum 3D→2D (`warpAffine`) em modo 1P (desativado automaticamente em 2P para nunca cortar o segundo jogador). |
 | **Celular Virtual (Emulador JD Controller via Câmera)** | ✅ Totalmente Implementado | `virtual_phone.py` / `ui/gui_qt.py` | Emula um smartphone conectado via WebSocket local (`/smartphone`) e converte o movimento 3D da mão na câmera em dados de acelerômetro 3D (`JD_PhoneScoringData`) e comandos de menu para músicas que só suportam controle de mão. |
 | **DualShock 4 & Controles Compatíveis (Nível A) [EXPERIMENTAL]** | ✅ Totalmente Implementado | `sensor/ds4_controller.py` / `ui/gui_qt.py` | Driver nativo Bluetooth/USB HID (500+ Hz) com suporte a DS4 original, controles licenciados de terceiros (Hori, Nacon, Razer, Astro, Scuf) e clones/réplicas (ShanWan, DragonRise) com diagnóstico automático de IMU congelado (0G). |
 | **Benchmark de Telemetria & Calibração Adaptativa** | 🔒 Preservado / Oculto na UI | `sensor/telemetry_benchmark.py` / `ui/benchmark_dialog.py` | Módulo de benchmark comparativo de aceleração (Câmera vs DS4) e auto-gravação por música preservado no código, porém desabilitado por padrão e removido da interface visual para manter o design enxuto. |
 | **Visão Estéreo (Stereo Vision) para PS4 Camera** | ✅ Totalmente Implementado | `sensor/stereo_matcher.py` / `ui/gui_qt.py` | Calibração de fábrica ($B=85.2\text{ mm}$), auto-alinhamento vertical dinâmico das lentes ($\Delta y$), triangulação 3D sub-pixel via Fluxo Óptico Piramidal (`PyrLK`, <0.5ms) e suavização temporal EMA da silhueta. |
-| **Emulate Kinect (Shared Memory IPC Bridge)** | ✅ Totalmente Implementado | `sensor/kinect_emulator.py` / `ui/pages.py` | Comunicação com o Just Dance exclusivamente via Ponte de Memória Compartilhada (`JDP1`, `JDP2`, `JMI1`, `JMI2`, `JXC1`) e monitoramento read-only do processo do jogo, sem `Kinect10.dll` personalizado e sem injeção de memória. |
+| **Emulate Kinect (Zero-File-Replacement Mode)** | ✅ Totalmente Implementado | `sensor/kinect_emulator.py` / `ui/pages.py` | Emulação do sensor Kinect diretamente na memória RAM do Just Dance Legacy (32-bit) via `Legacy10.dll` + Ponte de Memória Compartilhada, sem substituir a `Kinect10.dll` original na pasta do jogo. |
 | **Modo Headless (Sem Janela)** | ⏳ Planejado | `tracking_session.py` | Rastrear em background sem gastar GPU com janela gráfica. |
 
 ---
@@ -186,7 +186,7 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
 ### 14. Cards Modernos de Status de Conexão com Ações Contextuais
 - **Melhoria de UX/UI:** Quando nenhuma PlayStation Camera ou Webcam USB estiver conectada, o balão de status torna-se o **único componente visível** na área de configurações, ocultando caixas de opções e opções adicionais até que uma câmera seja detectada.
 - **Componentes Visuais e Layout:**
-  - **Menu Superior Centralizado de 3 Abas:** As abas "Video Settings", "Calibration" e "Experimental" ficam perfeitamente centralizadas no topo do painel principal, cada uma com seu respectivo ícone supersampleado (`settings.svg`, `sliders.svg` e `lab.svg`).
+  - **Menu Superior Centralizado de 3 Abas:** As abas "Video Settings", "Tracking" e "Experimental" ficam perfeitamente centralizadas no topo do painel principal, cada uma com seu respectivo ícone supersampleado (`settings.svg`, `trackingicon.svg` e `lab.svg`).
   - **Ícones de Status Supersampleados (Pillow 4x LANCZOS):** Badge circular vermelho com "X" nítido e em negrito para desconexão/erro, badge âmbar para estados transitórios de firmware/driver, e badge verde com checkmark para conexão ativa.
   - **Diagnóstico em Tempo Real:** Exibe o status preciso do hardware e do serviço, como `"Driver Offline and Camera disconnected from USB Port"` ou `"Driver Online and Camera disconnected from USB Port"`.
   - **Botão de Ação Direto:** Botão plano estilizado com `PALETTE["blue_pastel"]` e texto em azul PlayStation (`PALETTE["blue_dark"]`) permitindo inicializar o PSCam4Win (`"Start PSCam4Win Driver"`) ou reescanear portas USB (`"Search for Webcams"`).
@@ -422,19 +422,16 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
   - Os objetos continuam instanciados e conectados internamente no controlador Qt, permitindo que o recurso seja reativado no futuro sem necessidade de reimplementação.
 
 
-### 30. Emulate Kinect (Zero-File-Replacement) & Exclusão Mútua com Celular Virtual (v0.5.5 Alpha)
+### 30. Emulate Kinect (Zero-File-Replacement) — Sempre Ativo Automaticamente (Just Dance Legacy 32-bit)
 - **Zero-File-Replacement Mode (`sensor/kinect_emulator.py`):**
-  - Permite jogar Just Dance PC (Legacy Offline) sem precisar substituir o `Kinect10.dll` original de 14.9 MB do Microsoft Kinect SDK v1.8 na pasta do jogo.
-  - O daemon em segundo plano (`KinectEmulatorDaemon`) monitora a inicialização do executável (`Legacy.exe` ou `JustDance.exe`) em modo 32-bit (WoW64) via `psutil` e APIs Win32.
-  - Ao detectar o processo, injeta remotamente a biblioteca proxy `tools/Legacy10.dll` via `VirtualAllocEx`, `WriteProcessMemory` e `CreateRemoteThread(LoadLibraryW)`.
-  - Sobrescreve em tempo real a Import Address Table (IAT) do processo para os 8 ordinais originais do Kinect (`16, 5, 6, 21, 22, 9, 17, 26`), roteando as chamadas para a memória compartilhada do LegacyPSCam Sensor.
-- **Interface e Internacionalização (Inglês):**
-  - Toda a descrição, título e leitura dinâmica de status do recurso na aba Experimental estão em inglês intuitivo.
-- **Exclusão Mútua com Celular Virtual (Virtual Phone Controller):**
-  - Em modos de câmera (Webcam USB ou PlayStation Camera), ao ligar o **Emulate Kinect**, a opção **Virtual Phone Controller** é automaticamente desmarcada (`setChecked(False)`) e desabilitada (`setEnabled(False)`), com encerramento de qualquer conexão WebSocket ativa.
-  - Abaixo do título do Celular Virtual, é exibido um aviso vermelho em destaque: `"Emulate Kinect is active, this feature is unavailable."`.
-  - O Celular Virtual só é reabilitado quando o usuário desliga o Emulate Kinect ou alterna o dispositivo para **DualShock 4** (onde o Celular Virtual atua como ponte do acelerômetro físico).
-  - Ao alternar do DualShock 4 de volta para Webcam ou PS Camera, a restrição de exclusão mútua é preservada se o Emulate Kinect continuar ativado.
+  - Permite jogar Just Dance PC (Legacy Offline 2018) sem precisar substituir o `Kinect10.dll` original de 14.9 MB do Microsoft Kinect SDK v1.8 na pasta do jogo.
+  - O daemon em segundo plano (`KinectEmulatorDaemon`) monitora a inicialização dos executáveis 32-bit (`Legacy.exe` e `JustDance.exe`).
+  - Injeta remotamente a biblioteca proxy `tools/Legacy10.dll` via `VirtualAllocEx`, `WriteProcessMemory` e `CreateRemoteThread(LoadLibraryW)`.
+  - Sobrescreve em tempo real a Import Address Table (IAT) do processo para os 8 ordinais originais do Kinect (`16, 5, 6, 21, 22, 9, 17, 26`), roteando as chamadas para os canais de memória compartilhada (`JDP1`, `JDP2`, `JMI1` e `JMI2`) do Legacy PSCam Sensor.
+  - Inclui diagnóstico explícito e sem spam (`_log_diag_once`) para `ERROR_ACCESS_DENIED (5)` caso o jogo seja executado como Administrador e o sensor não.
+- **Sempre Ativo e Independente:**
+  - Permanece **sempre ligado automaticamente** em segundo plano desde a inicialização da aplicação.
+  - Coexiste livremente com o **Virtual Phone Controller**.
 
 ### 31. Session Logger & Telemetria de Dança em Tempo Real (v0.8.1 / Backend)
 - **Ciclo de Vida na Inicialização (Startup Reset):**
@@ -468,11 +465,57 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
 - **Stereo Vision 60 FPS Boost:**
   - Extração de luminância direta monocromática no leitor nativo da PS4 Camera (`read_left_mono()`) e retificação identidade instantânea (<0.001 ms), liberando ciclos de CPU preciosos.
 
+### 33. Phone Camera via Wi-Fi WebApp & Código QR (v0.8.5 Alpha)
+- **Aba de Captura no Sidebar:**
+  - Posicionada logo abaixo do **DualShock 4** na barra lateral de navegação (Ordem: PlayStation®Camera -> Standard Webcam -> DualShock 4 -> Phone Camera).
+  - Ícone vetorial nítido renderizado a partir de `assets/icons/phone.svg` via `render_svg_icon_pil` com supersampling 4x (`#FFFFFF` ativo e `#00439C` inativo) e fallback procedural caso o SVG não esteja disponível.
+- **Conexão Sem Instalação via QR Code:**
+  - Exibe um Código QR gerado internamente (`QRCodeGenerator` ISO/IEC 18004 puro em Python) apontando para servidor HTTPS local com certificado autoassinado X.509 ASN.1 DER (`SelfSignedTLSManager`).
+  - Funciona em qualquer navegador moderno Android (Chrome) ou iOS (Safari) sem necessidade de instalar aplicativos ou arquivos APK/IPK.
+  - **Controles no Navegador Mobile:**
+    - Botões dedicados lado a lado para seleção direta de câmera: **Front Camera** e **Rear Camera** (com destaque visual `primary` azul para a lente atualmente ativa).
+    - Botão **Dim Screen** posicionado abaixo das duas opções de câmera, ativando tela preta e reduzindo renderização GPU do vídeo mantendo o stream WebSocket ativo.
+  - **Segurança de Pareamento & Anti-Reconexão Fantasma:**
+    - Token criptográfico por sessão (`?t=<token>`) embutido no QR Code e rotacionado automaticamente a cada inicialização, clique em **Disconnect** ou atualização do QR Code (`↻`). Links antigos ou pré-carregamentos em segundo plano do Safari recebem `403 Forbidden` (sem ligar a câmera).
+    - Handlers `pagehide`, `beforeunload` e `visibilitychange` encerram imediatamente as faixas da câmera e o WebSocket ao fechar a aba ou trocar de aplicativo no iOS/Android.
+  - **Otimização Térmica (Modo Standby & Downscaling Automático):**
+    - Enquanto o rastreamento no PC não está ativo, o celular opera em **Standby (Cool Mode)** com heartbeat leve (zero compressão JPEG ou envio contínuo de vídeo).
+    - Durante o rastreamento, o canvas reduz automaticamente a resolução nativa do sensor (ex: 1080p no iPhone) para o preset configurado (`640x480`), utilizando qualidade JPEG `0.55`, loop auto-regulado (`setTimeout`) e limite de FPS no ISP (`max: targetFps`) para evitar superaquecimento em aparelhos mais antigos como iPhone 7.
+- **Visibilidade de Estado na Interface:**
+  - Quando desconectado: o QR Code e instruções de pareamento ocupam a visualização.
+  - Quando conectado: o QR Code se oculta, revelando status do smartphone, botão **Disconnect**, resolução, FPS e opções de exibição (a seleção da lente é feita diretamente no smartphone).
+- **Arquitetura Híbrida Preparada para Edge Computing:**
+  - Transmissão de vídeo via WebSocket binário JPEG em modo `pc_video` (inferência no PC) e contrato estruturado para recepção de métricas diretas no modo `phone_edge`.
+
+### 34. Suporte a 2 Jogadores (2P Duo), Memória Anti-Swap para Valsas/Cruzamentos & Lite AI Padrão (v0.9.0 Alpha)
+- **Motor Multi-Jogador Desacoplado (`sensor/player_slot.py` & `sensor/pose_tracker.py`):**
+  - Suporta nativamente **1 Jogador (Solo)** e **2 Jogadores (Duo)**.
+  - **Oversampling de 4 Poses com Filtro Anatômico (`is_plausible_human_dancer`):** Em modo 2P, o detector MediaPipe opera com `num_poses=4` para propor múltiplos candidatos. Cada candidato é inspecionado por um filtro anatômico rigoroso que valida verticalidade, ombros acima dos quadris, largura e altura mínimas e score de confiança dos joints-chave, rejeitando instantaneamente cadeiras, casacos, almofadas ou móveis de fundo antes de ordenar os candidatos e atribuir os slots.
+  - **Resolução de Inferência 640px (`INFER_MAX_W_2P = 640`):** Buffer de inferência em 640px de largura (ganho de 78% em densidade de amostragem em relação a 480px), mantendo braços e pernas nítidos a até 3 metros da câmera sem sobrecarregar a CPU.
+  - Cada jogador possui sua própria instância isolada `PlayerSlotState` (`HandAnchorFilter`, `AdaptiveSmoother`, `SkeletonCalibrator`, `CameraSpaceXTracker`, `PersonLockController`, suavização temporal de segmentação `_seg_prob_ema` e `LongTermIdentityProfile`).
+- **Memória de Identidade Anti-Swap (`LongTermIdentityProfile` & `MultiPlayerAssociator`):**
+  - Resolve o problema histórico do Kinect de inverter Jogador 1 e Jogador 2 durante valsas, abraços ou cruzamentos rápidos:
+    1. **Assinatura Visual Multi-Região Avançada (`AppearanceSignature`):** Combina histograma HSV 16x8 da camisa/torso (35%), perfil de luminosidade V da camisa (20%), histograma HSV 12x6 da calça/pernas (15%), perfil de luminosidade V da calça (10%), razão de contraste de brilho tronco/pernas (10%) e proporção relativa de altura corporal (10%). Permite discriminar dançarinos com precisão mesmo quando ambos vestem roupas escuras ou neutras.
+    2. **Memória Âncora Permanente (`anchor_sig`) vs. Assinatura Viva (`live_sig`):** Consolida a identidade nos primeiros 25 quadros limpos e separados e mantém a âncora protegida durante toda a música (resetável com `[C] Recalibrate`).
+    3. **Guarda de Proximidade / Valsa (`is_crowded`) & Trava de Aglomeração:** Congela instantaneamente o aprendizado de cor quando as caixas delimitadoras se aproximam (`dist < 0.22` ou `IoU > 0.08`), impedindo contaminação da memória. Trava trocas impulsivas de slot enquanto os dançarinos permanecerem sobrepostos.
+    4. **Inércia de Slot (`CURRENT_SLOT_INERTIA_BONUS = 0.35`) & Momentum Cinemático Direcional:** Aplica desconto de custo para preservar o slot anterior e calcula o alinhamento vetorial da velocidade $(\vec{v} \cdot \vec{d})$, guiando os dançarinos com segurança através de cruzamentos em alta velocidade.
+    5. **Auditoria Re-ID Pós-Separação:** Quando os dançarinos se separam novamente após um cruzamento, audita os dois slots contra suas `anchor_sig` permanentes e desfaz automaticamente qualquer inversão de slot.
+    6. **Memória de Reentrada (até 15s):** Se um jogador sair temporariamente do quadro e voltar pelo lado oposto, reassume automaticamente seu slot original.
+- **Composição de Máscara Indexada (`compose_player_index_mask` & `JMI2`) e Singleton `get_kinect_bridge()`:**
+  - Compõe a matriz `320x240 uint8` com `0` = Fundo, `1` = Jogador 1 e `2` = Jogador 2, resolvendo pixels sobrepostos pela menor profundidade $Z$ (`center_z`).
+  - Grava simultaneamente os 2 esqueletos em `Local\LegacyWebcamKinectPoseV2` (`JDP2`, 664 bytes, `tracked_mask` bits 0 e 1) e a máscara indexada em `Local\LegacyWebcamKinectImageV2` (`JMI2`), mantendo `JDP1` e `JMI1` (`255`) ativos para retrocompatibilidade.
+  - `get_kinect_bridge()` unifica a ponte IPC em instância singleton em todo o processo.
+- **Paleta Visual P1 Azul / P2 Laranja Claro & Gesto `[ENTER]` Dual:**
+  - **Jogador 1 (P1):** Silhueta, contorno, esqueleto e badge `P1` em **Azul** (`BGR 255, 150, 30`).
+  - **Jogador 2 (P2):** Silhueta, contorno, esqueleto e badge `P2` em **Laranja Claro** (`BGR 95, 185, 255`).
+  - Qualquer um dos jogadores (P1 ou P2) pode erguer o braço por 2 segundos para disparar `[ENTER]`.
+- **Lite AI como Padrão na Interface & Aviso Automático em 2P:**
+  - O perfil **Competitive (Lite AI)** passa a ser o padrão recomendado (`RECOMMENDED`) da interface para garantir máxima fluidez em 1P e 2P.
+  - Quando **2 Players (Duo)** é selecionado na aba **Calibration**, um banner de aviso logo abaixo da seleção de modelo orienta que o **Lite AI** é o modelo ideal para sustentar FPS estável na CPU com 2 jogadores.
+
 ---
 
-## Funcionalidades Parciais e Roadmap Futuro
+## Roadmap Futuro
 
-1. **Rastreamento Multi-Jogador (2 Jogadores):**
-   - *Estado Atual:* O modelo MediaPipe já suporta carregar 2 poses (`num_poses=2`), mas o mapeamento do Lite prioriza 1 jogador (Player 1) para manter a CPU o mais leve possível a 60 FPS. A extensão para alimentar dois esqueletos simultâneos na memória compartilhada está estruturada no pipeline.
-2. **Modo Background / Headless:**
+1. **Modo Background / Headless:**
    - *Planejado:* Uma flag `--no-gui` que desativa a criação da janela OpenCV `cv2.imshow()`, permitindo que todo o poder da placa de vídeo e CPU seja 100% dedicado ao Just Dance PC em computadores mais modestos.

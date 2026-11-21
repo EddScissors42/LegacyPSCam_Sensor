@@ -1,7 +1,8 @@
 """
 Pose Tracking Engine for Legacy PSCam Sensor.
 Uses MediaPipe Pose Tasks API with custom Hand Anchor Filtering,
-Adaptive Dynamic EMA Smoothing, Height Normalization, and 20-joint Kinect v1 mapping.
+Adaptive Dynamic EMA Smoothing, Height Normalization, 20-joint Kinect v1 mapping,
+and Multi-Player (1P/2P) Long-Term Identity Memory (Anti-Swap Re-ID).
 """
 import sys
 import math
@@ -50,6 +51,14 @@ from sensor.person_lock import (
     DancerIdentityLock,
     PersonLockController,
 )
+from sensor.player_slot import (
+    PlayerFrame,
+    MultiPoseFrame,
+    PlayerSlotState,
+    MultiPlayerAssociator,
+    compose_player_index_mask,
+    is_plausible_human_dancer,
+)
 
 
 MODEL_FILENAMES = {
@@ -96,17 +105,28 @@ DEFAULT_MODEL_PATH = _resolve_model_path("lite")
 class PoseTracker:
     """
     High-level Pose Tracking Engine wrapping MediaPipe Pose Tasks API,
-    hand anchor filtering, smoothing, and Kinect calibration.
+    supporting 1 or 2 simultaneous players with per-slot kinematic filters
+    and long-term visual re-identification across crossovers and waltz turns.
     """
     # Native Kinect player segmentation mask resolution (320x240)
     MASK_INTERNAL_W = 320
     MASK_INTERNAL_H = 240
     # Maximum width fed into MediaPipe RGB conversion & segmentation tensor (aspect-preserving)
     INFER_MAX_W = 640
+    INFER_MAX_W_2P = 640
     _MORPH_KERNEL_SMALL = np.ones((3, 3), np.uint8)
     _MORPH_KERNEL_LARGE = np.ones((7, 7), np.uint8)
 
-    def __init__(self, model_path=None, detection_confidence=0.5, smoothing_alpha=0.55, target_height_m=1.75, cfg=None, model_variant=None):
+    def __init__(
+        self,
+        model_path=None,
+        detection_confidence=0.45,
+        smoothing_alpha=0.75,
+        target_height_m=1.75,
+        cfg=None,
+        model_variant=None,
+        max_players=None,
+    ):
         self.cfg = dict(cfg) if cfg else {}
         variant = str(model_variant or self.cfg.get("pose_model", "lite")).strip().lower()
         if variant == "heavy":
@@ -118,66 +138,134 @@ class PoseTracker:
         if not self.model_path.exists():
             raise FileNotFoundError(f"Modelo do MediaPipe não encontrado: {self.model_path}")
 
+        raw_mp = max_players if max_players is not None else self.cfg.get("max_players", 1)
+        self.max_players = max(1, min(2, int(raw_mp)))
         self.detection_confidence = float(detection_confidence)
+        self.smoothing_alpha = float(smoothing_alpha)
+        self.target_height_m = float(target_height_m)
+
         self.detector = None
         self._init_detector()
 
-        self.hand_filter = HandAnchorFilter(hand_length=0.12)
-        self.smoother = AdaptiveSmoother(base_alpha=smoothing_alpha)
-        self.calibrator = SkeletonCalibrator(target_height_m=target_height_m, cfg=self.cfg)
-        self.camera_x_tracker = CameraSpaceXTracker(cfg=self.cfg)
+        self.slots = [
+            PlayerSlotState(
+                slot_index=i,
+                smoothing_alpha=self.smoothing_alpha,
+                target_height_m=self.target_height_m,
+                cfg=self.cfg,
+            )
+            for i in range(2)
+        ]
+        self.associator = MultiPlayerAssociator(max_players=self.max_players)
         self.face_ptz = FaceFollowPTZ(cfg=self.cfg)
-        self.person_lock = PersonLockController(cfg=self.cfg)
-        self.coasting_filter = self.person_lock.coasting
-        self.identity_lock = self.person_lock.identity
         self.stereo_mode = str(self.cfg.get("stereo_mode", STEREO_MODE_DISABLED)).strip().lower()
         self.stereo_engine = StereoDepthEngine(baseline_m=PS4_STEREO_BASELINE_M)
-        self._seg_prob_ema = None
-        self.last_norm_landmarks = None
+
         self.start_time = time.time()
         self.frame_index = 0
         self.last_timestamp_ms = 0
         self.last_infer_perf = None
         self._infer_bgr = None
         self._infer_rgb = None
-        self._warned_stereo_err = False
-        self._warned_seg_err = False
+
+    # --- Backwards-compatible properties delegating to Slot 0 (Player 1) ---
+    @property
+    def hand_filter(self) -> HandAnchorFilter:
+        return self.slots[0].hand_filter
+
+    @property
+    def smoother(self) -> AdaptiveSmoother:
+        return self.slots[0].smoother
+
+    @property
+    def calibrator(self) -> SkeletonCalibrator:
+        return self.slots[0].calibrator
+
+    @property
+    def camera_x_tracker(self) -> CameraSpaceXTracker:
+        return self.slots[0].camera_x_tracker
+
+    @property
+    def person_lock(self) -> PersonLockController:
+        return self.slots[0].person_lock
+
+    @property
+    def coasting_filter(self) -> InertialCoastingFilter:
+        return self.slots[0].person_lock.coasting
+
+    @property
+    def identity_lock(self) -> DancerIdentityLock:
+        return self.slots[0].person_lock.identity
+
+    @property
+    def last_norm_landmarks(self):
+        return self.slots[0].last_norm_landmarks
+
+    @last_norm_landmarks.setter
+    def last_norm_landmarks(self, val):
+        self.slots[0].last_norm_landmarks = val
 
     def _init_detector(self):
         base_options = python.BaseOptions(model_asset_path=str(self.model_path))
-        det_c = min(0.45, self.detection_confidence)
-        pres_c = min(0.35, self.detection_confidence)
+        det_c = max(0.50, min(0.70, float(self.detection_confidence)))
+        pres_c = max(0.48, min(0.65, float(self.detection_confidence)))
+        detector_num_poses = 4 if self.max_players >= 2 else 1
         options = vision.PoseLandmarkerOptions(
             base_options=base_options,
             running_mode=vision.RunningMode.VIDEO,
-            num_poses=1,
+            num_poses=detector_num_poses,
             min_pose_detection_confidence=det_c,
             min_pose_presence_confidence=pres_c,
             min_tracking_confidence=pres_c,
-            output_segmentation_masks=True
+            output_segmentation_masks=True,
         )
         self.detector = vision.PoseLandmarker.create_from_options(options)
         print(
             f"[TRACKER] MediaPipe Pose Landmarker ({self.model_variant}) initialized "
-            f"(model={self.model_path.name}, det={det_c:.2f}, pres={pres_c:.2f})."
+            f"(model={self.model_path.name}, num_poses={detector_num_poses}, det={det_c:.2f}, pres={pres_c:.2f})."
         )
 
-    def update_settings(self, smoothing_alpha=None, detection_confidence=None, target_height_m=None, cfg=None):
+    def update_settings(
+        self,
+        smoothing_alpha=None,
+        detection_confidence=None,
+        target_height_m=None,
+        cfg=None,
+        max_players=None,
+    ):
+        reinit_needed = False
         if cfg is not None:
             self.cfg.update(cfg)
-            self.calibrator.cfg = self.cfg
-            self.camera_x_tracker.cfg = self.cfg
             self.face_ptz.cfg = self.cfg
-            self.person_lock.update_config(self.cfg)
             if "stereo_mode" in self.cfg:
                 self.stereo_mode = str(self.cfg.get("stereo_mode", STEREO_MODE_DISABLED)).strip().lower()
+            if max_players is None and "max_players" in cfg:
+                max_players = cfg["max_players"]
+
+        if max_players is not None:
+            new_mp = max(1, min(2, int(max_players)))
+            if new_mp != self.max_players:
+                self.max_players = new_mp
+                self.associator.max_players = new_mp
+                reinit_needed = True
+
         if smoothing_alpha is not None:
-            self.smoother.update_base_alpha(smoothing_alpha)
+            self.smoothing_alpha = float(smoothing_alpha)
         if target_height_m is not None:
-            self.calibrator.target_height_m = float(target_height_m)
-            self.calibrator.reset()
+            self.target_height_m = float(target_height_m)
+
+        for slot in self.slots:
+            slot.update_config(
+                smoothing_alpha=smoothing_alpha,
+                target_height_m=target_height_m,
+                cfg=self.cfg if cfg is not None else None,
+            )
+
         if detection_confidence is not None and abs(self.detection_confidence - detection_confidence) > 0.02:
             self.detection_confidence = float(detection_confidence)
+            reinit_needed = True
+
+        if reinit_needed:
             self.close()
             self._init_detector()
 
@@ -224,13 +312,11 @@ class PoseTracker:
         }
 
     def recalibrate(self):
-        self.calibrator.reset()
-        self.smoother.reset()
-        self.camera_x_tracker.reset()
+        for slot in self.slots:
+            slot.reset(reset_identity=True)
+        self.associator.reset()
         self.face_ptz.reset()
-        self.person_lock.reset()
         self.stereo_engine.reset_calibration()
-        self._seg_prob_ema = None
 
     def build_body_mask(self, norm_landmarks, width, height):
         """
@@ -259,7 +345,6 @@ class PoseTracker:
             torso_h = int(sh_w * 1.45)
             bottom_y = min(height - 1, int(max(ls[1], rs[1]) + torso_h))
 
-            # If hips are occluded or out of frame, synthesize torso base
             if not lh or lh[1] >= height - 2:
                 lh = (max(0, int(ls[0] - 0.10 * (rs[0] - ls[0]))), bottom_y)
             if not rh or rh[1] >= height - 2:
@@ -268,21 +353,113 @@ class PoseTracker:
             torso_pts = np.array([ls, rs, rh, lh], dtype=np.int32)
             cv2.fillConvexPoly(mask, torso_pts, 255)
 
-            # If torso reaches near bottom, fill down to boundary for seamless HUD silhouette
             pad_x = max(8, int(15 * scale_factor))
             if bottom_y >= height - max(3, int(6 * scale_factor)):
-                bot_poly = np.array([lh, rh, (min(width - 1, rh[0] + pad_x), height - 1), (max(0, lh[0] - pad_x), height - 1)], dtype=np.int32)
+                bot_poly = np.array(
+                    [lh, rh, (min(width - 1, rh[0] + pad_x), height - 1), (max(0, lh[0] - pad_x), height - 1)],
+                    dtype=np.int32,
+                )
                 cv2.fillConvexPoly(mask, bot_poly, 255)
 
-        # 2. Head & Neck
+        # 2. Head, Jaw & Neck
         nose = pt(0)
+        ear_l, ear_r = pt(7), pt(8)
+        eye_l, eye_r = pt(2), pt(5)
+        mouth_l, mouth_r = pt(9), pt(10)
+
         if ls and rs:
             shoulder_dist = max(10.0 * scale_factor, math.hypot(rs[0] - ls[0], rs[1] - ls[1]))
-            head_radius = max(7, int(shoulder_dist * 0.30))
             mid_shoulder = ((ls[0] + rs[0]) // 2, (ls[1] + rs[1]) // 2)
-            head_center = nose if nose else (mid_shoulder[0], max(0, mid_shoulder[1] - head_radius))
-            cv2.circle(mask, head_center, head_radius, 255, -1)
-            cv2.line(mask, mid_shoulder, head_center, 255, max(4, int(shoulder_dist * 0.20)), cv2.LINE_AA)
+
+            ref_head = None
+            if ear_l and ear_r:
+                ref_head = ((ear_l[0] + ear_r[0]) // 2, (ear_l[1] + ear_r[1]) // 2)
+            elif eye_l and eye_r:
+                ref_head = ((eye_l[0] + eye_r[0]) // 2, (eye_l[1] + eye_r[1]) // 2)
+            elif nose:
+                ref_head = nose
+
+            if ref_head:
+                dx = ref_head[0] - mid_shoulder[0]
+                dy = ref_head[1] - mid_shoulder[1]
+                dist = math.hypot(dx, dy)
+                if dist > 1e-3:
+                    ux, uy = dx / dist, dy / dist
+                else:
+                    ux, uy = 0.0, -1.0
+            else:
+                ux, uy = 0.0, -1.0
+
+            px, py = -uy, ux
+
+            if ear_l and ear_r:
+                cranial_center = ((ear_l[0] + ear_r[0]) // 2, (ear_l[1] + ear_r[1]) // 2)
+            elif eye_l and eye_r:
+                eye_mid = ((eye_l[0] + eye_r[0]) // 2, (eye_l[1] + eye_r[1]) // 2)
+                cranial_center = (
+                    int(round(eye_mid[0] + ux * (shoulder_dist * 0.05))),
+                    int(round(eye_mid[1] + uy * (shoulder_dist * 0.05))),
+                )
+            elif nose:
+                cranial_center = (
+                    int(round(nose[0] + ux * (shoulder_dist * 0.14))),
+                    int(round(nose[1] + uy * (shoulder_dist * 0.14))),
+                )
+            else:
+                cranial_center = (
+                    int(round(mid_shoulder[0] + ux * (shoulder_dist * 0.45))),
+                    int(round(mid_shoulder[1] + uy * (shoulder_dist * 0.45))),
+                )
+
+            axis_x = max(5, int(shoulder_dist * 0.18))
+            axis_y = max(7, int(shoulder_dist * 0.24))
+            tilt_deg = math.degrees(math.atan2(uy, ux)) + 90.0
+
+            cv2.ellipse(mask, cranial_center, (axis_x, axis_y), tilt_deg, 0, 360, 255, -1)
+
+            if mouth_l and mouth_r:
+                mid_mouth = ((mouth_l[0] + mouth_r[0]) // 2, (mouth_l[1] + mouth_r[1]) // 2)
+                chin = (
+                    int(round(mid_mouth[0] - ux * (shoulder_dist * 0.05))),
+                    int(round(mid_mouth[1] - uy * (shoulder_dist * 0.05))),
+                )
+            elif nose:
+                chin = (
+                    int(round(nose[0] - ux * (shoulder_dist * 0.12))),
+                    int(round(nose[1] - uy * (shoulder_dist * 0.12))),
+                )
+            else:
+                chin = (
+                    int(round(cranial_center[0] - ux * (axis_y * 1.10))),
+                    int(round(cranial_center[1] - uy * (axis_y * 1.10))),
+                )
+
+            jaw_l = (
+                int(round(cranial_center[0] - px * (axis_x * 0.85) - ux * (axis_y * 0.15))),
+                int(round(cranial_center[1] - py * (axis_x * 0.85) - uy * (axis_y * 0.15))),
+            )
+            jaw_r = (
+                int(round(cranial_center[0] + px * (axis_x * 0.85) - ux * (axis_y * 0.15))),
+                int(round(cranial_center[1] + py * (axis_x * 0.85) - uy * (axis_y * 0.15))),
+            )
+
+            chin_w = max(3, int(axis_x * 0.35))
+            chin_l = (int(round(chin[0] - px * chin_w)), int(round(chin[1] - py * chin_w)))
+            chin_r = (int(round(chin[0] + px * chin_w)), int(round(chin[1] + py * chin_w)))
+
+            jaw_poly = np.array([jaw_l, jaw_r, chin_r, chin_l], dtype=np.int32)
+            cv2.fillConvexPoly(mask, jaw_poly, 255)
+
+            neck_top = (
+                int(round(chin[0] + ux * (axis_y * 0.20))),
+                int(round(chin[1] + uy * (axis_y * 0.20))),
+            )
+            neck_thick = max(4, int(shoulder_dist * 0.15))
+            cv2.line(mask, mid_shoulder, neck_top, 255, neck_thick, cv2.LINE_AA)
+        elif nose:
+            r = max(7, int(20.0 * scale_factor))
+            cran_y = max(0, int(nose[1] - r * 0.4))
+            cv2.ellipse(mask, (nose[0], cran_y), (int(r * 0.8), r), 0, 0, 360, 255, -1)
 
         # 3. Limbs (Capsules proportional to body size)
         if ls and rs:
@@ -321,17 +498,11 @@ class PoseTracker:
         mask = cv2.dilate(mask, kernel, iterations=1)
         return mask
 
-    def process_frame(self, frame_bgr, frame_left=None):
+    def process_frame_multi(self, frame_bgr, frame_left=None) -> MultiPoseFrame:
         """
-        Processes a BGR camera frame (or stereo frame pair).
-        Supports full-body and partial-body (waist-up / desk framing) with robust lower-body synthesis.
-        When frame_left is provided and stereo mode is enabled, applies stereo rectification,
-        metric 3D sparse joint triangulation, and optional dense depth background clipping.
-        Returns:
-            tracked (bool): True if pose detected.
-            kinect_joints (list): 20 joints in Kinect 3D space (x, y, z, conf).
-            pixel_joints (list): 20 joints in pixel coordinates (px, py, conf) for HUD drawing.
-            body_mask (np.ndarray): Binary silhouette mask (320x240 native Kinect resolution) with 255 for player.
+        Processes a BGR camera frame (or stereo pair) for 1 or 2 simultaneous players.
+        Returns a MultiPoseFrame containing per-slot PlayerFrames, tracked_mask bitmask (bit 0 = P1, bit 1 = P2),
+        and a combined 320x240 player_index_mask (0=bg, 1=P1, 2=P2).
         """
         if isinstance(frame_bgr, dict):
             if frame_left is None:
@@ -344,29 +515,35 @@ class PoseTracker:
 
         h, w = frame_bgr.shape[:2]
 
-        # Pre-downscale high-resolution frames (>640px wide, e.g. 1280x800 PS4 Camera or 1080p Webcam)
-        # using pre-allocated buffers before MediaPipe inference. Preserves exact aspect ratio while
-        # reducing RGB conversion and MediaPipe segmentation mask tensor allocation by up to 4x.
-        # Full-resolution `frame_bgr` and `frame_left` are preserved for sub-pixel stereo triangulation.
-        if w > self.INFER_MAX_W:
-            infer_w = self.INFER_MAX_W
+        # Dynamic pre-downscale width: 640px in 1P mode, configurable 480px in 2P mode to sustain 30-60 FPS on CPU
+        max_infer_w = (
+            int(self.cfg.get("infer_max_w_2p", self.INFER_MAX_W_2P))
+            if self.max_players >= 2
+            else self.INFER_MAX_W
+        )
+
+        if w > max_infer_w:
+            infer_w = max_infer_w
             infer_h = max(180, (int(round(h * (infer_w / float(w)))) // 2) * 2)
             if self._infer_bgr is None or self._infer_bgr.shape[:2] != (infer_h, infer_w):
                 self._infer_bgr = np.empty((infer_h, infer_w, 3), dtype=np.uint8)
                 self._infer_rgb = np.empty((infer_h, infer_w, 3), dtype=np.uint8)
             cv2.resize(frame_bgr, (infer_w, infer_h), dst=self._infer_bgr, interpolation=cv2.INTER_LINEAR)
             cv2.cvtColor(self._infer_bgr, cv2.COLOR_BGR2RGB, dst=self._infer_rgb)
+            sample_bgr = self._infer_bgr
         else:
             if self._infer_rgb is None or self._infer_rgb.shape[:2] != (h, w):
                 self._infer_rgb = np.empty((h, w, 3), dtype=np.uint8)
             cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB, dst=self._infer_rgb)
+            sample_bgr = frame_bgr
 
-        # Apply peripheral ROI attenuation around locked dancer in private inference buffer (< 0.02 ms)
-        self.person_lock.apply_pre_inference_roi(self._infer_rgb)
+        # Peripheral ROI attenuation is ONLY applied in 1-Player mode so Player 2 is never darkened
+        if self.max_players == 1:
+            self.slots[0].person_lock.apply_pre_inference_roi(self._infer_rgb)
 
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=self._infer_rgb)
 
-        # Milliseconds strictly monotonic timestamp for VIDEO running mode
+        # Strictly monotonic timestamp in milliseconds for VIDEO running mode
         self.frame_index += 1
         now_perf = time.perf_counter()
         dt_infer = (now_perf - self.last_infer_perf) if self.last_infer_perf is not None else None
@@ -380,268 +557,115 @@ class PoseTracker:
 
         result = self.detector.detect_for_video(mp_image, timestamp_ms)
 
-        if not result.pose_world_landmarks or not result.pose_world_landmarks[0]:
-            # 1.1 Inertial Coasting during transient micro-dropouts (360° spins / motion blur <= 250 ms)
-            is_coasting, c_3d, c_2d, c_mask = self.person_lock.coast(dt=dt_infer, frame_w=w, frame_h=h)
-            if is_coasting:
-                return True, c_3d, c_2d, c_mask
+        world_list = list(result.pose_world_landmarks) if getattr(result, "pose_world_landmarks", None) else []
+        norm_list = list(result.pose_landmarks) if getattr(result, "pose_landmarks", None) else world_list
+        seg_list = list(result.segmentation_masks) if getattr(result, "segmentation_masks", None) else []
 
-            self.smoother.reset()
-            self.camera_x_tracker.reset()
-            self.face_ptz.reset()
-            self.person_lock.reset()
-            self._seg_prob_ema = None
-            self.last_norm_landmarks = None
-            return False, None, None, None
+        candidates = []
+        for idx in range(min(len(world_list), len(norm_list))):
+            w_lm = world_list[idx]
+            n_lm = norm_list[idx]
+            if w_lm and n_lm:
+                seg_obj = seg_list[idx] if idx < len(seg_list) else (seg_list[0] if seg_list else None)
+                is_plausible, score = is_plausible_human_dancer(n_lm, w, h)
+                if is_plausible:
+                    candidates.append((score, (w_lm, n_lm, seg_obj)))
 
-        world_lm = result.pose_world_landmarks[0]
-        norm_lm = result.pose_landmarks[0] if result.pose_landmarks else world_lm
+        # Sort candidates by anatomical plausibility score descending and select top max_players
+        candidates.sort(key=lambda c: c[0], reverse=True)
+        valid_dets = [c[1] for c in candidates[: self.max_players]]
 
-        # 1.2 Active Dancer Identity Lock (Color Signature + Spatial Continuity Gate)
-        sample_bgr = self._infer_bgr if (w > self.INFER_MAX_W and self._infer_bgr is not None) else frame_bgr
-        if not self.person_lock.validate_candidate(sample_bgr, norm_lm, dt=dt_infer):
-            is_coasting, c_3d, c_2d, c_mask = self.person_lock.coast(dt=dt_infer, frame_w=w, frame_h=h)
-            if is_coasting:
-                return True, c_3d, c_2d, c_mask
-            return False, None, None, None
+        active_slots = self.slots[: self.max_players]
+        players_out: List[Optional[PlayerFrame]] = [None] * self.max_players
 
-        self.last_norm_landmarks = norm_lm
-
-        # Helper to extract joint tuple: (x, y, z, confidence)
-        def get_joint(idx):
-            wl = world_lm[idx]
-            nl = norm_lm[idx]
-            vis = getattr(nl, 'visibility', 1.0)
-            pres = getattr(nl, 'presence', 1.0)
-            conf = min(1.0, max(0.0, min(vis, pres)))
-            return (float(wl.x), float(wl.y), float(wl.z), conf)
-
-        # 2D pixel helper: (px, py, conf)
-        def get_pixel(idx):
-            nl = norm_lm[idx]
-            px = int(nl.x * w)
-            py = int(nl.y * h)
-            vis = getattr(nl, 'visibility', 1.0)
-            pres = getattr(nl, 'presence', 1.0)
-            conf = min(1.0, max(0.0, min(vis, pres)))
-            return (px, py, conf)
-
-        # 1. Build Raw 20-Joint Kinect skeleton in world coordinates with Partial-Body Synthesis
-        sh_l = get_joint(LEFT_SHOULDER)
-        sh_r = get_joint(RIGHT_SHOULDER)
-        sh_c = avg(sh_l, sh_r)
-        sh_w = math.sqrt((sh_r[0] - sh_l[0])**2 + (sh_r[1] - sh_l[1])**2 + (sh_r[2] - sh_l[2])**2)
-        sh_w = max(0.28, min(0.65, sh_w))
-
-        ear_center = avg(get_joint(LEFT_EAR), get_joint(RIGHT_EAR))
-        nose = get_joint(NOSE)
-        head = avg(ear_center, nose)
-
-        # Hips: Check visibility
-        raw_hip_l = get_joint(LEFT_HIP)
-        raw_hip_r = get_joint(RIGHT_HIP)
-        hips_visible = (raw_hip_l[3] >= 0.25 and raw_hip_r[3] >= 0.25)
-        torso_len = max(0.38, sh_w * 1.35)
-
-        if hips_visible:
-            hip_l = raw_hip_l
-            hip_r = raw_hip_r
-            hip_center = avg(hip_l, hip_r)
+        if not valid_dets:
+            for s_idx, slot in enumerate(active_slots):
+                players_out[s_idx] = slot.handle_missing(dt=dt_infer, frame_w=w, frame_h=h)
+        elif self.max_players == 1:
+            w_lm, n_lm, seg_obj = valid_dets[0]
+            players_out[0] = active_slots[0].process_detection(
+                world_lm=w_lm,
+                norm_lm=n_lm,
+                seg_mask_obj=seg_obj,
+                frame_bgr=frame_bgr,
+                frame_left=frame_left,
+                stereo_engine=self.stereo_engine,
+                stereo_mode=self.stereo_mode,
+                extract_joints_2d_fn=self._extract_joints_2d,
+                build_body_mask_fn=self.build_body_mask,
+                dt_infer=dt_infer,
+                w=w,
+                h=h,
+                enforce_single_person_gate=True,
+                sample_bgr=sample_bgr,
+            )
         else:
-            # Synthesize hips below shoulders (in MediaPipe world coordinates, Y is positive downwards)
-            syn_hip_y = sh_c[1] + torso_len
-            syn_conf = max(0.48, min(sh_l[3], sh_r[3]) * 0.85)
-            hip_center = (sh_c[0], syn_hip_y, sh_c[2], syn_conf)
-            hip_l = (hip_center[0] - sh_w * 0.38, syn_hip_y, hip_center[2], syn_conf)
-            hip_r = (hip_center[0] + sh_w * 0.38, syn_hip_y, hip_center[2], syn_conf)
-
-        spine = lerp(hip_center, sh_c, 0.52)
-
-        # Legs: Check visibility
-        raw_ank_l = get_joint(LEFT_ANKLE)
-        raw_ank_r = get_joint(RIGHT_ANKLE)
-        legs_visible = (raw_ank_l[3] >= 0.25 and raw_ank_r[3] >= 0.25)
-
-        if legs_visible:
-            knee_l = get_joint(LEFT_KNEE)
-            ank_l = raw_ank_l
-            foot_l = get_joint(LEFT_FOOT_INDEX)
-            knee_r = get_joint(RIGHT_KNEE)
-            ank_r = raw_ank_r
-            foot_r = get_joint(RIGHT_FOOT_INDEX)
-        else:
-            # Synthesize natural standing legs below hips (conf = 0.35 -> Inferred in Kinect10.dll)
-            thigh_len = torso_len * 1.05
-            calf_len = torso_len * 1.00
-            syn_leg_conf = 0.35
-            knee_l = (hip_l[0], hip_l[1] + thigh_len, hip_l[2], syn_leg_conf)
-            knee_r = (hip_r[0], hip_r[1] + thigh_len, hip_r[2], syn_leg_conf)
-            ank_l = (hip_l[0], hip_l[1] + thigh_len + calf_len, hip_l[2], syn_leg_conf)
-            ank_r = (hip_r[0], hip_r[1] + thigh_len + calf_len, hip_r[2], syn_leg_conf)
-            foot_l = (hip_l[0], hip_l[1] + thigh_len + calf_len + 0.05, hip_l[2] - 0.12, syn_leg_conf)
-            foot_r = (hip_r[0], hip_r[1] + thigh_len + calf_len + 0.05, hip_r[2] - 0.12, syn_leg_conf)
-
-        raw_kinect = [
-            hip_center,                     # 0 HipCenter
-            spine,                          # 1 Spine
-            sh_c,                           # 2 ShoulderCenter
-            head,                           # 3 Head
-            sh_l,                           # 4 ShoulderLeft
-            get_joint(LEFT_ELBOW),          # 5 ElbowLeft
-            get_joint(LEFT_WRIST),          # 6 WristLeft
-            get_joint(LEFT_INDEX),          # 7 HandLeft
-            sh_r,                           # 8 ShoulderRight
-            get_joint(RIGHT_ELBOW),         # 9 ElbowRight
-            get_joint(RIGHT_WRIST),         # 10 WristRight
-            get_joint(RIGHT_INDEX),         # 11 HandRight
-            hip_l,                          # 12 HipLeft
-            knee_l,                         # 13 KneeLeft
-            ank_l,                          # 14 AnkleLeft
-            foot_l,                         # 15 FootLeft
-            hip_r,                          # 16 HipRight
-            knee_r,                         # 17 KneeRight
-            ank_r,                          # 18 AnkleRight
-            foot_r,                         # 19 FootRight
-        ]
-
-        # 2. Hand Anchor Filter (improves dance hand tracking)
-        anchored = self.hand_filter.apply(raw_kinect)
-
-        # 3. Auto-calibrate height and origin (full body, flexible torso, or upper body)
-        if not self.calibrator.is_calibrated or (self.calibrator.calibration_tier != "full_body" and legs_visible):
-            self.calibrator.calibrate(anchored, legs_visible=legs_visible, hips_visible=hips_visible)
-
-        # 3.1 Stereo Triangulation (if Left Eye frame is provided and stereo mode is active)
-        stereo_depths = None
-        rect_left_frame = None
-        rect_right_frame = None
-        if self.stereo_mode != STEREO_MODE_DISABLED and frame_left is not None:
-            try:
-                # If frame_left is single-channel luminance, match directly with green/luminance right view
-                mono_r = frame_bgr[:, :, 1] if (frame_left.ndim == 2 and frame_bgr.ndim == 3) else frame_bgr
-                rect_left_frame, rect_right_frame = self.stereo_engine.calibrator.rectify(frame_left, mono_r)
-                joints_2d = self._extract_joints_2d(norm_lm, w, h)
-                stereo_depths = self.stereo_engine.triangulate_sparse_joints(
-                    rect_left_frame, rect_right_frame, joints_2d
-                )
-            except Exception as exc:
-                if not self._warned_stereo_err:
-                    print(f"[WARN] Stereo triangulation fallback to mono: {exc}")
-                    self._warned_stereo_err = True
-                stereo_depths = None
-
-        # 4. Transform to Kinect v1 camera coordinate space (with hip height +1.0m)
-        kinect_space = self.calibrator.transform(anchored, stereo_depths=stereo_depths)
-
-        # 4.1 Smooth anatomical gestures first (zero lag on body moves, dt-normalized across 30/60 FPS)
-        smoothed_kinect = self.smoother.apply(kinect_space, dt=dt_infer)
-
-        # 4.2 Apply lateral camera-space translation for dancer slot selection
-        translated = apply_camera_space_translation(smoothed_kinect, norm_lm, self.camera_x_tracker, self.cfg)
-
-        # 4.3 Apply slot snap (decisive slot boundary assignment)
-        snapped = apply_slot_snap(translated, self.cfg)
-
-        # 6. Build 2D pixel coordinates for preview drawing
-        px_sh_l = get_pixel(LEFT_SHOULDER)
-        px_sh_r = get_pixel(RIGHT_SHOULDER)
-        px_sh_c = (int((px_sh_l[0] + px_sh_r[0]) * 0.5), int((px_sh_l[1] + px_sh_r[1]) * 0.5), min(px_sh_l[2], px_sh_r[2]))
-        sh_w_px = max(20, int(math.hypot(px_sh_r[0] - px_sh_l[0], px_sh_r[1] - px_sh_l[1])))
-
-        if hips_visible:
-            px_hip_l = get_pixel(LEFT_HIP)
-            px_hip_r = get_pixel(RIGHT_HIP)
-            px_hip_c = (int((px_hip_l[0] + px_hip_r[0]) * 0.5), int((px_hip_l[1] + px_hip_r[1]) * 0.5), min(px_hip_l[2], px_hip_r[2]))
-        else:
-            syn_px_y = min(h - 2, int(px_sh_c[1] + sh_w_px * 1.35))
-            px_hip_c = (px_sh_c[0], syn_px_y, px_sh_c[2])
-            px_hip_l = (max(0, px_hip_c[0] - int(sh_w_px * 0.38)), syn_px_y, px_sh_c[2])
-            px_hip_r = (min(w - 1, px_hip_c[0] + int(sh_w_px * 0.38)), syn_px_y, px_sh_c[2])
-
-        px_spine = (int(px_hip_c[0] + 0.52 * (px_sh_c[0] - px_hip_c[0])), int(px_hip_c[1] + 0.52 * (px_sh_c[1] - px_hip_c[1])), px_sh_c[2])
-        px_nose = get_pixel(NOSE)
-
-        if legs_visible:
-            px_knee_l = get_pixel(LEFT_KNEE)
-            px_ank_l = get_pixel(LEFT_ANKLE)
-            px_foot_l = get_pixel(LEFT_FOOT_INDEX)
-            px_knee_r = get_pixel(RIGHT_KNEE)
-            px_ank_r = get_pixel(RIGHT_ANKLE)
-            px_foot_r = get_pixel(RIGHT_FOOT_INDEX)
-        else:
-            thigh_px = int(sh_w_px * 1.4)
-            calf_px = int(sh_w_px * 1.3)
-            px_knee_l = (px_hip_l[0], min(h - 2, px_hip_l[1] + thigh_px), 0.35)
-            px_knee_r = (px_hip_r[0], min(h - 2, px_hip_r[1] + thigh_px), 0.35)
-            px_ank_l = (px_hip_l[0], min(h - 2, px_hip_l[1] + thigh_px + calf_px), 0.35)
-            px_ank_r = (px_hip_r[0], min(h - 2, px_hip_r[1] + thigh_px + calf_px), 0.35)
-            px_foot_l = (px_hip_l[0], min(h - 2, px_hip_l[1] + thigh_px + calf_px + 10), 0.35)
-            px_foot_r = (px_hip_r[0], min(h - 2, px_hip_r[1] + thigh_px + calf_px + 10), 0.35)
-
-        pixel_joints = [
-            px_hip_c,
-            px_spine,
-            px_sh_c,
-            px_nose,
-            px_sh_l,
-            get_pixel(LEFT_ELBOW),
-            get_pixel(LEFT_WRIST),
-            get_pixel(LEFT_INDEX),
-            px_sh_r,
-            get_pixel(RIGHT_ELBOW),
-            get_pixel(RIGHT_WRIST),
-            get_pixel(RIGHT_INDEX),
-            px_hip_l,
-            px_knee_l,
-            px_ank_l,
-            px_foot_l,
-            px_hip_r,
-            px_knee_r,
-            px_ank_r,
-            px_foot_r,
-        ]
-
-        # Apply 2D forearm anchor filter and 2D adaptive EMA smoothing for jitter-free HUD preview
-        pixel_joints = self.hand_filter.apply_pixel(pixel_joints)
-        pixel_joints = self.smoother.apply_pixel(pixel_joints, frame_w=w, frame_h=h, dt=dt_infer)
-
-        # 7. Generate player silhouette mask at native Kinect 320x240 resolution
-        # Uses Temporal EMA Probability Smoothing on the MediaPipe segmentation tensor before thresholding
-        # to eliminate 60 FPS sensor grain flicker without StereoSGBM block-matching artifacts.
-        mw, mh = self.MASK_INTERNAL_W, self.MASK_INTERNAL_H
-        neural_mask = None
-        if hasattr(result, 'segmentation_masks') and result.segmentation_masks:
-            try:
-                seg_view = result.segmentation_masks[0].numpy_view()
-                if seg_view.shape[0] != mh or seg_view.shape[1] != mw:
-                    prob_small = cv2.resize(seg_view, (mw, mh), interpolation=cv2.INTER_LINEAR)
+            # 2-Player mode: associate detections to persistent slots with Long-Term Identity Memory
+            assignments, _ = self.associator.match(
+                slots=active_slots,
+                detections_norm_lm=[d[1] for d in valid_dets],
+                sample_bgr=sample_bgr,
+                dt=dt_infer,
+                now=now_perf,
+            )
+            for s_idx, slot in enumerate(active_slots):
+                if s_idx in assignments:
+                    d_idx = assignments[s_idx]
+                    w_lm, n_lm, seg_obj = valid_dets[d_idx]
+                    players_out[s_idx] = slot.process_detection(
+                        world_lm=w_lm,
+                        norm_lm=n_lm,
+                        seg_mask_obj=seg_obj,
+                        frame_bgr=frame_bgr,
+                        frame_left=frame_left,
+                        stereo_engine=self.stereo_engine,
+                        stereo_mode=self.stereo_mode,
+                        extract_joints_2d_fn=self._extract_joints_2d,
+                        build_body_mask_fn=self.build_body_mask,
+                        dt_infer=dt_infer,
+                        w=w,
+                        h=h,
+                        enforce_single_person_gate=False,
+                        sample_bgr=sample_bgr,
+                    )
                 else:
-                    prob_small = seg_view.astype(np.float32, copy=False)
+                    players_out[s_idx] = slot.handle_missing(dt=dt_infer, frame_w=w, frame_h=h)
 
-                if self._seg_prob_ema is None or self._seg_prob_ema.shape != prob_small.shape:
-                    self._seg_prob_ema = prob_small.astype(np.float32, copy=True)
-                else:
-                    cv2.addWeighted(prob_small, 0.65, self._seg_prob_ema, 0.35, 0.0, dst=self._seg_prob_ema)
-
-                neural_mask = (self._seg_prob_ema > 0.24).astype(np.uint8) * 255
-            except Exception as exc:
-                if not self._warned_seg_err:
-                    print(f"[WARN] Neural segmentation mask fallback to anatomical mask: {exc}")
-                    self._warned_seg_err = True
-                neural_mask = None
-
-        anatomical_mask = self.build_body_mask(norm_lm, mw, mh)
-        if neural_mask is not None:
-            body_mask = cv2.bitwise_or(neural_mask, anatomical_mask)
-        else:
-            body_mask = anatomical_mask
-
-        # 8. Record valid frame in Person Lock-In controller (updates velocity vectors & smooth re-entry blend)
-        snapped, pixel_joints, body_mask = self.person_lock.record_valid_frame(
-            snapped, pixel_joints, body_mask, norm_landmarks=norm_lm, dt=dt_infer
+        tracked_mask = sum(
+            (1 << i)
+            for i, pf in enumerate(players_out)
+            if pf is not None and pf.tracked and pf.kinect_joints is not None
+        )
+        active_count = sum(
+            1
+            for pf in players_out
+            if pf is not None and pf.tracked and pf.kinect_joints is not None
+        )
+        index_mask = compose_player_index_mask(
+            players_out, width=self.MASK_INTERNAL_W, height=self.MASK_INTERNAL_H
         )
 
-        return True, snapped, pixel_joints, body_mask
+        return MultiPoseFrame(
+            players=players_out,
+            tracked_mask=tracked_mask,
+            player_index_mask=index_mask,
+            active_count=active_count,
+        )
+
+    def process_frame(self, frame_bgr, frame_left=None):
+        """
+        Backwards-compatible single-player API.
+        Returns:
+            tracked (bool): True if primary pose detected.
+            kinect_joints (list): 20 joints in Kinect 3D space (x, y, z, conf).
+            pixel_joints (list): 20 joints in pixel coordinates (px, py, conf) for HUD drawing.
+            body_mask (np.ndarray): Binary silhouette mask (320x240) with 255 for player.
+        """
+        multi = self.process_frame_multi(frame_bgr, frame_left=frame_left)
+        p0 = multi.primary_player
+        if p0 is None or not p0.tracked or p0.kinect_joints is None:
+            return False, None, None, None
+        return True, p0.kinect_joints, p0.pixel_joints, p0.body_mask
 
     def close(self):
         if self.detector:

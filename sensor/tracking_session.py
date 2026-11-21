@@ -1,7 +1,7 @@
 """
 Tracking Session Runner for Legacy PSCam Sensor.
-Coordinates camera stream, MediaPipe pose processing, shared memory output,
-and OpenCV HUD preview window.
+Coordinates camera stream, MediaPipe pose processing (1P & 2P),
+shared memory output, and OpenCV HUD preview window.
 """
 import time
 import math
@@ -10,7 +10,7 @@ import ctypes
 import threading
 import numpy as np
 from sensor.camera_manager import LatestFrameCamera, CameraManager
-from sensor.kinect_shared_memory import KinectBridge
+from sensor.kinect_shared_memory import get_kinect_bridge
 from sensor.config_manager import parse_preset
 from sensor.virtual_phone import get_virtual_phone
 from sensor.gesture_detector import (
@@ -20,6 +20,7 @@ from sensor.gesture_detector import (
 )
 
 _send_enter_keystroke = dispatch_enter_keystroke
+
 
 def set_high_resolution_timer(enable=True):
     """
@@ -39,7 +40,7 @@ def set_high_resolution_timer(enable=True):
 
 def run_tracking_session(config, on_close_callback=None, stop_event=None):
     """
-    Starts the live tracking loop.
+    Starts the live tracking loop (supports 1 Player Solo and 2 Players Duo).
     config: dictionary with tracking parameters.
     on_close_callback: optional function called when tracking terminates.
     stop_event: optional threading.Event to signal loop termination.
@@ -49,7 +50,7 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
         return run_ds4_tracking_session(config, on_close_callback=on_close_callback, stop_event=stop_event)
 
     cam_idx = config.get("camera_index", 0)
-    if cam_idx < 0:
+    if cam_idx < 0 and mode != "phone_cam":
         cams = CameraManager.enumerate_cameras()
         ps_cams = [c for c in cams if c.is_pscam]
         if mode == "pscam" and ps_cams:
@@ -58,21 +59,28 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
             cam_idx = cams[0].index
         else:
             cam_idx = 0
-    preset_str = config.get("pscam_preset" if mode == "pscam" else "webcam_preset", "1280x800 @ 60 FPS" if mode == "pscam" else "640x480 @ 30 FPS")
+    if mode == "pscam":
+        preset_str = config.get("pscam_preset", "1280x800 @ 60 FPS")
+    elif mode == "phone_cam":
+        preset_str = config.get("phone_cam_preset", "640x480 @ 30 FPS")
+    else:
+        preset_str = config.get("webcam_preset", "640x480 @ 30 FPS")
     w, h, target_fps = parse_preset(preset_str)
     mirror = config.get("mirror_horizontal", True)
-    smoothing_alpha = config.get("smoothing_alpha", 0.55)
-    det_conf = config.get("detection_confidence", 0.5)
+    smoothing_alpha = config.get("smoothing_alpha", 0.75)
+    det_conf = config.get("detection_confidence", 0.45)
     target_height = config.get("target_height_m", 1.75)
     show_hud = config.get("show_hud", True)
     camera_orientation = int(config.get("camera_orientation", 0))
     ps4_eye = str(config.get("ps4_eye", "right")).strip().lower()
     ps4_backend_mode = str(config.get("ps4_camera_backend", "native")).strip().lower()
+    max_players = max(1, min(2, int(config.get("max_players", 1))))
 
+    mode_title = "PlayStation Camera" if mode == "pscam" else ("Phone Camera (Wi-Fi)" if mode == "phone_cam" else "Standard Webcam")
     print(f"\n==========================================")
     print(f"  STARTING TRACKING SESSION")
-    print(f"  Mode: {'PlayStation Camera' if mode == 'pscam' else 'Standard Webcam'}")
-    print(f"  Camera: {cam_idx} | Resolution: {w}x{h} @ {target_fps} FPS")
+    print(f"  Mode: {mode_title} | Players: {max_players}P")
+    print(f"  Camera: {cam_idx if mode != 'phone_cam' else 'WebApp'} | Resolution: {w}x{h} @ {target_fps} FPS")
     if mode == "pscam":
         print(f"  PS4 Backend: {ps4_backend_mode} | Eye: {ps4_eye}")
     print(f"  Mirrored: {mirror} | Smoothing: {smoothing_alpha}")
@@ -89,14 +97,15 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
         else:
             CameraManager.initialize_ps4_camera()
 
-    # 1. Initialize IPC Shared Memory Bridge (Pose, Image & CoachX)
-    bridge = KinectBridge()
+    # 1. Acquire process-wide singleton IPC Shared Memory Bridge (Pose V1/V2, Image V1/V2 & CoachX)
+    bridge = get_kinect_bridge()
 
-    # 1.1 Ensure KinectEmulatorDaemon is running if enabled (supports direct CLI --start mode)
+    # 1.1 Always run KinectEmulatorDaemon (Zero-File-Replacement Mode, always active)
     local_kinect_emulator = None
-    if bool(config.get("emulate_kinect_enabled", False)):
-        from sensor.kinect_emulator import KinectEmulatorDaemon
-        local_kinect_emulator = KinectEmulatorDaemon(config)
+    if bool(config.get("emulate_kinect_enabled", True)):
+        from sensor.kinect_emulator import get_kinect_emulator
+        local_kinect_emulator = get_kinect_emulator(config)
+        local_kinect_emulator.enabled = True
         local_kinect_emulator.start()
 
     # 2. Initialize Camera Grabber (pristine raw frames to tracker)
@@ -111,10 +120,11 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
             orientation=camera_orientation,
             ps4_eye=ps4_eye,
             ps4_backend_mode=ps4_backend_mode,
+            is_phone_cam=(mode == "phone_cam"),
         )
     except Exception as e:
         print(f"[ERROR] Failed to start camera: {e}")
-        bridge.close()
+        bridge.write_empty()
         if on_close_callback:
             on_close_callback()
         return False
@@ -128,10 +138,13 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
     if pose_model == "heavy":
         pose_model = "full"
     if pose_model not in ("lite", "full"):
-        pose_model = preset_model_map.get(config.get("tracking_preset", "balanced"), "lite")
+        pose_model = preset_model_map.get(config.get("tracking_preset", "competitive"), "lite")
 
-    if target_fps >= 50 and pose_model == "full":
-        print(f"[PERF] Câmera a {target_fps} FPS com modelo '{pose_model}'. Para 60 FPS estáveis na CPU, use o preset 'Competitive' (modelo lite).")
+    if (target_fps >= 50 or max_players >= 2) and pose_model == "full":
+        print(
+            f"[PERF] Rastreamento ({max_players}P @ {target_fps} FPS) com modelo '{pose_model}'. "
+            f"Para maior estabilidade de FPS na CPU, recomenda-se o perfil 'Competitive' (Lite AI)."
+        )
 
     try:
         tracker = PoseTracker(
@@ -140,11 +153,12 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
             target_height_m=target_height,
             cfg=config,
             model_variant=pose_model,
+            max_players=max_players,
         )
     except Exception as e:
         print(f"[ERROR] Failed to start MediaPipe Pose Tracker: {e}")
         camera.release()
-        bridge.close()
+        bridge.write_empty()
         if on_close_callback:
             on_close_callback()
         return False
@@ -185,14 +199,15 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
     track_fps_last_time = time.time()
     measured_track_fps = float(target_fps)
 
-    mode_label = f"{'PS Camera' if mode == 'pscam' else 'Webcam'} ({camera.actual_w}x{camera.actual_h})"
+    dev_label = "PS Camera" if mode == "pscam" else ("Phone Camera" if mode == "phone_cam" else "Webcam")
+    mode_label = f"{dev_label} ({camera.actual_w}x{camera.actual_h})"
 
     t_start_session = time.time()
     total_frames = 0
 
     try:
         from sensor.session_logger import get_session_logger
-        cfg_summary = f"{w}x{h}@{target_fps}FPS, mode={mode}, backend={ps4_backend_mode if mode == 'pscam' else 'dshow'}"
+        cfg_summary = f"{w}x{h}@{target_fps}FPS, mode={mode}, players={max_players}P, model={pose_model}"
         get_session_logger().map_active_controller(
             controller_type="camera",
             name="PlayStation 4 Camera" if mode == "pscam" else "Standard Webcam",
@@ -212,15 +227,19 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
             if stop_event is not None and stop_event.is_set():
                 break
 
+            if mode == "phone_cam" and getattr(camera, "phone_cam_server", None) is not None:
+                if not camera.phone_cam_server.is_client_connected:
+                    print("[PHONE-CAM] Smartphone disconnected. Ending tracking session...")
+                    break
+
             ret, frame, cam_fps = camera.read(only_new=True)
             if not ret or frame is None:
-                # Pump OpenCV event queue and yield briefly until the next hardware frame arrives
                 key = cv2.waitKey(1) & 0xFF
                 if key in (27, ord('q'), ord('Q')):
                     break
                 elif key in (ord('c'), ord('C')):
                     tracker.recalibrate()
-                    print("[INFO] Height/skeleton recalibration triggered!")
+                    print("[INFO] Height/skeleton & identity memory recalibration triggered!")
                 elif key in (ord('m'), ord('M')):
                     mirror = not mirror
                     camera.set_mirror(mirror)
@@ -239,8 +258,6 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
                 time.sleep(0.0015)
                 continue
 
-            # If stereo vision is active on PS4 Camera, retrieve synchronous Left Eye luminance frame
-            # directly from YUY2 buffer (<0.08 ms) to eliminate redundant color conversion.
             frame_left = None
             if getattr(tracker, "stereo_mode", "disabled") != "disabled":
                 if hasattr(camera, "read_left_mono"):
@@ -252,11 +269,19 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
                     if st_data:
                         frame_left = st_data.get("left_bgr")
 
-            # Process Pose on pristine RAW frame with MediaPipe (guarantees correct anatomical limbs)
-            is_tracked, kinect_joints, px_joints, body_mask = tracker.process_frame(frame, frame_left=frame_left)
+            # Process 1 or 2 poses on pristine RAW frame with MediaPipe (guarantees correct anatomical limbs)
+            multi_res = tracker.process_frame_multi(frame, frame_left=frame_left)
+            is_tracked = multi_res.any_tracked
+            primary_p = multi_res.primary_player
+            kinect_joints = primary_p.kinect_joints if primary_p else None
+            body_mask = multi_res.player_index_mask
 
-            # Detect arm raised gesture to dispatch virtual ENTER / START command
-            gesture_info = gesture_detector.update(px_joints, is_tracked, vphone=vphone)
+            # Detect arm raised gesture from ANY active player (P1 or P2) to dispatch virtual ENTER
+            all_px_joints = [
+                pf.pixel_joints if (pf is not None and pf.tracked) else None
+                for pf in multi_res.players
+            ]
+            gesture_info = gesture_detector.update_multi(all_px_joints, is_tracked=is_tracked, vphone=vphone)
 
             # Measure tracking FPS
             track_fps_counter += 1
@@ -267,19 +292,29 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
                 track_fps_counter = 0
                 track_fps_last_time = now
 
-            # Prepare frame, mask and skeleton for display and Kinect HUD preview
+            # Prepare frame, mask and per-player skeletons for display and Kinect HUD preview
             fh, fw = frame.shape[:2]
             if mirror:
                 display_frame = cv2.flip(frame, 1)
                 display_mask = cv2.flip(body_mask, 1) if body_mask is not None else None
-                display_px = [(fw - 1 - p[0], p[1], p[2]) for p in px_joints] if px_joints else None
+                display_players_px = [
+                    [(fw - 1 - p[0], p[1], p[2]) for p in pf.pixel_joints]
+                    if (pf is not None and pf.tracked and pf.pixel_joints)
+                    else None
+                    for pf in multi_res.players
+                ]
             else:
                 display_frame = frame
                 display_mask = body_mask
-                display_px = px_joints
+                display_players_px = [
+                    pf.pixel_joints if (pf is not None and pf.tracked and pf.pixel_joints) else None
+                    for pf in multi_res.players
+                ]
 
-            # Apply dynamic Face Follow (PTZ Auto-framing & Frustum-Aligned Face Square) for dancer selection avatar
-            if is_tracked and tracker.last_norm_landmarks:
+            # Apply dynamic Face Follow (PTZ Auto-framing) ONLY in 1-Player mode so Player 2 is never cropped out
+            face_follow_on = bool(config.get("face_follow_enabled", False)) and (max_players == 1)
+            tracker.face_ptz.cfg["face_follow_enabled"] = face_follow_on
+            if face_follow_on and is_tracked and tracker.last_norm_landmarks:
                 tracker.face_ptz.update_from_norm(
                     tracker.last_norm_landmarks,
                     mirrored=mirror,
@@ -287,24 +322,38 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
                 )
                 kinect_frame, kinect_mask = tracker.face_ptz.apply(display_frame, display_mask)
             else:
-                tracker.face_ptz.reset()
+                if tracker.face_ptz.valid:
+                    tracker.face_ptz.reset()
                 kinect_frame, kinect_mask = display_frame, display_mask
 
-            # Update Shared Memory for Just Dance PC (Pose JDP1, 640x480 Image and 320x240 Player Mask JMI1 & JMI2)
-            # When Virtual Phone is active, mute the Kinect pose channel so Kinect10.dll does NOT
-            # spawn an unwanted duplicate ghost player (Player 1) alongside the phone.
-            if is_tracked and kinect_joints:
-                if vphone.enabled:
+            # Update Shared Memory for Just Dance PC (JDP1, JDP2 664B, JMI1 & JMI2 player index mask)
+            players_3d = [
+                pf.kinect_joints if (pf is not None and pf.tracked) else None
+                for pf in multi_res.players
+            ]
+            if is_tracked and multi_res.tracked_mask > 0:
+                if vphone.enabled and max_players == 1:
                     bridge.pose.write_empty()
                     bridge.pose_v2.write_empty()
-                    bridge.image.write_image_and_mask(kinect_frame, kinect_mask, tracked=True)
+                    bridge.image.write_image_and_mask(
+                        kinect_frame,
+                        kinect_mask,
+                        tracked=True,
+                        tracked_mask=multi_res.tracked_mask,
+                        is_player_index_mask=True,
+                    )
                 else:
-                    bridge.write(kinect_joints, kinect_frame, kinect_mask, tracked=True)
+                    bridge.write_multi(
+                        players_3d,
+                        kinect_frame,
+                        kinect_mask,
+                        tracked_mask=multi_res.tracked_mask,
+                    )
             else:
                 bridge.write_empty()
 
-            # Feed 3D Hand Coordinates to Virtual Phone Controller (Accelerometer emulation)
-            vphone.update_from_joints(kinect_joints, is_tracked)
+            # Feed primary player's 3D Hand Coordinates to Virtual Phone Controller
+            vphone.update_from_joints(kinect_joints, bool(kinect_joints is not None))
 
             total_frames += 1
             try:
@@ -352,23 +401,33 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
             except Exception:
                 pass
 
-            # Render Player Silhouette Shadow & Contour ("sombrinha")
+            # Render Player Silhouette Shadow & Contour ("sombrinha"): P1 Blue, P2 Light Orange
             if is_tracked and display_mask is not None:
-                display_frame = overlay.draw_player_silhouette(display_frame, display_mask)
+                display_frame = overlay.draw_multi_player_silhouettes(display_frame, display_mask)
 
-            # Render Skeleton on top
-            if is_tracked and display_px:
-                display_frame = overlay.draw_skeleton(display_frame, display_px)
+            # Render Skeletons on top for each active player
+            for s_idx, p_px in enumerate(display_players_px):
+                if p_px:
+                    display_frame = overlay.draw_skeleton(
+                        display_frame,
+                        p_px,
+                        player_idx=s_idx,
+                        show_badge=(max_players >= 2),
+                    )
 
+            primary_calib = primary_p.is_calibrated if primary_p else tracker.calibrator.is_calibrated
+            primary_tier = primary_p.calibration_tier if primary_p else tracker.calibrator.calibration_tier
             display_frame = overlay.draw_hud(
                 display_frame,
                 camera_info_str=mode_label,
                 is_tracked=is_tracked,
                 cam_fps=cam_fps,
                 track_fps=measured_track_fps,
-                is_calibrated=tracker.calibrator.is_calibrated,
+                is_calibrated=primary_calib,
                 is_mirrored=mirror,
-                calibration_tier=tracker.calibrator.calibration_tier
+                calibration_tier=primary_tier,
+                max_players=max_players,
+                tracked_mask=multi_res.tracked_mask,
             )
 
             # Render gesture hold progress / confirmation feedback on preview
@@ -376,10 +435,12 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
                 elapsed = min(gesture_info["target"], gesture_info["elapsed"])
                 pct = int(gesture_info["progress"] * 100)
                 target_s = gesture_info["target"]
-                hud_txt = f"HOLD ARM UP: {elapsed:.1f}s / {target_s:.1f}s ({pct}%) -> [ENTER]"
-                cv2.putText(display_frame, hud_txt, (max(20, fw // 2 - 180), fh - 44),
+                p_idx = gesture_info.get("player_idx")
+                p_tag = f"P{p_idx + 1} " if (p_idx is not None and max_players >= 2) else ""
+                hud_txt = f"{p_tag}HOLD ARM UP: {elapsed:.1f}s / {target_s:.1f}s ({pct}%) -> [ENTER]"
+                cv2.putText(display_frame, hud_txt, (max(20, fw // 2 - 190), fh - 44),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0), 3, cv2.LINE_AA)
-                cv2.putText(display_frame, hud_txt, (max(20, fw // 2 - 180), fh - 44),
+                cv2.putText(display_frame, hud_txt, (max(20, fw // 2 - 190), fh - 44),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 240, 255), 2, cv2.LINE_AA)
             elif gesture_info.get("feedback_active"):
                 hud_txt = ">>> ENTER COMMAND SENT! <<<"
@@ -396,7 +457,7 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
                 break
             elif key in (ord('c'), ord('C')):
                 tracker.recalibrate()
-                print("[INFO] Height/skeleton recalibration triggered!")
+                print("[INFO] Height/skeleton & identity memory recalibration triggered!")
             elif key in (ord('m'), ord('M')):
                 mirror = not mirror
                 camera.set_mirror(mirror)
@@ -411,7 +472,6 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
                 if vphone.enabled:
                     vphone.send_input("VALID")
 
-            # Check if user clicked window close button (X)
             if cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1:
                 break
 
@@ -429,10 +489,9 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
             })
         except Exception:
             pass
-        if local_kinect_emulator is not None:
+        if local_kinect_emulator is not None and on_close_callback is None:
             local_kinect_emulator.stop()
         bridge.write_empty()
-        bridge.close()
         camera.release()
         tracker.close()
         cv2.destroyAllWindows()
@@ -445,7 +504,7 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
 
 def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
     """
-    Dedicated motion tracking loop for the Sony DualShock 4 controller over Bluetooth.
+    Dedicated motion tracking loop for the Sony DualShock 4 controller over Bluetooth/USB.
     Streams 3D physical accelerometer samples directly into Just Dance via Virtual Phone,
     provides visual telemetry (3D accel gauges, battery %, HID sample rate),
     and handles hotkeys ([Q] Quit, [R] Reconnect).
@@ -477,7 +536,7 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
         vphone.set_enabled(True)
 
     set_high_resolution_timer(True)
-    bridge = KinectBridge()
+    bridge = get_kinect_bridge()
 
     window_name = "Legacy PSCam Sensor — DualShock 4"
     cv2.namedWindow(window_name, cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_EXPANDED)
@@ -489,7 +548,6 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
     print(f"  Connected: {ds4.is_connected} | Polling: {ds4.state.sample_rate_hz:.0f} Hz | Battery: {ds4.state.battery_pct}%")
     print(f"==========================================\n")
 
-    # Dark gradient background canvas for telemetry rendering
     canvas_w, canvas_h = 640, 480
     dark_bg = np.zeros((canvas_h, canvas_w, 3), dtype=np.uint8)
     for y in range(canvas_h):
@@ -551,7 +609,6 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
 
             frame = dark_bg.copy()
 
-            # Render DualShock 4 HUD Header (PlayStation Blue banner)
             cv2.rectangle(frame, (0, 0), (canvas_w, 54), (156, 67, 0), -1)
             conn_method = "USB" if ds4.is_usb else "BLUETOOTH"
             c_header = f"{st.controller_name.upper()} ({conn_method})"
@@ -566,7 +623,6 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
                 cv2.LINE_AA,
             )
 
-            # Connection & Battery badge in header
             if ds4.is_connected:
                 batt_str = f"BATTERY: {st.battery_pct}%" + (" [CHARGING]" if st.is_charging else "")
                 batt_col = (200, 240, 255)
@@ -585,7 +641,6 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
                 cv2.LINE_AA,
             )
 
-            # Game connection status
             v_status = vphone.status_text
             cv2.putText(
                 frame,
@@ -598,7 +653,6 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
                 cv2.LINE_AA,
             )
 
-            # Hand & Sensitivity & Polling Rate info
             cv2.putText(
                 frame,
                 f"Active Hand: {hand.upper()} | Sens: {sens:.2f}x | Polling: {st.sample_rate_hz:.0f} Hz",
@@ -610,7 +664,6 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
                 cv2.LINE_AA,
             )
 
-            # Disconnected / IMU Frozen alert banner
             if not ds4.is_connected:
                 cv2.rectangle(frame, (18, 132), (canvas_w - 18, 172), (20, 20, 140), -1)
                 cv2.rectangle(frame, (18, 132), (canvas_w - 18, 172), (60, 60, 220), 1)
@@ -638,13 +691,12 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
                     cv2.LINE_AA,
                 )
 
-            # 3D G-Force Gauge Bars (X, Y, Z)
             gauge_y_start = 175
             bar_w_max = 180
             axes_data = [
-                ("ACCEL X (Lateral)", ax, (0, 215, 255)),    # Gold/Yellow
-                ("ACCEL Y (Vertical)", ay, (255, 128, 0)),   # Cyan
-                ("ACCEL Z (Forward)", az, (100, 255, 100)),  # Neon Green
+                ("ACCEL X (Lateral)", ax, (0, 215, 255)),
+                ("ACCEL Y (Vertical)", ay, (255, 128, 0)),
+                ("ACCEL Z (Forward)", az, (100, 255, 100)),
             ]
 
             for idx, (label, val, bar_col) in enumerate(axes_data):
@@ -659,19 +711,16 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
                     1,
                     cv2.LINE_AA,
                 )
-                # Background track
                 bx = 270
                 cv2.rectangle(frame, (bx - bar_w_max, y_pos), (bx + bar_w_max, y_pos + 14), (45, 45, 45), -1)
                 cv2.line(frame, (bx, y_pos - 2), (bx, y_pos + 16), (150, 150, 150), 1)
 
-                # Filled bar clamped to [-4G, +4G]
                 bar_len = int(max(-bar_w_max, min(bar_w_max, (val / 4.0) * bar_w_max)))
                 if bar_len > 0:
                     cv2.rectangle(frame, (bx, y_pos), (bx + bar_len, y_pos + 14), bar_col, -1)
                 elif bar_len < 0:
                     cv2.rectangle(frame, (bx + bar_len, y_pos), (bx, y_pos + 14), bar_col, -1)
 
-            # Total G Magnitude
             cv2.putText(
                 frame,
                 f"TOTAL G-FORCE: {tot_g:.2f} G",
@@ -683,7 +732,6 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
                 cv2.LINE_AA,
             )
 
-            # Coach selection & controls guidance
             coach_text = f"COACH: {vphone.current_coach_id + 1} / {vphone.total_coaches}"
             cv2.putText(
                 frame,
@@ -706,7 +754,6 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
                 cv2.LINE_AA,
             )
 
-            # Reconnection visual feedback
             now_ts = time.time()
             if now_ts < reconnect_feedback_until:
                 cv2.putText(
@@ -720,7 +767,6 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
                     cv2.LINE_AA,
                 )
 
-            # Footer navigation hints ([Q] Quit and [R] Reconnect)
             cv2.rectangle(frame, (0, canvas_h - 40), (canvas_w, canvas_h), (20, 20, 20), -1)
             cv2.putText(
                 frame,
@@ -733,7 +779,6 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
                 cv2.LINE_AA,
             )
 
-            # Update shared memory for Just Dance (mutes Kinect pose channel so player 1 phone is exclusive)
             bridge.pose.write_empty()
             bridge.pose_v2.write_empty()
             bridge.image.write_image_and_mask(frame, np.zeros((240, 320), dtype=np.uint8), tracked=True)
@@ -755,7 +800,7 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
                     print("[INFO] DualShock 4 reconnected successfully!")
                 else:
                     print("[WARN] Failed to reconnect DualShock 4.")
-            elif key in (13, 32):  # Enter or Space
+            elif key in (13, 32):
                 vphone.send_input("VALID")
                 ds4.trigger_rumble(small=160, large=80, duration_sec=0.10)
             elif key in (ord('['), ord('a'), ord('A')):
@@ -783,8 +828,6 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
         except Exception:
             pass
         bridge.write_empty()
-        bridge.close()
-        ds4.disconnect()
         cv2.destroyAllWindows()
         print("[INFO] DualShock 4 tracking session ended.")
         if on_close_callback:

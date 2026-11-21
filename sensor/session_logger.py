@@ -75,8 +75,8 @@ class SessionLogger:
         if logs_dir:
             self.logs_dir = Path(logs_dir)
         else:
-            base_dir = Path(__file__).resolve().parent.parent
-            self.logs_dir = base_dir / "logs"
+            from sensor.config_manager import get_logs_dir
+            self.logs_dir = get_logs_dir()
 
         self._lock = threading.RLock()
         self._initialized = False
@@ -250,6 +250,10 @@ class SessionLogger:
             win_release = platform.release()
             os_details = f"Windows {win_release} (Build {win_ver}) {cpu_arch}"
 
+            from sensor.config_manager import get_app_data_dir, get_config_path
+            app_dir = get_app_data_dir()
+            cfg_p = get_config_path()
+
             banner = [
                 "=" * 80,
                 f"  {APP_NAME} — Session Diagnostic Log",
@@ -261,6 +265,9 @@ class SessionLogger:
                 f"  Memory (RAM):     {ram_info}",
                 f"  Python Runtime:   {py_ver} ({'Frozen PE Executable' if is_frozen else 'Interpreted Script'})",
                 f"  Executable Path:  {exe_path}",
+                f"  App Data Dir:     {app_dir}",
+                f"  Config Path:      {cfg_p}",
+                f"  Logs Directory:   {self.logs_dir}",
                 f"  Working Dir:      {os.getcwd()}",
                 "=" * 80,
             ]

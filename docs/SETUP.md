@@ -51,24 +51,14 @@ A PlayStation 4 Camera (modelos CUH-ZEY1 e **PlayStation 4 Camera Slim** CUH-ZEY
 
 ---
 
-## 3. Configuração do Just Dance PC (Kinect Bridge)
+## 3. Configuração do Just Dance PC (Emulate Kinect & Shared Memory IPC Bridge)
 
-Para que o jogo Just Dance PC consiga ler os movimentos gerados pelo sensor, você pode optar por dois métodos:
+Para que o jogo Just Dance PC leia os movimentos gerados pelo sensor através da Ponte de Memória Compartilhada sem substituir nenhum arquivo na pasta do jogo:
 
-### Método A — Emulate Kinect (Recomendado — Sem Substituir Arquivos)
 1. Abra o **Legacy PSCam Sensor** e vá para a aba **Experimental**.
 2. Marque a opção **"Emulate Kinect"**.
 3. Inicie o Just Dance normalmente (`Legacy.exe`, `JustDance.exe` ou `jd2022.exe`).
-4. O sensor detecta a instância do jogo aberta e redireciona a API do Kinect diretamente na memória RAM, sem precisar colar ou substituir nenhum arquivo na pasta do jogo. O `Kinect10.dll` original permanece 100% intacto no disco!
-
-### Método B — Substituição Manual de DLL (Legado)
-1. Localize a pasta `tools/` dentro de `LegacyPSCam_Sensor/`.
-2. Copie o arquivo **`Kinect10.dll`**.
-3. Abra a pasta raiz da sua instalação do **Just Dance PC** (onde fica o executável do jogo, por exemplo `JustDance.exe` ou a pasta do Legacy Offline).
-4. Cole o `Kinect10.dll` na pasta do jogo, substituindo o existente se solicitado.
-
-> [!TIP]
-> Dentro do menu do Legacy PSCam Sensor há um atalho conveniente: clique no botão **"📁 Abrir Pasta do Kinect10.dll"** para abrir a pasta de origem imediatamente no Windows Explorer.
+4. O sensor detecta a instância do jogo aberta e redireciona a API do Kinect diretamente na memória RAM (`Legacy10.dll`), sem precisar colar ou substituir o `Kinect10.dll` na pasta do jogo!
 
 ---
 
@@ -143,3 +133,16 @@ Para utilizar o controle DualShock 4 ou controles compatíveis (Nível A) como c
 3. O jogo detectará imediatamente o simulador através da memória compartilhada `Local\LegacyWebcamKinectPose`.
 4. Posicione-se em frente à câmera a uma distância de aproximadamente **1,8 a 2,5 metros** para que todo o seu corpo (da cabeça aos tornozelos) fique visível.
 5. Selecione sua música e dance! O esqueleto responderá a cada movimento e pontuará no jogo.
+
+---
+
+## 7. Armazenamento Centralizado no AppData e Modo Portátil
+
+O **Legacy PSCam Sensor** armazena todas as configurações e arquivos de log no diretório de dados do usuário:
+
+- **Pasta no AppData:** `%APPDATA%\LegacyPSCam_Sensor\` (`C:\Users\<Usuario>\AppData\Roaming\LegacyPSCam_Sensor\`).
+  - `config.json`: preferências de câmera, resoluções, presets e modo de jogadores.
+  - `logs\`: gravações de diagnóstico (`session.log`), telemetria de dança em tempo real e benchmarks.
+- **Área de Trabalho Limpa:** Executar o `.exe` diretamente da Área de Trabalho ou pasta de Downloads nunca mais criará arquivos soltos no Desktop.
+- **Botão "Open Logs Folder":** Na barra lateral ou na aba Experimental, clique em *"Open Logs Folder"* para abrir instantaneamente o diretório de logs no Windows Explorer.
+- **Modo Portátil (Opcional para Pendrives):** Para manter tudo junto ao executável sem tocar no AppData, crie um arquivo vazio chamado `portable.txt` ao lado do `.exe` ou execute com `--portable`.

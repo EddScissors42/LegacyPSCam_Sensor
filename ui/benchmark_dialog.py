@@ -131,8 +131,8 @@ class TelemetryBenchmarkDialog(QDialog):
         self.setMinimumSize(720, 520)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.current_sens = float(current_sens)
-        base_dir = Path(__file__).resolve().parent.parent
-        self.logs_dir = Path(logs_dir) if logs_dir else base_dir / "logs"
+        from sensor.config_manager import get_logs_dir
+        self.logs_dir = Path(logs_dir) if logs_dir else get_logs_dir()
         self._last_result: Optional[Dict[str, Any]] = None
 
         # Clean Crisp-White & PlayStation Blue dialog stylesheet

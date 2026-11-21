@@ -55,31 +55,31 @@ PALETTE = {
     "status_err_bg": "#FEE2E2",    # Soft red tint
 }
 
-# Simplified Game-Style Calibration Presets
+# Simplified Game-Style Calibration Presets (Lite AI is the default recommended preset)
 CALIB_PRESETS = {
-    "balanced": {
-        "id": "balanced",
-        "title": "Balanced",
-        "icon": "★",
-        "tag": "RECOMMENDED",
-        "subtitle": "Full AI • Smooth & Precise",
-        "desc": "Ideal default balance for most songs. Uses MediaPipe Full model for higher accuracy with smooth movement.",
-        "pose_model": "full",
-        "smoothing_alpha": 0.55,
-        "detection_confidence": 0.50,
-        "specs": "Full AI • EMA 0.55 • Conf 0.50",
-    },
     "competitive": {
         "id": "competitive",
         "title": "Competitive",
         "icon": "⚡",
-        "tag": "",
+        "tag": "RECOMMENDED",
         "subtitle": "Lite AI • Lowest Latency",
-        "desc": "Uses MediaPipe Lite model for maximum FPS and instant response on fast routines and rapid arm gestures.",
+        "desc": "Default high-performance profile. Uses MediaPipe Lite model for maximum FPS and instant response in 1P and 2P modes.",
         "pose_model": "lite",
         "smoothing_alpha": 0.75,
-        "detection_confidence": 0.45,
-        "specs": "Lite AI • EMA 0.75 • Conf 0.45",
+        "detection_confidence": 0.50,
+        "specs": "Lite AI • EMA 0.75 • Conf 0.50",
+    },
+    "balanced": {
+        "id": "balanced",
+        "title": "Balanced",
+        "icon": "★",
+        "tag": "",
+        "subtitle": "Full AI • Smooth & Precise",
+        "desc": "Higher skeletal detail for solo dancing on strong CPUs. Uses MediaPipe Full model with extra smoothing.",
+        "pose_model": "full",
+        "smoothing_alpha": 0.55,
+        "detection_confidence": 0.50,
+        "specs": "Full AI • EMA 0.55 • Conf 0.50",
     },
 }
 

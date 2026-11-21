@@ -5,21 +5,29 @@ Saves and loads user preferences to/from config.json.
 import sys
 import json
 import os
+import shutil
 from pathlib import Path
+from typing import Optional
 
 DEFAULT_CONFIG = {
-    "camera_mode": "pscam",  # "pscam", "webcam", or "ds4"
+    "camera_mode": "pscam",  # "pscam", "webcam", "phone_cam", or "ds4"
     "camera_index": 0,
     "camera_orientation": 0,
     "ps4_camera_backend": "native",  # "native" (WinUSB direct) or "pscam4win" (legacy fallback)
     "ps4_eye": "right",              # "right" (default) or "left"
     "pscam_preset": "1280x800 @ 60 FPS",
     "webcam_preset": "640x480 @ 30 FPS",
+    "phone_cam_preset": "640x480 @ 30 FPS",
+    "phone_cam_port": 8443,
+    "phone_cam_lens": "user",
+    "phone_cam_processing_mode": "pc_video",
     "mirror_horizontal": True,
-    "tracking_preset": "balanced",
-    "pose_model": "full",
-    "smoothing_alpha": 0.55,
-    "detection_confidence": 0.5,
+    "tracking_preset": "competitive",
+    "pose_model": "lite",
+    "smoothing_alpha": 0.75,
+    "detection_confidence": 0.50,
+    "max_players": 1,
+    "infer_max_w_2p": 640,
     "target_height_m": 1.75,
     "hip_height_m": 1.0,
     "baseline_z_m": 2.2,
@@ -43,7 +51,7 @@ DEFAULT_CONFIG = {
     "face_follow_smoothing": 0.20,
     "face_follow_y_bias": 0.06,
     "face_follow_spin_fallback": True,
-    "face_follow_adaptive_zoom": True,
+    "face_follow_adaptive_zoom": False,
     "person_lock_enabled": True,
     "inertial_coasting_enabled": True,
     "inertial_coasting_max_ms": 250,
@@ -65,7 +73,7 @@ DEFAULT_CONFIG = {
     "ds4_permissive_mode": True,
     "benchmark_auto_record": False,
     "stereo_mode": "disabled",
-    "emulate_kinect_enabled": False
+    "emulate_kinect_enabled": True
 }
 
 PRESETS_PSCAM = [
@@ -90,6 +98,14 @@ PRESETS_WEBCAM = [
     "1280x720 @ 60 FPS"
 ]
 
+PRESETS_PHONE_CAM = [
+    "640x480 @ 30 FPS",
+    "640x480 @ 60 FPS",
+    "1280x720 @ 30 FPS",
+    "1280x720 @ 60 FPS"
+]
+
+
 def parse_preset(preset_str):
     """
     Parses a string like '1280x800 @ 60 FPS' into (width, height, fps).
@@ -103,15 +119,114 @@ def parse_preset(preset_str):
     except Exception:
         return 640, 480, 30
 
+
+def is_portable_mode() -> bool:
+    """
+    Checks whether the application should run in portable mode.
+    Portable mode is enabled if:
+    1. '--portable' is in sys.argv, or
+    2. Environment variable 'LEGACY_PSCAM_PORTABLE' is set ('1', 'true'), or
+    3. A file named 'portable.txt' or '.portable' exists next to the executable (or project root).
+    """
+    if "--portable" in sys.argv or os.environ.get("LEGACY_PSCAM_PORTABLE", "").strip().lower() in ("1", "true"):
+        return True
+
+    if getattr(sys, "frozen", False):
+        exe_dir = Path(sys.executable).resolve().parent
+    else:
+        exe_dir = Path(__file__).resolve().parent.parent
+
+    return (exe_dir / "portable.txt").exists() or (exe_dir / ".portable").exists()
+
+
+def get_app_data_dir(portable: Optional[bool] = None) -> Path:
+    """
+    Returns the dedicated application directory for user configuration and logs.
+    In standard mode (default):
+      - Windows: %APPDATA%/LegacyPSCam_Sensor (e.g. C:/Users/<User>/AppData/Roaming/LegacyPSCam_Sensor)
+      - Non-Windows / Fallback: ~/.config/LegacyPSCam_Sensor
+    In portable mode:
+      - Next to the executable (frozen) or project root (dev).
+    Ensures the directory exists.
+    """
+    if portable is None:
+        portable = is_portable_mode()
+
+    if portable:
+        if getattr(sys, "frozen", False):
+            base = Path(sys.executable).resolve().parent
+        else:
+            base = Path(__file__).resolve().parent.parent
+        return base
+
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        base = Path(appdata) / "LegacyPSCam_Sensor"
+    else:
+        base = Path.home() / ".config" / "LegacyPSCam_Sensor"
+
+    try:
+        base.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        print(f"[WARN] Failed to create AppData directory at {base}: {e}. Falling back to home.")
+        base = Path.home() / ".legacy_pscam_sensor"
+        base.mkdir(parents=True, exist_ok=True)
+
+    return base
+
+
+def get_logs_dir(portable: Optional[bool] = None) -> Path:
+    """
+    Returns the dedicated directory for diagnostic session logs and telemetry CSVs.
+    Always located in <AppData>/logs (or <PortableDir>/logs).
+    Ensures the directory exists.
+    """
+    logs_dir = get_app_data_dir(portable=portable) / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    return logs_dir
+
+
+def get_config_path(portable: Optional[bool] = None) -> Path:
+    """
+    Returns the canonical path for config.json.
+    If config.json does not yet exist in the AppData directory, attempts to seed it
+    from candidate local/bundled config.json files (or writes DEFAULT_CONFIG).
+    """
+    app_data_dir = get_app_data_dir(portable=portable)
+    target_config = app_data_dir / "config.json"
+
+    if target_config.exists():
+        return target_config
+
+    # Seed / migrate from local template if available
+    try:
+        candidates = []
+        if getattr(sys, "frozen", False):
+            exe_dir = Path(sys.executable).resolve().parent
+            candidates.append(exe_dir / "config.json")
+            if hasattr(sys, "_MEIPASS"):
+                candidates.append(Path(sys._MEIPASS) / "config.json")
+        else:
+            proj_root = Path(__file__).resolve().parent.parent
+            candidates.append(proj_root / "config.json")
+            candidates.append(Path(__file__).resolve().parent / "config.json")
+
+        seed_file = next((c for c in candidates if c.exists() and c.resolve() != target_config.resolve()), None)
+        if seed_file:
+            shutil.copy2(seed_file, target_config)
+        else:
+            with open(target_config, "w", encoding="utf-8") as f:
+                json.dump(DEFAULT_CONFIG, f, indent=4, ensure_ascii=False)
+    except Exception as e:
+        print(f"[WARN] Failed to seed initial config at {target_config}: {e}")
+
+    return target_config
+
+
 class ConfigManager:
     def __init__(self, config_path=None):
         if config_path is None:
-            if getattr(sys, "frozen", False):
-                self.config_path = Path(sys.executable).parent / "config.json"
-            else:
-                parent_dir = Path(__file__).resolve().parent
-                candidates = [parent_dir / "config.json", parent_dir.parent / "config.json"]
-                self.config_path = next((c for c in candidates if c.exists()), parent_dir.parent / "config.json")
+            self.config_path = get_config_path()
         else:
             self.config_path = Path(config_path)
         self.config = dict(DEFAULT_CONFIG)
@@ -129,6 +244,7 @@ class ConfigManager:
 
     def save(self):
         try:
+            self.config_path.parent.mkdir(parents=True, exist_ok=True)
             with open(self.config_path, "w", encoding="utf-8") as f:
                 json.dump(self.config, f, indent=4, ensure_ascii=False)
             return True

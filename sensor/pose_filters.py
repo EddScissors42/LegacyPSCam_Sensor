@@ -311,6 +311,7 @@ class SkeletonCalibrator:
         self.scale = 1.15               # Default human proportion scale
         self.origin = [0.0, 0.0, 0.0]
         self.stereo_baseline_z = None   # Smoothed metric baseline Z from stereo triangulation
+        self._head_z_ema = None         # Stabilized monocular Head Z (prevents Just Dance face box zoom breathing)
 
     def reset(self):
         self.is_calibrated = False
@@ -318,6 +319,7 @@ class SkeletonCalibrator:
         self.scale = 1.15
         self.origin = [0.0, 0.0, 0.0]
         self.stereo_baseline_z = None
+        self._head_z_ema = None
 
     def calibrate(self, joints, legs_visible=True, hips_visible=True):
         # joints: list of 20 (x, y, z, conf)
@@ -350,7 +352,7 @@ class SkeletonCalibrator:
                 (head[1] - ank_mid[1])**2 +
                 (head[2] - ank_mid[2])**2
             )
-            if 0.6 <= raw_height <= 2.8:
+            if 1.05 <= raw_height <= 2.8:
                 self.scale = self.target_height_m / raw_height
                 self.origin = [hip[0], hip[1], hip[2]]
                 self.is_calibrated = True
@@ -439,11 +441,26 @@ class SkeletonCalibrator:
             k_z = baseline_z + (z - origin_z) * scale * depth_gain
 
             # Optional joint-level metric grounding if stereo triangulation is confident
+            has_stereo_z = False
             if stereo_depths and idx in stereo_depths:
                 s_x, s_y, s_z, s_conf = stereo_depths[idx]
                 if s_conf > 0.4 and 0.8 <= s_z <= 4.5:
                     blend_w = min(0.6, s_conf * 0.7)
                     k_z = (1.0 - blend_w) * k_z + blend_w * s_z
+                    has_stereo_z = True
+
+            # Stabilize monocular Head(3) Z depth: Just Dance PC sizes its built-in face framing
+            # avatar box inversely to Head.z. Monocular world_lm.z breathes heavily when seated or
+            # moving arms in front of torso, causing constant face zoom-in/zoom-out oscillation.
+            if idx == 3 and not has_stereo_z:
+                raw_head_dz = float(np.clip((z - origin_z) * scale * (depth_gain * 0.20), -0.10, 0.10))
+                target_head_z = baseline_z + raw_head_dz
+                if self._head_z_ema is None:
+                    self._head_z_ema = target_head_z
+                else:
+                    if abs(target_head_z - self._head_z_ema) > 0.020:
+                        self._head_z_ema = 0.92 * self._head_z_ema + 0.08 * target_head_z
+                k_z = self._head_z_ema
 
             out.append((k_x, k_y, k_z, conf))
         return out
@@ -575,6 +592,7 @@ class FaceFollowPTZ:
         self.target_u = 0.5
         self.target_v = 0.25
         self.current_zoom = float(self.cfg.get('face_follow_zoom', 1.22))
+        self._zoom_hold_frames = 0
         self.valid = False
 
     def reset(self):
@@ -583,6 +601,7 @@ class FaceFollowPTZ:
         self.target_u = 0.5
         self.target_v = 0.25
         self.current_zoom = float(self.cfg.get('face_follow_zoom', 1.22))
+        self._zoom_hold_frames = 0
         self.valid = False
 
     def update_from_norm(self, norm_landmarks, mirrored=True, kinect_joints=None):
@@ -649,19 +668,22 @@ class FaceFollowPTZ:
                 self.cx = self.cx * (1.0 - eff_a) + tx * eff_a
                 self.cy = self.cy * (1.0 - eff_a) + ty * eff_a
 
-        # Dynamic Adaptive Full-Body Zoom (prevents clipping raised arms or wide steps)
+        # Dynamic Adaptive Full-Body Zoom (opt-in; disabled by default to keep framing rock-steady)
+        # Uses strict in-frame high-confidence landmarks + hysteresis + hold timer so seated/occluded
+        # limbs never cause zoom-in/zoom-out pumping.
         base_zoom = max(1.0, float(self.cfg.get('face_follow_zoom', 1.22)))
-        if bool(self.cfg.get('face_follow_adaptive_zoom', True)) and base_zoom > 1.01:
+        if bool(self.cfg.get('face_follow_adaptive_zoom', False)) and base_zoom > 1.01:
             xs, ys = [], []
             for idx in (NOSE, LEFT_SHOULDER, RIGHT_SHOULDER, LEFT_ELBOW, RIGHT_ELBOW, LEFT_WRIST, RIGHT_WRIST, LEFT_HIP, RIGHT_HIP, LEFT_ANKLE, RIGHT_ANKLE):
                 if idx < len(norm_landmarks):
                     lm = norm_landmarks[idx]
-                    if min(float(getattr(lm, 'visibility', 1.0)), float(getattr(lm, 'presence', 1.0))) >= 0.22:
+                    if min(float(getattr(lm, 'visibility', 1.0)), float(getattr(lm, 'presence', 1.0))) >= 0.55:
                         lx = 1.0 - float(lm.x) if mirrored else float(lm.x)
                         ly = float(lm.y)
-                        xs.append(lx)
-                        ys.append(ly)
-            if len(xs) >= 2:
+                        if 0.0 <= lx <= 1.0 and 0.0 <= ly <= 1.0:
+                            xs.append(lx)
+                            ys.append(ly)
+            if len(xs) >= 3:
                 span_x = (max(xs) - min(xs)) + 0.18  # safety breathing margin
                 span_y = (max(ys) - min(ys)) + 0.16
                 max_span = max(span_x, span_y)
@@ -669,9 +691,25 @@ class FaceFollowPTZ:
                     desired_zoom = float(np.clip(1.0 / max(0.5, max_span), 1.0, base_zoom))
                 else:
                     desired_zoom = base_zoom
-                self.current_zoom = 0.82 * self.current_zoom + 0.18 * desired_zoom
+
+                zoom_diff = desired_zoom - self.current_zoom
+                if zoom_diff < -0.025:
+                    # Widen promptly when limbs genuinely approach frame edges, and hold
+                    self.current_zoom = 0.86 * self.current_zoom + 0.14 * desired_zoom
+                    self._zoom_hold_frames = 35
+                elif zoom_diff > 0.040:
+                    # Return very slowly only after hold cooldown expires (prevents pumping)
+                    if self._zoom_hold_frames > 0:
+                        self._zoom_hold_frames -= 1
+                    else:
+                        self.current_zoom = 0.97 * self.current_zoom + 0.03 * desired_zoom
+                elif self._zoom_hold_frames > 0:
+                    self._zoom_hold_frames -= 1
             else:
-                self.current_zoom = 0.85 * self.current_zoom + 0.15 * base_zoom
+                if self._zoom_hold_frames > 0:
+                    self._zoom_hold_frames -= 1
+                elif abs(base_zoom - self.current_zoom) > 0.040:
+                    self.current_zoom = 0.97 * self.current_zoom + 0.03 * base_zoom
         else:
             self.current_zoom = base_zoom
 
@@ -691,9 +729,12 @@ class FaceFollowPTZ:
             tv = 0.5 - (285.63 / 240.0) * (y_frustum / z_safe)
             tu = float(np.clip(tu, 0.15, 0.85))
             tv = float(np.clip(tv, 0.14, 0.65))
+            deadzone = float(self.cfg.get('face_follow_deadzone', 0.018))
             a_t = float(np.clip(float(self.cfg.get('face_follow_smoothing', 0.20)), 0.05, 1.0))
-            self.target_u = self.target_u * (1.0 - a_t) + tu * a_t
-            self.target_v = self.target_v * (1.0 - a_t) + tv * a_t
+            disp_t = math.hypot(tu - self.target_u, tv - self.target_v)
+            eff_at = a_t * 0.15 if disp_t < deadzone else a_t
+            self.target_u = self.target_u * (1.0 - eff_at) + tu * eff_at
+            self.target_v = self.target_v * (1.0 - eff_at) + tv * eff_at
         else:
             self.target_u = 0.5
             self.target_v = 0.25

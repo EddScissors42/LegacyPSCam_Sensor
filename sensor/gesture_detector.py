@@ -2,7 +2,7 @@
 Gesture Detection Subsystem for Legacy PSCam Sensor.
 Provides real-time body gesture recognition (such as holding an arm raised)
 to trigger game actions (such as sending an ENTER keystroke or Virtual Phone VALID).
-Completely modular and configurable.
+Supports both 1-Player and 2-Player modes (any active player raising an arm triggers ENTER).
 """
 import time
 import threading
@@ -43,18 +43,13 @@ def check_arm_raised(px_joints: Optional[List[Tuple[float, float, float]]]) -> b
         return False
 
     head = px_joints[3]
-    sh_c = px_joints[2]
     sh_l, sh_r = px_joints[4], px_joints[8]
     wrist_l, wrist_r = px_joints[6], px_joints[10]
     hand_l, hand_r = px_joints[7], px_joints[11]
 
-    # Reference Y threshold: minimum (highest) between head and shoulders - 20px
     ref_y = head[1] if (len(head) > 2 and head[2] > 0.3) else min(sh_l[1], sh_r[1]) - 20
 
-    # Right arm raised: hand higher than head OR hand & wrist comfortably above shoulder
     r_up = (hand_r[2] > 0.3 and (hand_r[1] < ref_y or (hand_r[1] < sh_r[1] - 25 and wrist_r[1] < sh_r[1])))
-
-    # Left arm raised: hand higher than head OR hand & wrist comfortably above shoulder
     l_up = (hand_l[2] > 0.3 and (hand_l[1] < ref_y or (hand_l[1] < sh_l[1] - 25 and wrist_l[1] < sh_l[1])))
 
     return bool(r_up or l_up)
@@ -64,6 +59,7 @@ class ArmRaiseGestureDetector:
     """
     Modular state machine that detects an arm held raised for a specified duration,
     triggers keyboard/virtual phone events, and reports progress for HUD rendering.
+    In 2-player mode, accepts an arm raise from either Player 1 or Player 2.
     """
     def __init__(self, enabled: bool = True, hold_seconds: float = 2.0, cooldown_seconds: float = 2.5):
         self.enabled = bool(enabled)
@@ -74,10 +70,12 @@ class ArmRaiseGestureDetector:
         self.triggered: bool = False
         self.last_trigger_time: float = 0.0
         self.feedback_duration: float = 1.4
+        self.active_player_idx: Optional[int] = None
 
     def reset(self):
         self.start_time = None
         self.triggered = False
+        self.active_player_idx = None
 
     def update(
         self,
@@ -86,14 +84,31 @@ class ArmRaiseGestureDetector:
         vphone=None,
         now: Optional[float] = None
     ) -> Dict[str, Any]:
+        """Single-player update wrapper."""
+        players_list = [px_joints] if (is_tracked and px_joints) else []
+        return self.update_multi(players_list, is_tracked=bool(is_tracked and px_joints), vphone=vphone, now=now)
+
+    def update_multi(
+        self,
+        players_px_joints: List[Optional[List[Tuple[float, float, float]]]],
+        is_tracked: bool = True,
+        vphone=None,
+        now: Optional[float] = None,
+    ) -> Dict[str, Any]:
         """
-        Updates detector state with current frame tracking data.
-        Returns state dict for HUD rendering and diagnostic logging.
+        Updates detector state across 1 or 2 players.
+        If either Player 1 or Player 2 holds an arm raised for `hold_seconds`, dispatches ENTER.
         """
         if now is None:
             now = time.time()
 
-        if not self.enabled or not is_tracked or not px_joints:
+        valid_players = [
+            (idx, px)
+            for idx, px in enumerate(players_px_joints or [])
+            if px is not None and len(px) >= 12
+        ]
+
+        if not self.enabled or not is_tracked or not valid_players:
             self.reset()
             return {
                 "enabled": self.enabled,
@@ -102,18 +117,25 @@ class ArmRaiseGestureDetector:
                 "elapsed": 0.0,
                 "target": self.hold_seconds,
                 "triggered": False,
+                "player_idx": None,
                 "feedback_active": (now - self.last_trigger_time < self.feedback_duration),
             }
 
         in_cooldown = (now - self.last_trigger_time < self.cooldown_seconds)
-        arm_up = check_arm_raised(px_joints)
+        raising_player = None
+        for idx, px in valid_players:
+            if check_arm_raised(px):
+                raising_player = idx
+                break
 
+        arm_up = (raising_player is not None)
         just_triggered = False
         holding = False
         elapsed = 0.0
         progress = 0.0
 
         if arm_up and not in_cooldown:
+            self.active_player_idx = raising_player
             if self.start_time is None:
                 self.start_time = now
                 self.triggered = False
@@ -127,25 +149,28 @@ class ArmRaiseGestureDetector:
                     just_triggered = True
                     self.last_trigger_time = now
 
-                    # Dispatch virtual ENTER keystroke to active game window
                     dispatch_enter_keystroke()
 
-                    # Dispatch Virtual Phone VALID input if controller is active
                     if vphone is not None and getattr(vphone, "enabled", False):
                         try:
                             vphone.send_input("VALID")
                         except Exception as e:
                             print(f"[WARN] Virtual Phone VALID dispatch error: {e}")
 
-                    print("\n[GESTURE] >>> ARM RAISED >= 2.0s: ENTER COMMAND DISPATCHED! <<<\n")
+                    p_label = f"P{raising_player + 1}"
+                    print(f"\n[GESTURE] >>> {p_label} ARM RAISED >= {self.hold_seconds:.1f}s: ENTER COMMAND DISPATCHED! <<<\n")
                     try:
                         from sensor.session_logger import get_session_logger
-                        get_session_logger().log("GESTURE", f"Arm raised hold >= {self.hold_seconds:.1f}s: ENTER command dispatched.")
+                        get_session_logger().log(
+                            "GESTURE",
+                            f"{p_label} arm raised hold >= {self.hold_seconds:.1f}s: ENTER command dispatched.",
+                        )
                     except Exception:
                         pass
         else:
             self.start_time = None
             self.triggered = False
+            self.active_player_idx = None
 
         feedback_active = (now - self.last_trigger_time < self.feedback_duration)
 
@@ -156,5 +181,6 @@ class ArmRaiseGestureDetector:
             "elapsed": elapsed,
             "target": self.hold_seconds,
             "triggered": just_triggered,
+            "player_idx": self.active_player_idx,
             "feedback_active": feedback_active,
         }

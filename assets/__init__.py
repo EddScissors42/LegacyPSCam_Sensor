@@ -18,7 +18,8 @@ FONTS_DIR = ASSETS_DIR / "fonts"
 ICON_APP_ICO_PATH = ICONS_DIR / "app_icon.ico" if (ICONS_DIR / "app_icon.ico").exists() else None
 ICON_PSCAMERA_PATH = ICONS_DIR / "IconePSCAMERA.png"
 ICON_SETTINGS_PATH = ICONS_DIR / "settings.svg"
-ICON_SLIDERS_PATH = ICONS_DIR / "sliders.svg"
+ICON_TRACKING_PATH = ICONS_DIR / "trackingicon.svg"
+ICON_SLIDERS_PATH = ICON_TRACKING_PATH  # Compatibility alias
 ICON_MODE_BALANCED_PATH = ICONS_DIR / "mode_balanced.svg"
 ICON_MODE_COMPETITIVE_PATH = ICONS_DIR / "mode_competitive.svg"
 ICON_LAB_PATH = ICONS_DIR / "lab.svg"
@@ -26,6 +27,7 @@ ICON_WEBCAM_PATH = ICONS_DIR / "webcam.svg"
 ICON_ARROW_DOWN_PATH = ICONS_DIR / "arrow_down.png" if (ICONS_DIR / "arrow_down.png").exists() else ICONS_DIR / "arrow_down.svg"
 ICON_DUALSHOCK4_PATH = ICONS_DIR / "officialdualshock.png"
 ICON_CONTROLLER_PATH = ICONS_DIR / "controller.svg"
+ICON_PHONE_PATH = ICONS_DIR / "phone.svg"
 
 MODEL_POSE_LITE_PATH = MODELS_DIR / "pose_landmarker_lite.task"
 MODEL_POSE_FULL_PATH = MODELS_DIR / "pose_landmarker_full.task"
@@ -42,6 +44,7 @@ __all__ = [
     "ICON_APP_ICO_PATH",
     "ICON_PSCAMERA_PATH",
     "ICON_SETTINGS_PATH",
+    "ICON_TRACKING_PATH",
     "ICON_SLIDERS_PATH",
     "ICON_MODE_BALANCED_PATH",
     "ICON_MODE_COMPETITIVE_PATH",
@@ -50,6 +53,7 @@ __all__ = [
     "ICON_ARROW_DOWN_PATH",
     "ICON_DUALSHOCK4_PATH",
     "ICON_CONTROLLER_PATH",
+    "ICON_PHONE_PATH",
     "MODELS_DIR",
     "MODEL_POSE_PATH",
     "MODEL_POSE_LITE_PATH",
