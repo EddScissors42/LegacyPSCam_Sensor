@@ -81,13 +81,40 @@ from assets import (
 from version import WINDOW_TITLE, VERSION_STRING, APP_NAME
 from sensor.config_manager import ConfigManager, parse_preset, PRESETS_PSCAM, PRESETS_WEBCAM, PRESETS_PHONE_CAM
 from sensor.camera_manager import CameraManager
-from sensor.phone_camera import get_phone_camera_server, QRCodeGenerator
 from sensor.kinect_shared_memory import KinectBridge, get_kinect_bridge, close_kinect_bridge
 from sensor.kinect_emulator import KinectEmulatorDaemon, get_kinect_emulator
-from sensor.virtual_phone import get_virtual_phone
-from sensor.ds4_controller import get_ds4_controller, find_ds4_devices, detect_controller_name
-from sensor.telemetry_benchmark import parse_telemetry_csv, compare_telemetries, find_available_benchmarks
 from sensor import tracking_session
+import sensor
+
+# Lazy wrappers for secondary modules (PEP 562 zero-overhead import at startup)
+def get_phone_camera_server(*args, **kwargs):
+    return sensor.get_phone_camera_server(*args, **kwargs)
+
+class _LazyQRCodeGenerator:
+    def __getattr__(self, name):
+        return getattr(sensor.QRCodeGenerator, name)
+QRCodeGenerator = _LazyQRCodeGenerator()
+
+def get_virtual_phone(*args, **kwargs):
+    return sensor.get_virtual_phone(*args, **kwargs)
+
+def get_ds4_controller(*args, **kwargs):
+    return sensor.get_ds4_controller(*args, **kwargs)
+
+def find_ds4_devices(*args, **kwargs):
+    return sensor.find_ds4_devices(*args, **kwargs)
+
+def detect_controller_name(*args, **kwargs):
+    return sensor.detect_controller_name(*args, **kwargs)
+
+def parse_telemetry_csv(*args, **kwargs):
+    return sensor.parse_telemetry_csv(*args, **kwargs)
+
+def compare_telemetries(*args, **kwargs):
+    return sensor.compare_telemetries(*args, **kwargs)
+
+def find_available_benchmarks(*args, **kwargs):
+    return sensor.find_available_benchmarks(*args, **kwargs)
 
 
 class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
@@ -137,29 +164,25 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
         self._is_connecting_ds4 = False
         self.calib_cards = {}
 
-        # Initialize DS4 Controller attributes from config
-        ds4 = get_ds4_controller()
-        ds4.hand = str(self.cfg.get("ds4_hand", "right"))
-        ds4.sensitivity = float(self.cfg.get("ds4_sensitivity", 1.0))
-        ds4.permissive_mode = bool(self.cfg.get("ds4_permissive_mode", True))
+        # Lazy controller states (never blocks cold GUI startup)
+        self._ds4 = None
+        self._vphone = None
+        if self.cfg.get("camera_mode") == "ds4":
+            self._init_ds4_config()
 
-        # Initialize Virtual Phone Controller from config
-        self.vphone = get_virtual_phone()
-        self.vphone.configure(
-            host=str(self.cfg.get("virtual_phone_host", "127.0.0.1")),
-            port=int(self.cfg.get("virtual_phone_port", 8080)),
-            hand=str(self.cfg.get("virtual_phone_hand", "right")),
-            sensitivity=float(self.cfg.get("virtual_phone_sensitivity", 1.0)),
-            phone_name=str(self.cfg.get("virtual_phone_name", "Legacy PSCam Phone")),
-            auto_record=bool(self.cfg.get("benchmark_auto_record", self.cfg.get("virtual_phone_auto_record", False))),
-            adaptive=bool(self.cfg.get("virtual_phone_adaptive", False)),
-        )
         if (
             self.cfg.get("virtual_phone_enabled", False)
             or self.cfg.get("benchmark_auto_record", False)
             or self.cfg.get("virtual_phone_auto_record", False)
         ):
             self.vphone.set_enabled(True)
+
+        # Camera pre-warming state (instant 0s startup for START TRACKING)
+        self._prewarmed_camera = None
+        self._warmup_lock = threading.Lock()
+        self._warmup_timer = QTimer(self)
+        self._warmup_timer.setSingleShot(True)
+        self._warmup_timer.timeout.connect(self._start_camera_warmup_async)
 
         # Initialize Kinect Emulator Daemon (Zero-File-Replacement Mode — Always Active)
         self.cfg["emulate_kinect_enabled"] = True
@@ -188,6 +211,9 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
             # Background MediaPipe pre-warming after the GUI window is already painted on screen
             QTimer.singleShot(350, self._prewarm_pose_engine_async)
 
+            # Fast background camera pre-warming (400ms after GUI is visible)
+            self._schedule_camera_warmup(400)
+
             # Periodic non-blocking check (1000ms)
             self.timer_periodic = QTimer(self)
             self.timer_periodic.timeout.connect(self._periodic_check)
@@ -213,6 +239,148 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
                 pass
 
         threading.Thread(target=_warm_worker, daemon=True, name="MediaPipePrewarmThread").start()
+
+    @property
+    def vphone(self):
+        if getattr(self, "_vphone", None) is None:
+            self._ensure_vphone_configured()
+        return self._vphone
+
+    @vphone.setter
+    def vphone(self, val):
+        self._vphone = val
+
+    def _ensure_vphone_configured(self):
+        if getattr(self, "_vphone", None) is None:
+            self._vphone = get_virtual_phone()
+            self._vphone.configure(
+                host=str(self.cfg.get("virtual_phone_host", "127.0.0.1")),
+                port=int(self.cfg.get("virtual_phone_port", 8080)),
+                hand=str(self.cfg.get("virtual_phone_hand", "right")),
+                sensitivity=float(self.cfg.get("virtual_phone_sensitivity", 1.0)),
+                phone_name=str(self.cfg.get("virtual_phone_name", "Legacy PSCam Phone")),
+                auto_record=bool(self.cfg.get("benchmark_auto_record", self.cfg.get("virtual_phone_auto_record", False))),
+                adaptive=bool(self.cfg.get("virtual_phone_adaptive", False)),
+            )
+        return self._vphone
+
+    def _init_ds4_config(self):
+        ds4 = getattr(self, "_ds4", None) or get_ds4_controller()
+        self._ds4 = ds4
+        ds4.hand = str(self.cfg.get("ds4_hand", "right"))
+        ds4.sensitivity = float(self.cfg.get("ds4_sensitivity", 1.0))
+        ds4.permissive_mode = bool(self.cfg.get("ds4_permissive_mode", True))
+
+    def _schedule_camera_warmup(self, delay_ms: int = 350):
+        """Schedules background camera warm-up with debounce to eliminate 2s START TRACKING delay."""
+        if getattr(self, "_is_closing", False) or getattr(self, "is_tracking_active", False):
+            return
+        if hasattr(self, "_warmup_timer"):
+            self._warmup_timer.start(delay_ms)
+
+    def _cancel_camera_warmup(self):
+        """Cancels any pending warm-up and safely releases the pre-warmed instance."""
+        if hasattr(self, "_warmup_timer") and self._warmup_timer.isActive():
+            self._warmup_timer.stop()
+        with getattr(self, "_warmup_lock", threading.Lock()):
+            cam = getattr(self, "_prewarmed_camera", None)
+            self._prewarmed_camera = None
+        if cam is not None:
+            def _close_cam():
+                try:
+                    cam.release()
+                except Exception:
+                    pass
+            threading.Thread(target=_close_cam, daemon=True, name="CameraPrewarmCloser").start()
+
+    def _start_camera_warmup_async(self):
+        """Asynchronously pre-negotiates camera in low-CPU standby mode (<0.4% CPU)."""
+        if getattr(self, "_is_closing", False) or getattr(self, "is_tracking_active", False):
+            return
+        mode = self.cfg.get("camera_mode", "pscam")
+        if mode not in ("pscam", "webcam"):
+            return
+
+        def _warmup_worker():
+            with getattr(self, "_warmup_lock", threading.Lock()):
+                if getattr(self, "_is_closing", False) or getattr(self, "is_tracking_active", False):
+                    return
+
+                cam_idx = self.cfg.get("camera_index", 0)
+                if mode == "pscam":
+                    ps_cams = [c for c in getattr(self, "camera_list", []) if c.is_pscam]
+                    if ps_cams:
+                        cam_idx = ps_cams[0].index
+                    preset_str = self.cfg.get("pscam_preset", "1280x800 @ 60 FPS")
+                else:
+                    preset_str = self.cfg.get("webcam_preset", "640x480 @ 30 FPS")
+
+                w, h, target_fps = parse_preset(preset_str)
+                mirror = self.cfg.get("mirror_horizontal", True)
+                camera_orientation = int(self.cfg.get("camera_orientation", 0))
+                ps4_eye = str(self.cfg.get("ps4_eye", "right")).strip().lower()
+                ps4_backend_mode = str(self.cfg.get("ps4_camera_backend", "native")).strip().lower()
+
+                # If already running and compatible, keep it
+                if (
+                    getattr(self, "_prewarmed_camera", None) is not None
+                    and getattr(self._prewarmed_camera, "running", False)
+                    and getattr(self._prewarmed_camera, "is_compatible", lambda **k: True)(
+                        camera_index=cam_idx,
+                        target_w=w,
+                        target_h=h,
+                        target_fps=target_fps,
+                        mirror=mirror,
+                        is_pscam=(mode == "pscam"),
+                        orientation=camera_orientation,
+                        ps4_eye=ps4_eye,
+                        ps4_backend_mode=ps4_backend_mode,
+                        is_phone_cam=False,
+                    )
+                ):
+                    return
+
+                # Release stale instance if settings changed
+                old_cam = getattr(self, "_prewarmed_camera", None)
+                self._prewarmed_camera = None
+                if old_cam is not None:
+                    try:
+                        old_cam.release()
+                    except Exception:
+                        pass
+
+                # If PS4 Camera, ensure driver is ready before DirectShow/WinUSB connect
+                if mode == "pscam" and ps4_backend_mode != "pscam4win":
+                    CameraManager.initialize_ps4_camera()
+
+                try:
+                    from sensor.camera_manager import LatestFrameCamera
+                    cam = LatestFrameCamera(
+                        camera_index=cam_idx,
+                        target_w=w,
+                        target_h=h,
+                        target_fps=target_fps,
+                        mirror=mirror,
+                        is_pscam=(mode == "pscam"),
+                        orientation=camera_orientation,
+                        ps4_eye=ps4_eye,
+                        ps4_backend_mode=ps4_backend_mode,
+                        is_phone_cam=False,
+                        is_prewarming=True,
+                    )
+                    self._prewarmed_camera = cam
+                    print(f"[WARMUP] Câmera pré-aquecida pronta em standby: {w}x{h}@{target_fps}fps")
+                except Exception as e:
+                    self._prewarmed_camera = None
+
+        threading.Thread(target=_warmup_worker, daemon=True, name="CameraWarmupThread").start()
+
+    def _take_prewarmed_camera(self):
+        """Atomically extracts the pre-warmed camera instance for handoff to tracking session."""
+        with getattr(self, "_warmup_lock", threading.Lock()):
+            cam = getattr(self, "_prewarmed_camera", None)
+            self._prewarmed_camera = None
+            return cam
 
     def _load_pixmaps(self):
         """Loads pure PIL RGBA icons and converts them into antialiased QPixmaps with 4x supersampling."""
@@ -1007,6 +1175,7 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
             self._switch_tab("controller")
             if hasattr(self, "btn_start"):
                 self.btn_start.setText("START CONTROLLER (DS4)")
+            self._cancel_camera_warmup()
             self._update_ds4_ui_readout()
             threading.Thread(
                 target=lambda: (get_ds4_controller().connect(), QtCore.QMetaObject.invokeMethod(self, "_finish_ds4_reconnect", Qt.ConnectionType.QueuedConnection)),
@@ -1022,9 +1191,12 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
             if hasattr(self, "btn_tab_exp"):
                 self.btn_tab_exp.setVisible(True)
             if mode == "phone_cam":
+                self._cancel_camera_warmup()
                 self._ensure_phone_cam_server_started()
                 self._refresh_phone_cam_qr()
                 self._update_phone_cam_status()
+            else:
+                self._schedule_camera_warmup(300)
             self._refresh_presets()
             self._update_camera_dropdown_for_mode()
             self._update_pscam_status()
@@ -1326,6 +1498,7 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
             if str(c) == sel_text:
                 self.cfg["camera_index"] = c.index
                 self._save_settings()
+                self._schedule_camera_warmup(300)
                 break
 
     def _on_webcam_res_or_fps_changed(self):
@@ -1342,6 +1515,7 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
                 self.cb_preset.setCurrentIndex(idx)
             self.cb_preset.blockSignals(False)
         self._save_settings()
+        self._schedule_camera_warmup(300)
 
     def _on_preset_selected(self, index: int = 0):
         mode = self.cfg.get("camera_mode", "pscam")
@@ -1364,6 +1538,7 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
                         self.cb_fps.setCurrentIndex(idx_f)
                         self.cb_fps.blockSignals(False)
         self._save_settings()
+        self._schedule_camera_warmup(300)
 
     def _on_display_options_changed(self):
         self.cfg["show_hud"] = self.chk_hud.isChecked()
@@ -1375,11 +1550,13 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
         angle = orientations[index] if 0 <= index < len(orientations) else 0
         self.cfg["camera_orientation"] = angle
         self._save_settings()
+        self._schedule_camera_warmup(300)
 
     def _on_ps4_eye_changed(self, index: int):
         self.cfg["ps4_eye"] = "left" if index == 1 else "right"
         self._save_settings()
         self._update_pscam_status()
+        self._schedule_camera_warmup(300)
 
     # =========================================================================
     # PHONE CAMERA (WI-FI WEBAPP & QR CODE) HANDLERS
@@ -1671,6 +1848,17 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
     def _update_vphone_ui_readout(self):
         if not hasattr(self, "lbl_vphone_status") or not hasattr(self, "lbl_vphone_accel"):
             return
+        if getattr(self, "_vphone", None) is None:
+            if not (
+                self.cfg.get("virtual_phone_enabled", False)
+                or self.cfg.get("benchmark_auto_record", False)
+                or self.cfg.get("virtual_phone_auto_record", False)
+            ):
+                self.lbl_vphone_status.setText("Status: Disabled (Virtual Phone)")
+                self.lbl_vphone_status.setStyleSheet(
+                    f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['text_muted']}; background: transparent; border: none;"
+                )
+                return
         status = self.vphone.status_text
         self.lbl_vphone_status.setText(f"Status: {status}")
         if self.vphone.connected:
@@ -1746,6 +1934,8 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
 
     def _update_ds4_ui_readout(self):
         if not hasattr(self, "lbl_ds4_status") or not hasattr(self, "lbl_ds4_accel"):
+            return
+        if self.cfg.get("camera_mode") != "ds4" and getattr(self, "_ds4", None) is None:
             return
         ds4 = get_ds4_controller()
         if ds4.is_connected:
@@ -2092,12 +2282,14 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
         self.btn_start.setEnabled(False)
         self.showMinimized()
 
+        prewarmed = self._take_prewarmed_camera()
+
         def tracking_worker():
             success = False
             err_msg = ""
             try:
                 success = tracking_session.run_tracking_session(
-                    self.cfg, stop_event=self._tracking_stop_event
+                    self.cfg, stop_event=self._tracking_stop_event, prewarmed_camera=prewarmed
                 )
             except Exception as e:
                 err_msg = str(e)
@@ -2123,6 +2315,8 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
             self._update_phone_cam_status()
             if not get_phone_camera_server().is_client_connected:
                 self._refresh_phone_cam_qr(rotate_token=False)
+        elif self.cfg.get("camera_mode") in ("pscam", "webcam"):
+            self._schedule_camera_warmup(500)
 
         if not success:
             detail = f"\n\nDetails: {err_msg}" if err_msg else ""
@@ -2143,24 +2337,30 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
 
     def closeEvent(self, event):
         self._is_closing = True
+        self._cancel_camera_warmup()
         if hasattr(self, "_tracking_stop_event") and self._tracking_stop_event is not None:
             self._tracking_stop_event.set()
         if hasattr(self, "timer_periodic") and self.timer_periodic is not None:
             self.timer_periodic.stop()
         if hasattr(self, "timer_vphone") and self.timer_vphone is not None:
             self.timer_vphone.stop()
-        if hasattr(self, "vphone") and self.vphone is not None:
-            self.vphone.stop()
+        if getattr(self, "_vphone", None) is not None:
+            try:
+                self._vphone.stop()
+            except Exception:
+                pass
         if hasattr(self, "kinect_emulator") and self.kinect_emulator is not None:
             self.kinect_emulator.stop()
-        try:
-            get_phone_camera_server().stop()
-        except Exception:
-            pass
-        try:
-            get_ds4_controller().disconnect()
-        except Exception:
-            pass
+        if "sensor.phone_camera" in sys.modules:
+            try:
+                get_phone_camera_server().stop()
+            except Exception:
+                pass
+        if getattr(self, "_ds4", None) is not None:
+            try:
+                self._ds4.disconnect()
+            except Exception:
+                pass
         try:
             from sensor.session_logger import get_session_logger
             get_session_logger().close()

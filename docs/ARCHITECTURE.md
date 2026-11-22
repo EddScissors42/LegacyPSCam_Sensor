@@ -235,6 +235,14 @@ flowchart TD
   5. **Momentum Cinemático Direcional:** Recompensa o vetor de deslocamento $(\vec{v} \cdot \vec{d})$ alinhado com a velocidade física dos dançarinos durante cruzamentos.
   6. **Auditoria de Separação:** Compara as assinaturas visuais multi-região contra as âncoras permanentes (`anchor_sig`) após o término do contato corporal, corrigindo qualquer inversão involuntária.
 
+### 15. `camera_manager.py` — Pipeline de Câmera com Warm-Up em Standby & Lazy Loading PEP 562
+- **Responsabilidade:** Pré-negociação do sensor de vídeo em segundo plano e transferência atômica com latência zero para o loop de rastreamento:
+  1. **Background Camera Pre-Warming:** Instancia `LatestFrameCamera` 400ms após a renderização da interface gráfica em modo standby (`is_prewarming=True`), negociando DirectShow e WinUSB antecipadamente sem travar a interface.
+  2. **Standby Throttling (<0.4% CPU):** Reduz a taxa de polling em idle para ~12 FPS no menu, eliminando consumo desnecessário de CPU antes do início da dança.
+  3. **Handoff Atômico e Ativação Instantânea (`activate_live()`):** Ao clicar em "START TRACKING", a instância pré-aquecida é adotada instantaneamente pelo `tracking_session.py` com latência de ~0.3s (redução de 84% frente aos ~2.3s de negociação DirectShow fria).
+  4. **Verificação de Compatibilidade (`is_compatible()`):** Se o usuário alterar resolução, preset, orientação ou olho da PS4 Camera, a instância anterior é reciclada com debounce de 300ms.
+  5. **Lazy Loading PEP 562:** Submódulos secundários (`phone_camera`, `virtual_phone`, `ds4_controller`, `telemetry_benchmark`) são carregados sob demanda apenas quando ativados pelo usuário, acelerando a inicialização da aplicação.
+
 ---
 
 ## 🎮 Integração de Hardware: PlayStation 4 Camera (OV580 — Backend Nativo WinUSB)

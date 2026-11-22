@@ -12,7 +12,6 @@ import numpy as np
 from sensor.camera_manager import LatestFrameCamera, CameraManager
 from sensor.kinect_shared_memory import get_kinect_bridge
 from sensor.config_manager import parse_preset
-from sensor.virtual_phone import get_virtual_phone
 from sensor.gesture_detector import (
     ArmRaiseGestureDetector,
     check_arm_raised,
@@ -38,12 +37,13 @@ def set_high_resolution_timer(enable=True):
         pass
 
 
-def run_tracking_session(config, on_close_callback=None, stop_event=None):
+def run_tracking_session(config, on_close_callback=None, stop_event=None, prewarmed_camera=None):
     """
     Starts the live tracking loop (supports 1 Player Solo and 2 Players Duo).
     config: dictionary with tracking parameters.
     on_close_callback: optional function called when tracking terminates.
     stop_event: optional threading.Event to signal loop termination.
+    prewarmed_camera: optional running LatestFrameCamera instance to adopt with 0s latency.
     """
     mode = config.get("camera_mode", "pscam")
     if mode == "ds4":
@@ -109,8 +109,11 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
         local_kinect_emulator.start()
 
     # 2. Initialize Camera Grabber (pristine raw frames to tracker)
-    try:
-        camera = LatestFrameCamera(
+    camera = None
+    if (
+        prewarmed_camera is not None
+        and getattr(prewarmed_camera, "running", False)
+        and getattr(prewarmed_camera, "is_compatible", lambda **kw: True)(
             camera_index=cam_idx,
             target_w=w,
             target_h=h,
@@ -122,12 +125,35 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
             ps4_backend_mode=ps4_backend_mode,
             is_phone_cam=(mode == "phone_cam"),
         )
-    except Exception as e:
-        print(f"[ERROR] Failed to start camera: {e}")
-        bridge.write_empty()
-        if on_close_callback:
-            on_close_callback()
-        return False
+    ):
+        camera = prewarmed_camera
+        camera.activate_live()
+        print(f"[CAMERA] Instância pré-aquecida adotada instantaneamente: {w}x{h}@{target_fps}fps")
+    else:
+        if prewarmed_camera is not None:
+            try:
+                prewarmed_camera.release()
+            except Exception:
+                pass
+        try:
+            camera = LatestFrameCamera(
+                camera_index=cam_idx,
+                target_w=w,
+                target_h=h,
+                target_fps=target_fps,
+                mirror=mirror,
+                is_pscam=(mode == "pscam"),
+                orientation=camera_orientation,
+                ps4_eye=ps4_eye,
+                ps4_backend_mode=ps4_backend_mode,
+                is_phone_cam=(mode == "phone_cam"),
+            )
+        except Exception as e:
+            print(f"[ERROR] Failed to start camera: {e}")
+            bridge.write_empty()
+            if on_close_callback:
+                on_close_callback()
+            return False
 
     # 3. Initialize Pose Tracker (lazy-imported so GUI startup & DS4 mode never wait on MediaPipe)
     from sensor.pose_tracker import PoseTracker
@@ -167,6 +193,7 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None):
     overlay = TrackingOverlay(show_hud=show_hud)
 
     # 5. Configure Virtual Phone Controller (if enabled in config or active via GUI)
+    from sensor.virtual_phone import get_virtual_phone
     vphone = get_virtual_phone()
     vphone.configure(
         host=str(config.get("virtual_phone_host", "127.0.0.1")),

@@ -716,6 +716,7 @@ class LatestFrameCamera:
         ps4_backend_mode="native",
         is_phone_cam=False,
         phone_cam_server=None,
+        is_prewarming: bool = False,
     ):
         self.camera_index = camera_index
         self.target_w = target_w
@@ -728,6 +729,7 @@ class LatestFrameCamera:
         self.orientation = int(orientation)
         self.ps4_eye = str(ps4_eye or DEFAULT_EYE).strip().lower()
         self.ps4_backend_mode = str(ps4_backend_mode or "native").strip().lower()
+        self.is_prewarming = bool(is_prewarming)
 
         self.cap = None
         self.ps4_backend = None
@@ -938,6 +940,10 @@ class LatestFrameCamera:
                     self.fps_counter = 0
                     self.fps_last_time = now
 
+            # Low-CPU standby throttling while pre-warming in menu (< 0.4% CPU)
+            if self.is_prewarming:
+                time.sleep(0.08)
+
     def read(self, only_new=False):
         """
         Returns (ret, frame, measured_fps).
@@ -1018,6 +1024,50 @@ class LatestFrameCamera:
     def set_orientation(self, orientation: int):
         with self.lock:
             self.orientation = int(orientation)
+
+    def activate_live(self):
+        """
+        Transitions camera from low-CPU standby pre-warming (<0.4% CPU) to full-speed live tracking.
+        """
+        with self.lock:
+            self.is_prewarming = False
+            self.fps_counter = 0
+            self.fps_last_time = time.time()
+
+    def is_compatible(
+        self,
+        camera_index: int,
+        target_w: int,
+        target_h: int,
+        target_fps: int,
+        mirror: bool = True,
+        is_pscam: bool = False,
+        orientation: int = 0,
+        ps4_eye: str = DEFAULT_EYE,
+        ps4_backend_mode: str = "native",
+        is_phone_cam: bool = False,
+    ) -> bool:
+        """
+        Checks whether this running camera instance matches target requirements and can be adopted immediately.
+        """
+        if not self.running:
+            return False
+        if bool(self.is_phone_cam) != bool(is_phone_cam):
+            return False
+        if bool(self.is_pscam) != bool(is_pscam):
+            return False
+        if not self.is_phone_cam and int(self.camera_index) != int(camera_index):
+            return False
+        if self.target_w != target_w or self.target_h != target_h or self.target_fps != target_fps:
+            return False
+        if int(self.orientation) != int(orientation):
+            return False
+        if self.is_pscam:
+            if str(self.ps4_eye).lower() != str(ps4_eye or DEFAULT_EYE).lower():
+                return False
+            if str(self.ps4_backend_mode).lower() != str(ps4_backend_mode or "native").lower():
+                return False
+        return True
 
     def release(self):
         self.running = False

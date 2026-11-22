@@ -14,18 +14,6 @@ except Exception:
     pass
 
 from .camera_manager import CameraManager, LatestFrameCamera, FrameBusReader
-from .ps4_backend import (
-    PS4CameraBackend,
-    PS4UsbDevice,
-    PS4FirmwareManager,
-    PS4DriverInstaller,
-    EYE_RIGHT,
-    EYE_LEFT,
-    DEFAULT_EYE,
-    IspGeometry,
-    ISP_GEOMETRIES,
-    find_isp_geometry,
-)
 from .pose_filters import (
     HandAnchorFilter, AdaptiveSmoother, SkeletonCalibrator,
     CameraSpaceXTracker, apply_camera_space_translation, apply_slot_snap,
@@ -60,20 +48,14 @@ from .config_manager import (
     ConfigManager, parse_preset, PRESETS_PSCAM, PRESETS_WEBCAM, PRESETS_PHONE_CAM,
     get_app_data_dir, get_config_path, get_logs_dir, is_portable_mode
 )
-from .phone_camera import PhoneCameraServer, QRCodeGenerator, SelfSignedTLSManager, get_phone_camera_server
 from .kinect_emulator import KinectEmulatorDaemon, get_kinect_emulator
-from .virtual_phone import (
-    VirtualPhoneController, HandAccelerometer, AdaptiveCalibrationTuner, get_virtual_phone,
-    find_just_dance_pids, detect_active_song_from_game_process
-)
-from .ds4_controller import DS4Controller, DS4State, find_ds4_devices, get_ds4_controller
-from .telemetry_benchmark import parse_telemetry_csv, compare_telemetries, find_available_benchmarks
 from .session_logger import SessionLogger, get_session_logger
 
 import importlib
 
-# Lazy-loaded heavy AI / tracking symbols (PEP 562) to avoid loading MediaPipe (~1.45s) before the GUI window opens
+# Lazy-loaded symbols (PEP 562) to keep cold startup fast (<100ms)
 _LAZY_SYMBOL_MAP = {
+    # Heavy AI / Tracking
     "PoseTracker": (".pose_tracker", "PoseTracker"),
     "run_tracking_session": (".tracking_session", "run_tracking_session"),
     "TrackingOverlay": (".tracking_overlay", "TrackingOverlay"),
@@ -84,6 +66,38 @@ _LAZY_SYMBOL_MAP = {
     "STEREO_MODE_FULL_DEPTH": (".stereo_matcher", "STEREO_MODE_FULL_DEPTH"),
     "STEREO_MODES": (".stereo_matcher", "STEREO_MODES"),
     "PS4_STEREO_BASELINE_M": (".stereo_matcher", "PS4_STEREO_BASELINE_M"),
+    # PS4 Backend
+    "PS4CameraBackend": (".ps4_backend", "PS4CameraBackend"),
+    "PS4UsbDevice": (".ps4_backend", "PS4UsbDevice"),
+    "PS4FirmwareManager": (".ps4_backend", "PS4FirmwareManager"),
+    "PS4DriverInstaller": (".ps4_backend", "PS4DriverInstaller"),
+    "EYE_RIGHT": (".ps4_backend", "EYE_RIGHT"),
+    "EYE_LEFT": (".ps4_backend", "EYE_LEFT"),
+    "DEFAULT_EYE": (".ps4_backend", "DEFAULT_EYE"),
+    "IspGeometry": (".ps4_backend", "IspGeometry"),
+    "ISP_GEOMETRIES": (".ps4_backend", "ISP_GEOMETRIES"),
+    "find_isp_geometry": (".ps4_backend", "find_isp_geometry"),
+    # Phone Camera WebApp
+    "PhoneCameraServer": (".phone_camera", "PhoneCameraServer"),
+    "QRCodeGenerator": (".phone_camera", "QRCodeGenerator"),
+    "SelfSignedTLSManager": (".phone_camera", "SelfSignedTLSManager"),
+    "get_phone_camera_server": (".phone_camera", "get_phone_camera_server"),
+    # Virtual Phone Controller
+    "VirtualPhoneController": (".virtual_phone", "VirtualPhoneController"),
+    "HandAccelerometer": (".virtual_phone", "HandAccelerometer"),
+    "AdaptiveCalibrationTuner": (".virtual_phone", "AdaptiveCalibrationTuner"),
+    "get_virtual_phone": (".virtual_phone", "get_virtual_phone"),
+    "find_just_dance_pids": (".virtual_phone", "find_just_dance_pids"),
+    "detect_active_song_from_game_process": (".virtual_phone", "detect_active_song_from_game_process"),
+    # DualShock 4 Controller
+    "DS4Controller": (".ds4_controller", "DS4Controller"),
+    "DS4State": (".ds4_controller", "DS4State"),
+    "find_ds4_devices": (".ds4_controller", "find_ds4_devices"),
+    "get_ds4_controller": (".ds4_controller", "get_ds4_controller"),
+    # Telemetry Benchmark
+    "parse_telemetry_csv": (".telemetry_benchmark", "parse_telemetry_csv"),
+    "compare_telemetries": (".telemetry_benchmark", "compare_telemetries"),
+    "find_available_benchmarks": (".telemetry_benchmark", "find_available_benchmarks"),
 }
 
 _LAZY_SUBMODULES = {
@@ -91,6 +105,11 @@ _LAZY_SUBMODULES = {
     "tracking_session",
     "tracking_overlay",
     "stereo_matcher",
+    "ps4_backend",
+    "phone_camera",
+    "virtual_phone",
+    "ds4_controller",
+    "telemetry_benchmark",
 }
 
 
