@@ -553,6 +553,18 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
   - **Sincronização Atômica de Warmup:** O `CameraController` agora rastreia formalmente o ciclo de vida da thread de pré-aquecimento (`self._warmup_thread`), garantindo que alternâncias rápidas entre modos (ex.: DualShock 4 -> Webcam -> Start Tracking) aguardem deterministicamente o encerramento da thread anterior antes de iniciar a sessão de rastreamento.
   - **Correção de Tipos Win32 em `FindFirstFileW`:** Definidos explicitamente `restype = wintypes.HANDLE` e `argtypes` em `sensor/ps4_backend/driver_installer.py`, evitando truncamento de ponteiros de 64 bits em `c_long` e violações de acesso (`0xc0000005`) durante inspeções de pacotes de driver INF.
 
+### 37. Unificação Visual da UI de Tracking do Controle com a Webcam (v0.9.3 Alpha)
+- **Design Unificado de Floating Glass Pills (Estilo PlayStation & Just Dance):**
+  - **Identidade Visual Compartilhada:** A interface da janela de rastreamento do controle (`run_ds4_tracking_session`) foi completamente remodelada para utilizar a mesma arquitetura de design visual da webcam (`TrackingOverlay`), com cantos arredondados, fundo de vidro semi-transparente obsidiana (`COLOR_GLASS_BG`) e bordas foscas suaves (`COLOR_GLASS_BORDER`).
+  - **Top-Left Pill (Branding & Perfil):** Exibe a marca d'água "LEGACY PSCAM SENSOR", o orbe de destaque em azul PlayStation e as informações do periférico (nome do controle, tipo de conexão USB/Bluetooth e mão ativa configurada).
+  - **Top-Right Pill (Telemetria & Polling):** Telemetria em tempo real com indicador de status, frequência de leitura em Hz, porcentagem de bateria com ícone de carregamento e estado da conexão com o Celular Virtual (Just Dance PC).
+  - **Right Pill (Status de Rastreamento):** Posicionado diretamente abaixo da pílula de telemetria (exatamente como na webcam), exibindo status dinâmico `"CONTROLLER ACTIVE"` (com ponto pulsante em verde esmeralda), `"SEARCHING CONTROLLER..."` (âmbar suave com prompt de reconexão) ou `"SENSOR IMU FROZEN"` (laranja de aviso para conexões Bluetooth com bloqueio de acelerômetro).
+  - **Center Stage — Orbe de Pulso de Movimento (Motion Force Aura):**
+    - Substituição das antigas barras brutas de acelerômetro por um orbe central fluido e dinâmico que reage diretamente à força física de dança em tempo real ($|G|$), com anéis concêntricos de pulso e transição de cores (Azul PlayStation $\rightarrow$ Ciano Neon $\rightarrow$ Ouro/Âmbar em movimentos intensos).
+    - Abaixo do orbe, um cartão flutuante moderno de seleção de Dançarino/Coach exibe os controles `[L1]` e `[R1]` e o nome da música ativa no Just Dance PC.
+  - **Bottom-Center Pill (Barra de Atalhos):** Pílula centralizada com atalhos de teclado limpos `[Q/ESC] Exit • [R] Reconnect • [L1/R1] Coach • [H] Cycle HUD`.
+  - **Suporte a Ciclo de HUD (`[H]`):** Alternância entre HUD Completo (0), Minimalista (1) e Desativado (2) através da tecla `[H]`.
+
 ---
 
 ## Roadmap Futuro

@@ -543,3 +543,235 @@ class TrackingOverlay:
         cv2.putText(frame, controls_text, (tx, bot_y + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (225, 230, 240), 1, cv2.LINE_AA)
 
         return frame
+
+    def draw_controller_hud(
+        self,
+        frame: np.ndarray,
+        controller_name: str = "DualShock 4",
+        conn_type: str = "Bluetooth",
+        hand: str = "right",
+        sens: float = 1.0,
+        sample_rate_hz: float = 0.0,
+        battery_pct: int = 0,
+        is_charging: bool = False,
+        is_connected: bool = True,
+        imu_frozen: bool = False,
+        vphone_status: str = "Connected",
+        vphone_connected: bool = False,
+        tot_g: float = 1.0,
+        current_coach: int = 0,
+        total_coaches: int = 4,
+        song_name: Optional[str] = None,
+        action_toast: Optional[str] = None,
+    ) -> np.ndarray:
+        """
+        Renders the modern PlayStation floating glass pill HUD for the controller tracking session.
+        Matches the layout, typography, glass pill badges, and aesthetic of the webcam tracking UI.
+        """
+        now = time.time()
+        fh, fw = frame.shape[:2]
+
+        # Draw temporary mode switch toast notification if active
+        if now - self._last_mode_switch_time < 1.6 and self._mode_switch_text:
+            toast_w, toast_h = 290, 34
+            tx = (fw - toast_w) // 2
+            ty = max(70, fh // 2 - 17)
+            draw_rounded_glass_pill(frame, tx, ty, toast_w, toast_h, radius=8, bg_color=(15, 20, 30), alpha=0.88, border_color=(0, 220, 255))
+            cv2.putText(frame, self._mode_switch_text, (tx + 18, ty + 23), cv2.FONT_HERSHEY_DUPLEX, 0.44, (255, 255, 255), 1, cv2.LINE_AA)
+
+        # Mode 2: Off / clean canvas
+        if self.hud_mode == 2:
+            return frame
+
+        # =====================================================================
+        # TOP RIGHT PILL: POLLING RATE & BATTERY TELEMETRY (Only in Full HUD)
+        # =====================================================================
+        right_w, right_h = 246, 44
+        right_x, right_y = fw - right_w - 16, 14
+        if self.hud_mode == 0:
+            draw_rounded_glass_pill(
+                frame, right_x, right_y, right_w, right_h,
+                radius=12, bg_color=COLOR_GLASS_BG, alpha=0.74, border_color=COLOR_GLASS_BORDER
+            )
+
+            # Polling status dot
+            dot_color = COLOR_STATUS_OK if (is_connected and not imu_frozen) else COLOR_STATUS_WAIT
+            ipc_dot_x, ipc_dot_y = right_x + 18, right_y + 22
+            cv2.circle(frame, (ipc_dot_x, ipc_dot_y), 4, dot_color, -1, cv2.LINE_AA)
+            cv2.circle(frame, (ipc_dot_x, ipc_dot_y), 6, dot_color, 1, cv2.LINE_AA)
+
+            if is_connected:
+                chg_str = " [CHG]" if is_charging else ""
+                telemetry_text = f"POLL: {sample_rate_hz:.0f} HZ  |  BATT: {battery_pct}%{chg_str}"
+            else:
+                telemetry_text = "POLL: -- HZ  |  BATT: --"
+            cv2.putText(frame, telemetry_text, (right_x + 32, right_y + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.38, COLOR_NEON_CYAN, 1, cv2.LINE_AA)
+
+            vphone_text = f"VPHONE: {vphone_status}"
+            v_color = COLOR_STATUS_OK if vphone_connected else COLOR_TEXT_DIM
+            cv2.putText(frame, vphone_text, (right_x + 32, right_y + 36), cv2.FONT_HERSHEY_SIMPLEX, 0.34, v_color, 1, cv2.LINE_AA)
+
+        # =====================================================================
+        # RIGHT PILL (BELOW TELEMETRY): CONTROLLER TRACKING STATUS
+        # =====================================================================
+        if is_connected and not imu_frozen:
+            status_text = "CONTROLLER ACTIVE"
+            status_sub = f"Ready to Dance • Sens {sens:.2f}x"
+            badge_color = COLOR_STATUS_OK
+        elif is_connected and imu_frozen:
+            status_text = "SENSOR IMU FROZEN"
+            status_sub = "Connect via USB Cable"
+            badge_color = (0, 140, 255)
+        else:
+            status_text = "SEARCHING CONTROLLER..."
+            status_sub = "Press [R] to Reconnect"
+            badge_color = COLOR_STATUS_WAIT
+
+        status_w, status_h = 246, 44
+        status_x = fw - status_w - 16
+        status_y = 14 if self.hud_mode == 1 else (right_y + right_h + 8)
+        draw_rounded_glass_pill(
+            frame, status_x, status_y, status_w, status_h,
+            radius=12, bg_color=COLOR_GLASS_BG, alpha=0.78, border_color=badge_color
+        )
+
+        pulse_r = int(5 + (math.sin(now * 4.0) + 1.0) * 1.5)
+        dot_x, dot_y = status_x + 18, status_y + 22
+        cv2.circle(frame, (dot_x, dot_y), pulse_r + 2, badge_color, 1, cv2.LINE_AA)
+        cv2.circle(frame, (dot_x, dot_y), 4, badge_color, -1, cv2.LINE_AA)
+
+        cv2.putText(frame, status_text, (status_x + 34, status_y + 20), cv2.FONT_HERSHEY_DUPLEX, 0.42, COLOR_TEXT_WHITE, 1, cv2.LINE_AA)
+        cv2.putText(frame, status_sub, (status_x + 34, status_y + 36), cv2.FONT_HERSHEY_SIMPLEX, 0.33, COLOR_TEXT_DIM, 1, cv2.LINE_AA)
+
+        # In Minimalist Mode (hud_mode == 1), top left pill and bottom pill are hidden
+        if self.hud_mode == 0:
+            # =====================================================================
+            # TOP LEFT PILL: BRANDING & CONTROLLER PROFILE
+            # =====================================================================
+            left_w, left_h = min(280, max(210, fw - right_w - 48)), 44
+            left_x, left_y = 16, 14
+            draw_rounded_glass_pill(
+                frame, left_x, left_y, left_w, left_h,
+                radius=12, bg_color=COLOR_GLASS_BG, alpha=0.74, border_color=COLOR_GLASS_BORDER
+            )
+
+            # PlayStation Blue accent orb
+            orb_x, orb_y = left_x + 18, left_y + 22
+            cv2.circle(frame, (orb_x, orb_y), 7, (255, 120, 20), -1, cv2.LINE_AA)
+            cv2.circle(frame, (orb_x, orb_y), 9, (255, 255, 255), 1, cv2.LINE_AA)
+
+            cv2.putText(frame, "LEGACY PSCAM SENSOR", (left_x + 36, left_y + 20), cv2.FONT_HERSHEY_DUPLEX, 0.44, COLOR_TEXT_WHITE, 1, cv2.LINE_AA)
+            c_tag = f"{controller_name.upper()} [{conn_type.upper()}] • {hand.upper()} HAND"
+            if len(c_tag) > 32 and left_w < 280:
+                c_tag = c_tag[:30] + ".."
+            cv2.putText(frame, c_tag, (left_x + 36, left_y + 36), cv2.FONT_HERSHEY_SIMPLEX, 0.34, COLOR_TEXT_DIM, 1, cv2.LINE_AA)
+
+        # =====================================================================
+        # CENTER STAGE: DANCE MOTION PULSE & G-FORCE ENERGY AURA
+        # =====================================================================
+        cx = fw // 2
+        cy = fh // 2 - 16
+
+        if not is_connected:
+            warn_w, warn_h = min(460, fw - 40), 62
+            wx = (fw - warn_w) // 2
+            wy = cy - warn_h // 2
+            draw_rounded_glass_pill(
+                frame, wx, wy, warn_w, warn_h,
+                radius=12, bg_color=(24, 16, 20), alpha=0.88, border_color=COLOR_STATUS_WAIT
+            )
+            cv2.putText(frame, "[!] CONTROLLER NOT CONNECTED", (wx + 24, wy + 26), cv2.FONT_HERSHEY_DUPLEX, 0.48, COLOR_TEXT_WHITE, 1, cv2.LINE_AA)
+            cv2.putText(frame, "Turn on controller or press [R] to search and reconnect", (wx + 24, wy + 48), cv2.FONT_HERSHEY_SIMPLEX, 0.36, COLOR_TEXT_DIM, 1, cv2.LINE_AA)
+        elif imu_frozen:
+            warn_w, warn_h = min(480, fw - 40), 62
+            wx = (fw - warn_w) // 2
+            wy = cy - warn_h // 2
+            draw_rounded_glass_pill(
+                frame, wx, wy, warn_w, warn_h,
+                radius=12, bg_color=(16, 20, 28), alpha=0.88, border_color=(0, 140, 255)
+            )
+            cv2.putText(frame, "[!] SENSOR IMU BLOCKED / FROZEN (0G)", (wx + 24, wy + 26), cv2.FONT_HERSHEY_DUPLEX, 0.46, COLOR_TEXT_WHITE, 1, cv2.LINE_AA)
+            cv2.putText(frame, "Generic Bluetooth driver blocked motion. Connect via USB cable!", (wx + 24, wy + 48), cv2.FONT_HERSHEY_SIMPLEX, 0.35, COLOR_TEXT_DIM, 1, cv2.LINE_AA)
+        else:
+            dev_g = abs(tot_g - 1.0)
+            intensity = max(0.0, min(1.0, dev_g / 2.0))
+            base_r = 54
+            pulse = int((math.sin(now * 4.5) + 1.0) * 3)
+            boost = int(intensity * 26)
+            total_r = base_r + pulse + boost
+
+            if intensity > 0.6:
+                aura_color = (60, 215, 255)
+            elif intensity > 0.25:
+                aura_color = COLOR_NEON_CYAN
+            else:
+                aura_color = COLOR_P1_SILHOUETTE
+
+            cv2.circle(frame, (cx, cy), total_r + 14, aura_color, 1, cv2.LINE_AA)
+            cv2.circle(frame, (cx, cy), total_r, aura_color, 2, cv2.LINE_AA)
+
+            disc_w = base_r * 2
+            draw_rounded_glass_pill(
+                frame, cx - base_r, cy - base_r, disc_w, disc_w,
+                radius=base_r, bg_color=(16, 20, 28), alpha=0.72, border_color=(70, 85, 110)
+            )
+
+            g_str = f"{tot_g:.2f} G"
+            t_sz = cv2.getTextSize(g_str, cv2.FONT_HERSHEY_DUPLEX, 0.62, 1)[0]
+            gx = cx - t_sz[0] // 2
+            gy = cy + 4
+            cv2.putText(frame, g_str, (gx, gy), cv2.FONT_HERSHEY_DUPLEX, 0.62, COLOR_TEXT_WHITE, 1, cv2.LINE_AA)
+
+            lbl_str = "MOTION FORCE"
+            l_sz = cv2.getTextSize(lbl_str, cv2.FONT_HERSHEY_SIMPLEX, 0.30, 1)[0]
+            cv2.putText(frame, lbl_str, (cx - l_sz[0] // 2, cy + 22), cv2.FONT_HERSHEY_SIMPLEX, 0.30, COLOR_TEXT_DIM, 1, cv2.LINE_AA)
+
+            # Coach selection pill below the aura
+            coach_w, coach_h = 320, 36
+            coach_x = (fw - coach_w) // 2
+            coach_y = cy + base_r + 26
+            draw_rounded_glass_pill(
+                frame, coach_x, coach_y, coach_w, coach_h,
+                radius=10, bg_color=COLOR_GLASS_BG, alpha=0.78, border_color=COLOR_GLASS_BORDER
+            )
+
+            cv2.putText(frame, "[L1]", (coach_x + 14, coach_y + 23), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 220, 255), 1, cv2.LINE_AA)
+            c_text = f"COACH {current_coach + 1} OF {total_coaches}"
+            ct_sz = cv2.getTextSize(c_text, cv2.FONT_HERSHEY_DUPLEX, 0.42, 1)[0]
+            cv2.putText(frame, c_text, (coach_x + (coach_w - ct_sz[0]) // 2, coach_y + 23), cv2.FONT_HERSHEY_DUPLEX, 0.42, COLOR_TEXT_WHITE, 1, cv2.LINE_AA)
+            cv2.putText(frame, "[R1]", (coach_x + coach_w - 48, coach_y + 23), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 220, 255), 1, cv2.LINE_AA)
+
+            if song_name and song_name not in ("DanceSession", "None", ""):
+                s_text = f"SONG: {song_name}"
+                st_sz = cv2.getTextSize(s_text, cv2.FONT_HERSHEY_SIMPLEX, 0.32, 1)[0]
+                cv2.putText(frame, s_text, (cx - st_sz[0] // 2, coach_y + coach_h + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.32, COLOR_TEXT_DIM, 1, cv2.LINE_AA)
+
+        # =====================================================================
+        # ACTION TOAST (E.G. RECONNECTING, COACH SWITCH, CONFIRM)
+        # =====================================================================
+        if action_toast:
+            toast_w, toast_h = 340, 36
+            tx = (fw - toast_w) // 2
+            ty = max(68, cy - 100)
+            draw_rounded_glass_pill(frame, tx, ty, toast_w, toast_h, radius=8, bg_color=(15, 24, 34), alpha=0.92, border_color=(0, 225, 255))
+            tt_sz = cv2.getTextSize(action_toast, cv2.FONT_HERSHEY_DUPLEX, 0.42, 1)[0]
+            cv2.putText(frame, action_toast, (tx + (toast_w - tt_sz[0]) // 2, ty + 23), cv2.FONT_HERSHEY_DUPLEX, 0.42, (0, 235, 255), 1, cv2.LINE_AA)
+
+        # =====================================================================
+        # BOTTOM CENTER PILL: SHORTCUTS BAR (Full HUD only)
+        # =====================================================================
+        if self.hud_mode == 0:
+            bot_w, bot_h = min(fw - 32, 510), 32
+            bot_x = (fw - bot_w) // 2
+            bot_y = max(60, fh - bot_h - 12)
+            draw_rounded_glass_pill(
+                frame, bot_x, bot_y, bot_w, bot_h,
+                radius=10, bg_color=COLOR_GLASS_BG, alpha=0.78, border_color=COLOR_GLASS_BORDER
+            )
+
+            controls_text = "[Q/ESC] Exit  •  [R] Reconnect  •  [L1/R1] Coach  •  [H] Cycle HUD"
+            t_sz = cv2.getTextSize(controls_text, cv2.FONT_HERSHEY_SIMPLEX, 0.38, 1)[0]
+            tx = bot_x + (bot_w - t_sz[0]) // 2
+            cv2.putText(frame, controls_text, (tx, bot_y + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (225, 230, 240), 1, cv2.LINE_AA)
+
+        return frame

@@ -473,6 +473,30 @@ def test_overlay():
     frame = overlay.draw_hud(frame, "PS Camera 60 FPS", True, 60.0, 59.8, True, True)
     assert frame.shape == (800, 1280, 3)
     assert np.any(frame > 0)
+
+    # Test Controller Tracking HUD (PlayStation Floating Glass Pills & Motion Aura)
+    ds4_canvas = np.zeros((480, 640, 3), dtype=np.uint8)
+    ds4_canvas = overlay.draw_controller_hud(
+        ds4_canvas,
+        controller_name="DualShock 4",
+        conn_type="Bluetooth",
+        hand="right",
+        sens=1.0,
+        sample_rate_hz=250.0,
+        battery_pct=85,
+        is_charging=False,
+        is_connected=True,
+        imu_frozen=False,
+        vphone_status="Connected",
+        vphone_connected=True,
+        tot_g=1.05,
+        current_coach=0,
+        total_coaches=4,
+        song_name="Levitating",
+        action_toast="Switched to Coach 1",
+    )
+    assert ds4_canvas.shape == (480, 640, 3)
+    assert np.any(ds4_canvas > 0)
     print("  -> TrackingOverlay PASSED")
 
 def test_camera_manager():

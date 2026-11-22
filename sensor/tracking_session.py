@@ -530,6 +530,7 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
     """
     from sensor.ds4_controller import get_ds4_controller
     from sensor.virtual_phone import get_virtual_phone
+    from sensor.tracking_overlay import TrackingOverlay
 
     ds4 = get_ds4_controller()
     ds4.permissive_mode = bool(config.get("ds4_permissive_mode", True))
@@ -557,7 +558,9 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
     set_high_resolution_timer(True)
     bridge = get_kinect_bridge()
 
-    window_name = "Legacy PSCam Sensor — DualShock 4"
+    overlay = TrackingOverlay(show_hud=True)
+
+    window_name = "Legacy PSCam Sensor — DualShock 4 Tracking"
     cv2.namedWindow(window_name, cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_EXPANDED)
     cv2.resizeWindow(window_name, 720, 480)
 
@@ -570,12 +573,13 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
     canvas_w, canvas_h = 640, 480
     dark_bg = np.zeros((canvas_h, canvas_w, 3), dtype=np.uint8)
     for y in range(canvas_h):
-        r_val = int(12 + (y / canvas_h) * 10)
-        g_val = int(18 + (y / canvas_h) * 12)
-        b_val = int(28 + (y / canvas_h) * 20)
+        r_val = int(14 + (y / canvas_h) * 8)
+        g_val = int(18 + (y / canvas_h) * 10)
+        b_val = int(26 + (y / canvas_h) * 14)
         dark_bg[y, :] = (b_val, g_val, r_val)
 
-    reconnect_feedback_until = 0.0
+    action_toast = ""
+    toast_until = 0.0
 
     t_start_ds4 = time.time()
     ds4_samples_count = 0
@@ -628,174 +632,27 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
 
             frame = dark_bg.copy()
 
-            cv2.rectangle(frame, (0, 0), (canvas_w, 54), (156, 67, 0), -1)
-            conn_method = "USB" if ds4.is_usb else "BLUETOOTH"
-            c_header = f"{st.controller_name.upper()} ({conn_method})"
-            cv2.putText(
-                frame,
-                c_header,
-                (18, 34),
-                cv2.FONT_HERSHEY_DUPLEX,
-                0.54,
-                (255, 255, 255),
-                1,
-                cv2.LINE_AA,
-            )
-
-            if ds4.is_connected:
-                batt_str = f"BATTERY: {st.battery_pct}%" + (" [CHARGING]" if st.is_charging else "")
-                batt_col = (200, 240, 255)
-            else:
-                batt_str = "DISCONNECTED"
-                batt_col = (100, 100, 255)
-
-            cv2.putText(
-                frame,
-                batt_str,
-                (canvas_w - 220, 34),
-                cv2.FONT_HERSHEY_DUPLEX,
-                0.46,
-                batt_col,
-                1,
-                cv2.LINE_AA,
-            )
-
-            v_status = vphone.status_text
-            cv2.putText(
-                frame,
-                f"Just Dance PC: {v_status}",
-                (20, 85),
-                cv2.FONT_HERSHEY_DUPLEX,
-                0.50,
-                (0, 230, 255) if vphone.connected else (180, 180, 180),
-                1,
-                cv2.LINE_AA,
-            )
-
-            cv2.putText(
-                frame,
-                f"Active Hand: {hand.upper()} | Sens: {sens:.2f}x | Polling: {st.sample_rate_hz:.0f} Hz",
-                (20, 115),
-                cv2.FONT_HERSHEY_DUPLEX,
-                0.46,
-                (255, 255, 255),
-                1,
-                cv2.LINE_AA,
-            )
-
-            if not ds4.is_connected:
-                cv2.rectangle(frame, (18, 132), (canvas_w - 18, 172), (20, 20, 140), -1)
-                cv2.rectangle(frame, (18, 132), (canvas_w - 18, 172), (60, 60, 220), 1)
-                cv2.putText(
-                    frame,
-                    "[!] CONTROLLER NOT CONNECTED — Press [R] to Reconnect",
-                    (30, 158),
-                    cv2.FONT_HERSHEY_DUPLEX,
-                    0.46,
-                    (255, 255, 255),
-                    1,
-                    cv2.LINE_AA,
-                )
-            elif ds4.state.imu_frozen:
-                cv2.rectangle(frame, (18, 132), (canvas_w - 18, 172), (0, 70, 180), -1)
-                cv2.rectangle(frame, (18, 132), (canvas_w - 18, 172), (0, 140, 255), 1)
-                cv2.putText(
-                    frame,
-                    "[!] SENSOR IMU ZERADO/TRAVADO (0G) — Conecte via cabo USB!",
-                    (26, 158),
-                    cv2.FONT_HERSHEY_DUPLEX,
-                    0.44,
-                    (255, 255, 255),
-                    1,
-                    cv2.LINE_AA,
-                )
-
-            gauge_y_start = 175
-            bar_w_max = 180
-            axes_data = [
-                ("ACCEL X (Lateral)", ax, (0, 215, 255)),
-                ("ACCEL Y (Vertical)", ay, (255, 128, 0)),
-                ("ACCEL Z (Forward)", az, (100, 255, 100)),
-            ]
-
-            for idx, (label, val, bar_col) in enumerate(axes_data):
-                y_pos = gauge_y_start + idx * 42
-                cv2.putText(
-                    frame,
-                    f"{label}: {val:+.2f} G",
-                    (20, y_pos + 12),
-                    cv2.FONT_HERSHEY_DUPLEX,
-                    0.45,
-                    (220, 220, 220),
-                    1,
-                    cv2.LINE_AA,
-                )
-                bx = 270
-                cv2.rectangle(frame, (bx - bar_w_max, y_pos), (bx + bar_w_max, y_pos + 14), (45, 45, 45), -1)
-                cv2.line(frame, (bx, y_pos - 2), (bx, y_pos + 16), (150, 150, 150), 1)
-
-                bar_len = int(max(-bar_w_max, min(bar_w_max, (val / 4.0) * bar_w_max)))
-                if bar_len > 0:
-                    cv2.rectangle(frame, (bx, y_pos), (bx + bar_len, y_pos + 14), bar_col, -1)
-                elif bar_len < 0:
-                    cv2.rectangle(frame, (bx + bar_len, y_pos), (bx, y_pos + 14), bar_col, -1)
-
-            cv2.putText(
-                frame,
-                f"TOTAL G-FORCE: {tot_g:.2f} G",
-                (20, 315),
-                cv2.FONT_HERSHEY_DUPLEX,
-                0.58,
-                (0, 255, 200) if tot_g >= 2.5 else (200, 200, 200),
-                1,
-                cv2.LINE_AA,
-            )
-
-            coach_text = f"COACH: {vphone.current_coach_id + 1} / {vphone.total_coaches}"
-            cv2.putText(
-                frame,
-                coach_text,
-                (20, 365),
-                cv2.FONT_HERSHEY_DUPLEX,
-                0.52,
-                (0, 230, 255),
-                1,
-                cv2.LINE_AA,
-            )
-            cv2.putText(
-                frame,
-                "[L1] Prev Coach   •   [R1] Next Coach   •   [Enter] Confirm",
-                (175, 365),
-                cv2.FONT_HERSHEY_DUPLEX,
-                0.42,
-                (220, 220, 220),
-                1,
-                cv2.LINE_AA,
-            )
-
             now_ts = time.time()
-            if now_ts < reconnect_feedback_until:
-                cv2.putText(
-                    frame,
-                    "Reconnecting DualShock 4...",
-                    (canvas_w - 240, 365),
-                    cv2.FONT_HERSHEY_DUPLEX,
-                    0.44,
-                    (0, 255, 255),
-                    1,
-                    cv2.LINE_AA,
-                )
+            current_toast = action_toast if now_ts < toast_until else None
 
-            cv2.rectangle(frame, (0, canvas_h - 40), (canvas_w, canvas_h), (20, 20, 20), -1)
-            cv2.putText(
-                frame,
-                "[Q] Quit   •   [R] Reconnect DS4   •   [L1/R1] Switch Coach",
-                (20, canvas_h - 15),
-                cv2.FONT_HERSHEY_DUPLEX,
-                0.42,
-                (200, 200, 200),
-                1,
-                cv2.LINE_AA,
+            frame = overlay.draw_controller_hud(
+                frame=frame,
+                controller_name=st.controller_name,
+                conn_type="USB" if ds4.is_usb else "Bluetooth",
+                hand=hand,
+                sens=sens,
+                sample_rate_hz=st.sample_rate_hz,
+                battery_pct=st.battery_pct,
+                is_charging=st.is_charging,
+                is_connected=ds4.is_connected,
+                imu_frozen=st.imu_frozen,
+                vphone_status=vphone.status_text,
+                vphone_connected=vphone.connected,
+                tot_g=tot_g,
+                current_coach=vphone.current_coach_id,
+                total_coaches=vphone.total_coaches,
+                song_name=getattr(vphone, "current_map_name", None),
+                action_toast=current_toast,
             )
 
             bridge.pose.write_empty()
@@ -808,26 +665,39 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
             if key in (27, ord('q'), ord('Q')):
                 print("[INFO] DualShock 4 tracking session terminated by user ([Q] key).")
                 break
+            elif key in (ord('h'), ord('H')):
+                overlay.toggle_hud()
             elif key in (ord('r'), ord('R')):
                 print("[INFO] Reconnecting DualShock 4 controller ([R] key)...")
-                reconnect_feedback_until = time.time() + 1.5
+                action_toast = "Reconnecting DualShock 4..."
+                toast_until = time.time() + 2.0
                 ds4.disconnect()
                 time.sleep(0.15)
                 success = ds4.connect(permissive=ds4.permissive_mode)
                 if success:
                     ds4.trigger_rumble(small=160, large=100, duration_sec=0.25)
+                    action_toast = "DualShock 4 Reconnected \u2713"
+                    toast_until = time.time() + 1.8
                     print("[INFO] DualShock 4 reconnected successfully!")
                 else:
+                    action_toast = "[!] Reconnect Failed — Check Bluetooth/USB"
+                    toast_until = time.time() + 2.0
                     print("[WARN] Failed to reconnect DualShock 4.")
             elif key in (13, 32):
                 vphone.send_input("VALID")
                 ds4.trigger_rumble(small=160, large=80, duration_sec=0.10)
+                action_toast = "Enter / Confirm Sent \u2713"
+                toast_until = time.time() + 1.2
             elif key in (ord('['), ord('a'), ord('A')):
                 vphone.change_coach(-1)
                 ds4.trigger_rumble(small=120, large=0, duration_sec=0.08)
+                action_toast = f"Switched to Coach {vphone.current_coach_id + 1} / {vphone.total_coaches}"
+                toast_until = time.time() + 1.2
             elif key in (ord(']'), ord('d'), ord('D')):
                 vphone.change_coach(+1)
                 ds4.trigger_rumble(small=120, large=0, duration_sec=0.08)
+                action_toast = f"Switched to Coach {vphone.current_coach_id + 1} / {vphone.total_coaches}"
+                toast_until = time.time() + 1.2
 
             if cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1:
                 break
