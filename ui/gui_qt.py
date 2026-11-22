@@ -766,14 +766,48 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
         self._build_exp_view()
         self._build_ds4_view()
 
-        # 2.3 Bottom Action Area (PlayStation Blue CTA & Footer)
+        # 2.3 Bottom Action Area (PlayStation Blue CTA, Red Disconnect & Footer)
+        self.bottom_action_layout = QHBoxLayout()
+        self.bottom_action_layout.setContentsMargins(0, 0, 0, 0)
+        self.bottom_action_layout.setSpacing(10)
+
         self.btn_start = QPushButton("START TRACKING", self.content_widget)
         self.btn_start.setProperty("class", "btn_cta")
         self.btn_start.setFixedHeight(48)
         self.btn_start.setEnabled(False)
         self.btn_start.setCursor(Qt.CursorShape.ForbiddenCursor)
         self.btn_start.clicked.connect(self._start_tracking)
-        content_layout.addWidget(self.btn_start)
+        self.bottom_action_layout.addWidget(self.btn_start, stretch=1)
+
+        self.btn_bottom_disconnect_phone = QPushButton("DISCONNECT", self.content_widget)
+        self.btn_bottom_disconnect_phone.setFixedHeight(48)
+        self.btn_bottom_disconnect_phone.setFixedWidth(140)
+        self.btn_bottom_disconnect_phone.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_bottom_disconnect_phone.setToolTip("Disconnect connected smartphone and show QR Code again")
+        self.btn_bottom_disconnect_phone.setStyleSheet(f"""
+            QPushButton {{
+                background-color: #DC2626;
+                color: #FFFFFF;
+                border: none;
+                border-radius: 10px;
+                font-family: '{self.font_heading}', sans-serif;
+                font-size: 13px;
+                font-weight: bold;
+                padding: 0 16px;
+            }}
+            QPushButton:hover {{
+                background-color: #B91C1C;
+            }}
+            QPushButton:pressed {{
+                background-color: #991B1B;
+            }}
+        """)
+        self.btn_bottom_disconnect_phone.clicked.connect(self._on_disconnect_phone_cam)
+        self.btn_bottom_disconnect_phone.setVisible(False)
+        self.btn_disconnect_phone = self.btn_bottom_disconnect_phone
+        self.bottom_action_layout.addWidget(self.btn_bottom_disconnect_phone)
+
+        content_layout.addLayout(self.bottom_action_layout)
 
         footer_layout = QHBoxLayout()
         footer_layout.setContentsMargins(0, 2, 0, 0)
@@ -958,6 +992,9 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
         ready = self.is_device_ready_for_tracking(mode)
 
         if mode == "ds4":
+            self.btn_start.setVisible(True)
+            if hasattr(self, "btn_bottom_disconnect_phone"):
+                self.btn_bottom_disconnect_phone.setVisible(False)
             self.btn_start.setText("START CONTROLLER (DS4)")
             self.btn_start.setEnabled(ready)
             if ready:
@@ -967,6 +1004,9 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
                 self.btn_start.setCursor(Qt.CursorShape.ForbiddenCursor)
                 self.btn_start.setToolTip("DualShock 4 not connected. Connect via USB cable or pair via Bluetooth.")
         elif mode == "pscam":
+            self.btn_start.setVisible(True)
+            if hasattr(self, "btn_bottom_disconnect_phone"):
+                self.btn_bottom_disconnect_phone.setVisible(False)
             self.btn_start.setText("START TRACKING")
             self.btn_start.setEnabled(ready)
             if ready:
@@ -979,12 +1019,21 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
             self.btn_start.setText("START TRACKING")
             self.btn_start.setEnabled(ready)
             if ready:
+                self.btn_start.setVisible(True)
                 self.btn_start.setCursor(Qt.CursorShape.PointingHandCursor)
                 self.btn_start.setToolTip("Start tracking with connected Smartphone Camera")
+                if hasattr(self, "btn_bottom_disconnect_phone"):
+                    self.btn_bottom_disconnect_phone.setVisible(True)
             else:
+                self.btn_start.setVisible(False)
                 self.btn_start.setCursor(Qt.CursorShape.ForbiddenCursor)
                 self.btn_start.setToolTip("Smartphone not connected. Scan the QR code to connect your phone.")
+                if hasattr(self, "btn_bottom_disconnect_phone"):
+                    self.btn_bottom_disconnect_phone.setVisible(False)
         else:  # webcam
+            self.btn_start.setVisible(True)
+            if hasattr(self, "btn_bottom_disconnect_phone"):
+                self.btn_bottom_disconnect_phone.setVisible(False)
             self.btn_start.setText("START TRACKING")
             self.btn_start.setEnabled(ready)
             if ready:

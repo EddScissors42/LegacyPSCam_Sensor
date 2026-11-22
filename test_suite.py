@@ -2125,6 +2125,8 @@ def test_multi_player_tracking():
 
         win._set_mode("phone_cam", animate=False)
         assert win.btn_start.isEnabled() is False, "Start button must be disabled when Phone Camera is not connected"
+        assert win.btn_start.isHidden() is True, "Start button must be hidden when Phone Camera is not connected"
+        assert win.btn_bottom_disconnect_phone.isHidden() is True, "Disconnect button must be hidden when Phone Camera is not connected"
         assert win.btn_start.text() == "START TRACKING"
         win.close()
 

@@ -575,10 +575,10 @@ class UIPagesMixin:
         )
         ph_conn_layout.addWidget(self.lbl_phone_cam_ready_info)
 
-        # Row 1: Connected Smartphone Info & Camera Lens Selector
+        # Row 1: Connected Smartphone Info
         block_ph_dev = QFrame(self.phone_cam_card)
         block_ph_dev.setObjectName("settingBlockPhoneDev")
-        block_ph_dev.setFixedHeight(92)
+        block_ph_dev.setFixedHeight(64)
         block_ph_dev.setStyleSheet(f"""
             QFrame#settingBlockPhoneDev {{
                 background-color: #FFFFFF;
@@ -599,27 +599,11 @@ class UIPagesMixin:
         )
         ph_dev_layout.addWidget(lbl_ph_dev_title)
 
-        self.lbl_phone_device_meta = QLabel("Active Wireless Video Source • Manage smartphone streaming connection.", block_ph_dev)
+        self.lbl_phone_device_meta = QLabel("Active Wireless Video Source • High-speed video stream ready.", block_ph_dev)
         self.lbl_phone_device_meta.setStyleSheet(
             f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
         )
         ph_dev_layout.addWidget(self.lbl_phone_device_meta)
-
-        ph_dev_row = QHBoxLayout()
-        ph_dev_row.setContentsMargins(0, 0, 0, 0)
-        ph_dev_row.setSpacing(8)
-
-        self.btn_disconnect_phone = QPushButton("Disconnect", block_ph_dev)
-        self.btn_disconnect_phone.setProperty("class", "btn_secondary")
-        self.btn_disconnect_phone.setFixedHeight(32)
-        self.btn_disconnect_phone.setFixedWidth(130)
-        self.btn_disconnect_phone.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_disconnect_phone.setToolTip("Disconnect current phone and show QR Code again")
-        self.btn_disconnect_phone.clicked.connect(self._on_disconnect_phone_cam)
-        ph_dev_row.addWidget(self.btn_disconnect_phone)
-        ph_dev_row.addStretch()
-
-        ph_dev_layout.addLayout(ph_dev_row)
         ph_conn_layout.addWidget(block_ph_dev)
 
         # Row 2: Resolution & FPS side-by-side blocks
