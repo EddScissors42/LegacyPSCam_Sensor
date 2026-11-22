@@ -576,11 +576,14 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
   - **Tratamento de Liberação de Hardware:** Inserido intervalo de liberação de 160ms após parada de trilhas de mídia para permitir que o daemon do Android Camera2 / iOS AVFoundation finalize a sessão antes de abrir o novo sensor, prevenindo `NotReadableError` e `TrackStartError`.
   - **Diagnóstico Preciso de Erros:** Tratamento diferenciado para erros de câmera na interface web mobile (`NotAllowedError` para permissão, `NotReadableError` para hardware ocupado por outros apps, `OverconstrainedError` para limitações de lente e `NotFoundError`), eliminando mensagens falsas de "Camera Permission Denied" quando a permissão já foi concedida.
 
-### 39. Ações Contextuais na Aba Phone Camera (v0.9.5 Alpha)
-- **Ocultação Reativa do Botão "Start Tracking":**
-  - Na aba **Phone Camera**, enquanto nenhum smartphone estiver pareado e conectado via WebSocket, o botão principal `Start Tracking` permanece **completamente oculto**, mantendo a interface limpa e focada exclusivamente no escaneamento do QR Code.
-- **Botão "Disconnect" Vermelho ao Lado do Start Tracking:**
-  - Quando um smartphone se conecta com sucesso, o botão `Start Tracking` surge habilitado acompanhado por um novo botão **Disconnect** estilizado em vermelho destrutivo (`#DC2626` / `#B91C1C`) posicionado diretamente ao seu lado na barra inferior de ações.
+### 39. Ações Contextuais e Ocultamento Reativo Universal do Botão "Start Tracking" (v0.9.5 Alpha)
+- **Ocultação Reativa Universal do Botão "Start Tracking":**
+  - Em **todas as abas** (Phone Camera, DualShock 4, PlayStation®Camera e Standard Webcam), enquanto o dispositivo selecionado estiver desconectado ou indisponível, o botão principal `Start Tracking` permanece **completamente oculto** ao invés de ficar cinza/desabilitado, mantendo a área de ações inferior totalmente limpa até que o hardware correspondente seja detectado e fique pronto.
+- **Botão "Disconnect" Vermelho ao Lado do Start Tracking (Phone Camera):**
+  - Quando um smartphone se conecta com sucesso, o botão `Start Tracking` surge habilitado acompanhado pelo botão **Disconnect** estilizado em vermelho destrutivo (`#DC2626` / `#B91C1C`) posicionado diretamente ao seu lado na barra inferior de ações.
+- **Card de Smartphone Conectado Reestruturado:**
+  - O bloco `CONNECTED SMARTPHONE` foi elevado diretamente para o topo do card de configurações de vídeo.
+  - O antigo subtítulo estático genérico foi substituído pelo indicador dinâmico de status em verde (ex: `iPhone (iOS Safari) connected (192.168.1.42 • 640x480 @ 30 FPS • Rear Camera)`), unificando os dados do aparelho em um único componente coeso.
 - **Limpeza do Cabeçalho Superior:**
   - O antigo botão secundário de desconexão localizado no quadro de metadados superior foi removido, tornando o card de status do dispositivo conectado mais enxuto e organizado.
 
