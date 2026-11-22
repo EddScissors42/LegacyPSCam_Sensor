@@ -143,6 +143,9 @@ class SensorAppController(QObject):
 
     def start_tracking(self, on_finished: Optional[Callable[[bool, str], None]] = None) -> bool:
         """Adopts pre-warmed camera and launches tracking session asynchronously."""
+        if self.session.is_tracking_active:
+            return False
+
         self.camera.set_tracking_active(True)
         self.save_settings()
 
@@ -152,15 +155,21 @@ class SensorAppController(QObject):
             self.camera.set_tracking_active(False)
             self.tracking_finished.emit(success, err_msg)
             if on_finished:
-                on_finished(success, err_msg)
+                try:
+                    on_finished(success, err_msg)
+                except Exception:
+                    pass
             # Re-schedule camera warm-up for next song if in optical mode
             if self.cfg.get("camera_mode") in ("pscam", "webcam"):
                 self.camera.schedule_warmup(500)
 
-        return self.session.start_tracking(
+        started = self.session.start_tracking(
             prewarmed_camera=prewarmed,
             on_finished=_handle_finished,
         )
+        if not started:
+            self.camera.set_tracking_active(False)
+        return started
 
     def stop_tracking(self):
         """Terminates active tracking session."""

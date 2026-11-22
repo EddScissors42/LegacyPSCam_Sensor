@@ -1951,14 +1951,16 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
             return
 
         self._save_settings()
-        self.is_tracking_active = True
+
+        started = self.controller.start_tracking()
+        if not started:
+            return
+
         if hasattr(self, "lbl_vphone_accel"):
             self.lbl_vphone_accel.setVisible(True)
         self.btn_start.setText("TRACKING IN PROGRESS...")
         self.btn_start.setEnabled(False)
         self.showMinimized()
-
-        self.controller.start_tracking(on_finished=self._on_tracking_finished)
 
     @Slot(bool, str)
     def _on_tracking_finished(self, success: bool, err_msg: str):
