@@ -149,19 +149,22 @@ class DeviceController:
             }
 
         # Controller is not connected - probe PnP/HID
-        import sensor
-        perm = bool(self.cfg.get("ds4_permissive_mode", True))
-        paths = sensor.find_ds4_devices(permissive=perm)
-        if paths:
-            is_usb = any("bth" not in p.lower() and "bluetooth" not in p.lower() and "00001124" not in p.lower() for p in paths)
-            detected_type = "on USB" if is_usb else "via Bluetooth"
-            detected_name = sensor.detect_controller_name(paths[0])
-            return {
-                "is_connected": False,
-                "device_present": True,
-                "controller_name": detected_name,
-                "connection_type": detected_type,
-            }
+        try:
+            from sensor.ds4_controller import find_ds4_devices, detect_controller_name
+            perm = bool(self.cfg.get("ds4_permissive_mode", True))
+            paths = find_ds4_devices(permissive=perm)
+            if paths:
+                is_usb = any("bth" not in p.lower() and "bluetooth" not in p.lower() and "00001124" not in p.lower() for p in paths)
+                detected_type = "on USB" if is_usb else "via Bluetooth"
+                detected_name = detect_controller_name(paths[0])
+                return {
+                    "is_connected": False,
+                    "device_present": True,
+                    "controller_name": detected_name,
+                    "connection_type": detected_type,
+                }
+        except Exception:
+            pass
 
         return {
             "is_connected": False,

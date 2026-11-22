@@ -18,7 +18,7 @@ if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
 from sensor.config_manager import (
-    ConfigManager, parse_preset, PRESETS_PSCAM, PRESETS_WEBCAM,
+    ConfigManager, DEFAULT_CONFIG, parse_preset, PRESETS_PSCAM, PRESETS_WEBCAM,
     get_app_data_dir, get_config_path, get_logs_dir, is_portable_mode
 )
 from sensor.kinect_shared_memory import (
@@ -61,7 +61,8 @@ def test_config():
     assert "camera_mode" in cfg
     assert "smoothing_alpha" in cfg
     assert "ds4_permissive_mode" in cfg
-    assert cfg["ds4_permissive_mode"] is True
+    assert isinstance(cfg["ds4_permissive_mode"], bool)
+    assert DEFAULT_CONFIG["ds4_permissive_mode"] is True
     assert parse_preset("1280x800 @ 60 FPS") == (1280, 800, 60)
     assert parse_preset("640x480 @ 30 FPS") == (640, 480, 30)
     assert "1280x800 @ 60 FPS" in PRESETS_PSCAM

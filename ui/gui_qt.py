@@ -1056,7 +1056,10 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
             self._cancel_camera_warmup()
             self._update_ds4_ui_readout()
             def _connect_done(_ok):
-                QtCore.QMetaObject.invokeMethod(self, "_finish_ds4_reconnect", Qt.ConnectionType.QueuedConnection)
+                try:
+                    QtCore.QMetaObject.invokeMethod(self, "_finish_ds4_reconnect", Qt.ConnectionType.QueuedConnection)
+                except (RuntimeError, Exception):
+                    pass
             self.controller.devices.connect_ds4_async(callback=_connect_done)
         else:
             if hasattr(self, "btn_tab_controller"):
@@ -1724,7 +1727,10 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
             return
         if self.cfg.get("camera_mode") != "ds4" and self.controller.devices._ds4 is None:
             return
-        st = self.controller.devices.get_ds4_readout()
+        try:
+            st = self.controller.devices.get_ds4_readout()
+        except Exception:
+            return
         if st.get("is_connected"):
             if hasattr(self, "ds4_disconnected_box"):
                 self.ds4_disconnected_box.setVisible(False)
@@ -1791,7 +1797,10 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
                     self._is_connecting_ds4 = True
                     def _done(_ok):
                         self._is_connecting_ds4 = False
-                        QtCore.QMetaObject.invokeMethod(self, "_finish_ds4_reconnect", Qt.ConnectionType.QueuedConnection)
+                        try:
+                            QtCore.QMetaObject.invokeMethod(self, "_finish_ds4_reconnect", Qt.ConnectionType.QueuedConnection)
+                        except (RuntimeError, Exception):
+                            pass
                     self.controller.devices.connect_ds4_async(callback=_done)
             else:
                 if hasattr(self, "lbl_ds4_conn_title"):
@@ -1820,7 +1829,10 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
         if hasattr(self, "lbl_ds4_conn_info"):
             self.lbl_ds4_conn_info.setText("Connecting to controller (USB / Bluetooth HID)...")
         def _done(_ok):
-            QtCore.QMetaObject.invokeMethod(self, "_finish_ds4_reconnect", Qt.ConnectionType.QueuedConnection)
+            try:
+                QtCore.QMetaObject.invokeMethod(self, "_finish_ds4_reconnect", Qt.ConnectionType.QueuedConnection)
+            except (RuntimeError, Exception):
+                pass
         self.controller.devices.connect_ds4_async(callback=_done)
 
     @Slot()
