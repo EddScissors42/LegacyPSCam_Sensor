@@ -563,10 +563,13 @@ class TrackingOverlay:
         total_coaches: int = 4,
         song_name: Optional[str] = None,
         action_toast: Optional[str] = None,
+        accel_axes: Tuple[float, float, float] = (0.0, 1.0, 0.0),
+        gyro_axes: Optional[Tuple[int, int, int]] = None,
     ) -> np.ndarray:
         """
         Renders the modern PlayStation floating glass pill HUD for the controller tracking session.
         Matches the layout, typography, glass pill badges, and aesthetic of the webcam tracking UI.
+        Features sleek 6-axis IMU/gyro telemetry bars and non-pulsating motion force indicator.
         """
         now = time.time()
         fh, fw = frame.shape[:2]
@@ -667,10 +670,10 @@ class TrackingOverlay:
             cv2.putText(frame, c_tag, (left_x + 36, left_y + 36), cv2.FONT_HERSHEY_SIMPLEX, 0.34, COLOR_TEXT_DIM, 1, cv2.LINE_AA)
 
         # =====================================================================
-        # CENTER STAGE: DANCE MOTION PULSE & G-FORCE ENERGY AURA
+        # CENTER STAGE: MOTION FORCE (CLEAN & NON-PULSATING) & GYROSCOPE BARS
         # =====================================================================
         cx = fw // 2
-        cy = fh // 2 - 16
+        cy = 168
 
         if not is_connected:
             warn_w, warn_h = min(460, fw - 40), 62
@@ -693,77 +696,83 @@ class TrackingOverlay:
             cv2.putText(frame, "[!] SENSOR IMU BLOCKED / FROZEN (0G)", (wx + 24, wy + 26), cv2.FONT_HERSHEY_DUPLEX, 0.46, COLOR_TEXT_WHITE, 1, cv2.LINE_AA)
             cv2.putText(frame, "Generic Bluetooth driver blocked motion. Connect via USB cable!", (wx + 24, wy + 48), cv2.FONT_HERSHEY_SIMPLEX, 0.35, COLOR_TEXT_DIM, 1, cv2.LINE_AA)
         else:
-            dev_g = abs(tot_g - 1.0)
-            intensity = max(0.0, min(1.0, dev_g / 2.0))
-            base_r = 54
-            pulse = int((math.sin(now * 4.5) + 1.0) * 3)
-            boost = int(intensity * 26)
-            total_r = base_r + pulse + boost
-
-            if intensity > 0.6:
-                aura_color = (60, 215, 255)
-            elif intensity > 0.25:
-                aura_color = COLOR_NEON_CYAN
-            else:
-                aura_color = COLOR_P1_SILHOUETTE
-
-            cv2.circle(frame, (cx, cy), total_r + 14, aura_color, 1, cv2.LINE_AA)
-            cv2.circle(frame, (cx, cy), total_r, aura_color, 2, cv2.LINE_AA)
-
+            # Clean Non-Pulsating Motion Force Circle (stable frosted glass disc)
+            base_r = 44
             disc_w = base_r * 2
+            cv2.circle(frame, (cx, cy), base_r + 3, (45, 55, 70), 1, cv2.LINE_AA)
             draw_rounded_glass_pill(
                 frame, cx - base_r, cy - base_r, disc_w, disc_w,
-                radius=base_r, bg_color=(16, 20, 28), alpha=0.72, border_color=(70, 85, 110)
+                radius=base_r, bg_color=(16, 20, 28), alpha=0.74, border_color=(60, 75, 95)
             )
 
             g_str = f"{tot_g:.2f} G"
-            t_sz = cv2.getTextSize(g_str, cv2.FONT_HERSHEY_DUPLEX, 0.62, 1)[0]
+            t_sz = cv2.getTextSize(g_str, cv2.FONT_HERSHEY_DUPLEX, 0.58, 1)[0]
             gx = cx - t_sz[0] // 2
             gy = cy + 4
-            cv2.putText(frame, g_str, (gx, gy), cv2.FONT_HERSHEY_DUPLEX, 0.62, COLOR_TEXT_WHITE, 1, cv2.LINE_AA)
+            cv2.putText(frame, g_str, (gx, gy), cv2.FONT_HERSHEY_DUPLEX, 0.58, COLOR_TEXT_WHITE, 1, cv2.LINE_AA)
 
             lbl_str = "MOTION FORCE"
-            l_sz = cv2.getTextSize(lbl_str, cv2.FONT_HERSHEY_SIMPLEX, 0.30, 1)[0]
-            cv2.putText(frame, lbl_str, (cx - l_sz[0] // 2, cy + 22), cv2.FONT_HERSHEY_SIMPLEX, 0.30, COLOR_TEXT_DIM, 1, cv2.LINE_AA)
+            l_sz = cv2.getTextSize(lbl_str, cv2.FONT_HERSHEY_SIMPLEX, 0.28, 1)[0]
+            cv2.putText(frame, lbl_str, (cx - l_sz[0] // 2, cy + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.28, COLOR_TEXT_DIM, 1, cv2.LINE_AA)
 
-            # Coach selection pill below the aura
-            coach_w, coach_h = 320, 36
-            coach_x = (fw - coach_w) // 2
-            coach_y = cy + base_r + 26
+            # Modern Gyroscope & Accelerometer Telemetry Card (X, Y, Z bars)
+            card_w = min(fw - 40, 470)
+            card_h = 136
+            card_x = (fw - card_w) // 2
+            card_y = 224
             draw_rounded_glass_pill(
-                frame, coach_x, coach_y, coach_w, coach_h,
-                radius=10, bg_color=COLOR_GLASS_BG, alpha=0.78, border_color=COLOR_GLASS_BORDER
+                frame, card_x, card_y, card_w, card_h,
+                radius=12, bg_color=(15, 18, 25), alpha=0.76, border_color=(50, 60, 75)
             )
 
-            cv2.putText(frame, "[L1]", (coach_x + 14, coach_y + 23), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 220, 255), 1, cv2.LINE_AA)
-            c_text = f"COACH {current_coach + 1} OF {total_coaches}"
-            ct_sz = cv2.getTextSize(c_text, cv2.FONT_HERSHEY_DUPLEX, 0.42, 1)[0]
-            cv2.putText(frame, c_text, (coach_x + (coach_w - ct_sz[0]) // 2, coach_y + 23), cv2.FONT_HERSHEY_DUPLEX, 0.42, COLOR_TEXT_WHITE, 1, cv2.LINE_AA)
-            cv2.putText(frame, "[R1]", (coach_x + coach_w - 48, coach_y + 23), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 220, 255), 1, cv2.LINE_AA)
+            # Card Header
+            cv2.circle(frame, (card_x + 18, card_y + 16), 3, (0, 220, 255), -1, cv2.LINE_AA)
+            cv2.putText(frame, "GYROSCOPE & ACCELEROMETER TELEMETRY", (card_x + 28, card_y + 20), cv2.FONT_HERSHEY_DUPLEX, 0.35, (215, 225, 240), 1, cv2.LINE_AA)
+            sens_txt = f"SENS: {sens:.2f}x"
+            st_w = cv2.getTextSize(sens_txt, cv2.FONT_HERSHEY_SIMPLEX, 0.31, 1)[0][0]
+            cv2.putText(frame, sens_txt, (card_x + card_w - st_w - 18, card_y + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.31, COLOR_TEXT_DIM, 1, cv2.LINE_AA)
+            cv2.line(frame, (card_x + 14, card_y + 27), (card_x + card_w - 14, card_y + 27), (35, 42, 54), 1, cv2.LINE_AA)
 
-            if song_name and song_name not in ("DanceSession", "None", ""):
-                s_text = f"SONG: {song_name}"
-                st_sz = cv2.getTextSize(s_text, cv2.FONT_HERSHEY_SIMPLEX, 0.32, 1)[0]
-                cv2.putText(frame, s_text, (cx - st_sz[0] // 2, coach_y + coach_h + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.32, COLOR_TEXT_DIM, 1, cv2.LINE_AA)
+            # 3 Axis Bars (X, Y, Z)
+            ax_val, ay_val, az_val = accel_axes
+            axes_data = [
+                ("X: LATERAL", ax_val, (245, 225, 30)),   # Electric Cyan
+                ("Y: VERTICAL", ay_val, (60, 195, 255)),  # PlayStation Warm Amber
+                ("Z: FORWARD", az_val, (80, 220, 110)),   # Neon Emerald
+            ]
+
+            bx = card_x + 235
+            hw = 110  # half-width for 220px total bar width
+
+            for idx, (axis_lbl, val, col) in enumerate(axes_data):
+                row_y = card_y + 38 + idx * 31
+
+                # Axis label
+                cv2.putText(frame, axis_lbl, (card_x + 18, row_y + 12), cv2.FONT_HERSHEY_SIMPLEX, 0.31, COLOR_TEXT_DIM, 1, cv2.LINE_AA)
+
+                # Track background with center 0G tick
+                cv2.rectangle(frame, (bx - hw, row_y + 3), (bx + hw, row_y + 13), (24, 28, 36), -1)
+                cv2.rectangle(frame, (bx - hw, row_y + 3), (bx + hw, row_y + 13), (48, 56, 70), 1, cv2.LINE_AA)
+                cv2.line(frame, (bx, row_y + 1), (bx, row_y + 15), (110, 120, 135), 1, cv2.LINE_AA)
+
+                # Active bar fill (scaled to +/- 3.0 G)
+                fill_len = int(max(-hw, min(hw, (val / 3.0) * hw)))
+                if fill_len > 0:
+                    cv2.rectangle(frame, (bx, row_y + 4), (bx + fill_len, row_y + 12), col, -1)
+                elif fill_len < 0:
+                    cv2.rectangle(frame, (bx + fill_len, row_y + 4), (bx, row_y + 12), col, -1)
+
+                # Value readout on the right
+                val_str = f"{val:+.2f} G"
+                cv2.putText(frame, val_str, (card_x + card_w - 74, row_y + 12), cv2.FONT_HERSHEY_SIMPLEX, 0.33, (240, 240, 245), 1, cv2.LINE_AA)
 
         # =====================================================================
-        # ACTION TOAST (E.G. RECONNECTING, COACH SWITCH, CONFIRM)
+        # BOTTOM CENTER PILL: SHORTCUTS BAR
         # =====================================================================
-        if action_toast:
-            toast_w, toast_h = 340, 36
-            tx = (fw - toast_w) // 2
-            ty = max(68, cy - 100)
-            draw_rounded_glass_pill(frame, tx, ty, toast_w, toast_h, radius=8, bg_color=(15, 24, 34), alpha=0.92, border_color=(0, 225, 255))
-            tt_sz = cv2.getTextSize(action_toast, cv2.FONT_HERSHEY_DUPLEX, 0.42, 1)[0]
-            cv2.putText(frame, action_toast, (tx + (toast_w - tt_sz[0]) // 2, ty + 23), cv2.FONT_HERSHEY_DUPLEX, 0.42, (0, 235, 255), 1, cv2.LINE_AA)
-
-        # =====================================================================
-        # BOTTOM CENTER PILL: SHORTCUTS BAR (Full HUD only)
-        # =====================================================================
+        bot_w, bot_h = min(fw - 32, 510), 32
+        bot_x = (fw - bot_w) // 2
+        bot_y = max(60, fh - bot_h - 12)
         if self.hud_mode == 0:
-            bot_w, bot_h = min(fw - 32, 510), 32
-            bot_x = (fw - bot_w) // 2
-            bot_y = max(60, fh - bot_h - 12)
             draw_rounded_glass_pill(
                 frame, bot_x, bot_y, bot_w, bot_h,
                 radius=10, bg_color=COLOR_GLASS_BG, alpha=0.78, border_color=COLOR_GLASS_BORDER
@@ -773,5 +782,39 @@ class TrackingOverlay:
             t_sz = cv2.getTextSize(controls_text, cv2.FONT_HERSHEY_SIMPLEX, 0.38, 1)[0]
             tx = bot_x + (bot_w - t_sz[0]) // 2
             cv2.putText(frame, controls_text, (tx, bot_y + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (225, 230, 240), 1, cv2.LINE_AA)
+
+        # =====================================================================
+        # COACH SELECTION PILL (Directly above keyboard commands bar)
+        # =====================================================================
+        coach_w, coach_h = min(fw - 40, 360), 34
+        coach_x = (fw - coach_w) // 2
+        coach_y = bot_y - coach_h - 8
+        draw_rounded_glass_pill(
+            frame, coach_x, coach_y, coach_w, coach_h,
+            radius=10, bg_color=COLOR_GLASS_BG, alpha=0.82, border_color=COLOR_GLASS_BORDER
+        )
+
+        cv2.putText(frame, "[L1]", (coach_x + 16, coach_y + 22), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 220, 255), 1, cv2.LINE_AA)
+        c_text = f"COACH {current_coach + 1} OF {total_coaches}"
+        ct_sz = cv2.getTextSize(c_text, cv2.FONT_HERSHEY_DUPLEX, 0.42, 1)[0]
+        cv2.putText(frame, c_text, (coach_x + (coach_w - ct_sz[0]) // 2, coach_y + 22), cv2.FONT_HERSHEY_DUPLEX, 0.42, COLOR_TEXT_WHITE, 1, cv2.LINE_AA)
+        cv2.putText(frame, "[R1]", (coach_x + coach_w - 50, coach_y + 22), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 220, 255), 1, cv2.LINE_AA)
+
+        # Song name above coach pill if active
+        if song_name and song_name not in ("DanceSession", "None", ""):
+            s_text = f"SONG: {song_name}"
+            st_sz = cv2.getTextSize(s_text, cv2.FONT_HERSHEY_SIMPLEX, 0.31, 1)[0]
+            cv2.putText(frame, s_text, ((fw - st_sz[0]) // 2, coach_y - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.31, COLOR_TEXT_DIM, 1, cv2.LINE_AA)
+
+        # =====================================================================
+        # ACTION TOAST (E.G. RECONNECTING, COACH SWITCH, CONFIRM)
+        # =====================================================================
+        if action_toast:
+            toast_w, toast_h = 340, 36
+            tx = (fw - toast_w) // 2
+            ty = max(68, cy - 88)
+            draw_rounded_glass_pill(frame, tx, ty, toast_w, toast_h, radius=8, bg_color=(15, 24, 34), alpha=0.92, border_color=(0, 225, 255))
+            tt_sz = cv2.getTextSize(action_toast, cv2.FONT_HERSHEY_DUPLEX, 0.42, 1)[0]
+            cv2.putText(frame, action_toast, (tx + (toast_w - tt_sz[0]) // 2, ty + 23), cv2.FONT_HERSHEY_DUPLEX, 0.42, (0, 235, 255), 1, cv2.LINE_AA)
 
         return frame

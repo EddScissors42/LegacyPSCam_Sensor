@@ -494,6 +494,8 @@ def test_overlay():
         total_coaches=4,
         song_name="Levitating",
         action_toast="Switched to Coach 1",
+        accel_axes=(0.15, 0.98, -0.05),
+        gyro_axes=(12, -4, 0),
     )
     assert ds4_canvas.shape == (480, 640, 3)
     assert np.any(ds4_canvas > 0)

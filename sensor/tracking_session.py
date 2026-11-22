@@ -653,6 +653,8 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
                 total_coaches=vphone.total_coaches,
                 song_name=getattr(vphone, "current_map_name", None),
                 action_toast=current_toast,
+                accel_axes=(ax, ay, az),
+                gyro_axes=st.gyro,
             )
 
             bridge.pose.write_empty()

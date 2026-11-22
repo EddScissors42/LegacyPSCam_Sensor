@@ -559,9 +559,13 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
   - **Top-Left Pill (Branding & Perfil):** Exibe a marca d'água "LEGACY PSCAM SENSOR", o orbe de destaque em azul PlayStation e as informações do periférico (nome do controle, tipo de conexão USB/Bluetooth e mão ativa configurada).
   - **Top-Right Pill (Telemetria & Polling):** Telemetria em tempo real com indicador de status, frequência de leitura em Hz, porcentagem de bateria com ícone de carregamento e estado da conexão com o Celular Virtual (Just Dance PC).
   - **Right Pill (Status de Rastreamento):** Posicionado diretamente abaixo da pílula de telemetria (exatamente como na webcam), exibindo status dinâmico `"CONTROLLER ACTIVE"` (com ponto pulsante em verde esmeralda), `"SEARCHING CONTROLLER..."` (âmbar suave com prompt de reconexão) ou `"SENSOR IMU FROZEN"` (laranja de aviso para conexões Bluetooth com bloqueio de acelerômetro).
-  - **Center Stage — Orbe de Pulso de Movimento (Motion Force Aura):**
-    - Substituição das antigas barras brutas de acelerômetro por um orbe central fluido e dinâmico que reage diretamente à força física de dança em tempo real ($|G|$), com anéis concêntricos de pulso e transição de cores (Azul PlayStation $\rightarrow$ Ciano Neon $\rightarrow$ Ouro/Âmbar em movimentos intensos).
-    - Abaixo do orbe, um cartão flutuante moderno de seleção de Dançarino/Coach exibe os controles `[L1]` e `[R1]` e o nome da música ativa no Just Dance PC.
+  - **Center Stage — Motion Force Estável & Telemetria do Giroscópio/Acelerômetro:**
+    - **Círculo de Motion Force Estável:** Círculo em vidro obsidiana fosco limpo, sem efeitos de pulso senoidal ou animações distrativas, com leitura nítida e direta da aceleração total em $|G|$.
+    - **Cartão de Telemetria do Giroscópio & Acelerômetro:** Introduzido um elegante cartão de vidro translúcido contendo 3 barras horizontais bi-direcionais estilizadas com trilha recuada, marcador central de 0G e leitura numérica formatada:
+      - **Eixo X (Lateral / Roll):** Gradiente em Ciano Elétrico (`#1EE1F5`).
+      - **Eixo Y (Vertical / Pitch):** Gradiente em Âmbar Suave (`#FFC33C`).
+      - **Eixo Z (Forward / Depth):** Gradiente em Verde Esmeralda (`#50DC6E`).
+  - **Pílula de Seleção de Coach Acoplada:** A pílula de seleção de dançarino (`COACH 1 OF 4`, `[L1]` e `[R1]`) foi posicionada **exatamente acima da barra de comandos de teclado**, com indicação do nome da música ativa e alinhamento ergonômico.
   - **Bottom-Center Pill (Barra de Atalhos):** Pílula centralizada com atalhos de teclado limpos `[Q/ESC] Exit • [R] Reconnect • [L1/R1] Coach • [H] Cycle HUD`.
   - **Suporte a Ciclo de HUD (`[H]`):** Alternância entre HUD Completo (0), Minimalista (1) e Desativado (2) através da tecla `[H]`.
 
