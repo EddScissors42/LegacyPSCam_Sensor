@@ -75,10 +75,10 @@ class DeviceController:
         srv = sensor.get_phone_camera_server()
         srv.configure_stream(width=w, height=h, fps=fps)
 
-    def disconnect_phone_cam(self):
+    def disconnect_phone_cam(self, rotate_token: bool = True):
         import sensor
         srv = sensor.get_phone_camera_server()
-        srv.disconnect_client(rotate_token=True)
+        srv.disconnect_client(rotate_token=rotate_token)
 
     def get_phone_cam_status(self) -> Dict[str, Any]:
         """Returns snapshot of Phone Camera server and client status."""
