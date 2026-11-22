@@ -134,11 +134,13 @@ class DeviceController:
             act_btns = [b.upper() for b, pressed in st.buttons.items() if pressed]
             imu_frozen = bool(getattr(st, "imu_frozen", False))
 
+            rate = st.sample_rate_hz if (time.perf_counter() - getattr(st, "last_update_ts", 0.0) < 1.0) else 0.0
+
             return {
                 "is_connected": True,
                 "controller_name": ctrl_name,
                 "connection_type": conn_type,
-                "sample_rate_hz": st.sample_rate_hz,
+                "sample_rate_hz": rate,
                 "battery_pct": st.battery_pct,
                 "is_charging": st.is_charging,
                 "charging_str": charging_str,

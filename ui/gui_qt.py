@@ -347,8 +347,8 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
         pal.setColor(QtGui.QPalette.ColorRole.WindowText, QtGui.QColor("#0F172A"))
         pal.setColor(QtGui.QPalette.ColorRole.Base, QtGui.QColor("#FFFFFF"))
         pal.setColor(QtGui.QPalette.ColorRole.AlternateBase, QtGui.QColor("#F0F4FA"))
-        pal.setColor(QtGui.QPalette.ColorRole.ToolTipBase, QtGui.QColor("#FFFFFF"))
-        pal.setColor(QtGui.QPalette.ColorRole.ToolTipText, QtGui.QColor("#0F172A"))
+        pal.setColor(QtGui.QPalette.ColorRole.ToolTipBase, QtGui.QColor("#0F172A"))
+        pal.setColor(QtGui.QPalette.ColorRole.ToolTipText, QtGui.QColor("#FFFFFF"))
         pal.setColor(QtGui.QPalette.ColorRole.Text, QtGui.QColor("#0F172A"))
         pal.setColor(QtGui.QPalette.ColorRole.Button, QtGui.QColor("#FFFFFF"))
         pal.setColor(QtGui.QPalette.ColorRole.ButtonText, QtGui.QColor("#0F172A"))
@@ -371,6 +371,16 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
                 background-color: {PALETTE["bg_window"]};
                 color: {PALETTE["text_main"]};
                 font-family: '{self.font_body}', 'Segoe UI', sans-serif;
+            }}
+            QToolTip {{
+                background-color: #0F172A;
+                color: #FFFFFF;
+                border: 1px solid #334155;
+                border-radius: 6px;
+                padding: 6px 10px;
+                font-family: '{self.font_body}', sans-serif;
+                font-size: 11px;
+                font-weight: 500;
             }}
             QFrame#sidebar {{
                 background-color: {PALETTE["bg_sidebar"]};
@@ -1638,6 +1648,12 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
         self.controller.devices.set_vphone_sensitivity(sens_val)
 
     def _update_vphone_ui_readout(self):
+        # Always update DualShock 4 and Phone Camera in real-time (150ms) regardless of Virtual Phone session
+        if self.cfg.get("camera_mode") == "ds4":
+            self._update_ds4_ui_readout()
+        elif self.cfg.get("camera_mode") == "phone_cam":
+            self._update_phone_cam_status()
+
         if not hasattr(self, "lbl_vphone_status") or not hasattr(self, "lbl_vphone_accel"):
             return
         st = self.controller.devices.get_vphone_readout()
@@ -1715,9 +1731,6 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
             self.lbl_vphone_accel.setText(
                 f"3D Accelerometer: X: {ax:+.2f}G | Y: {ay:+.2f}G | Z: {az:+.2f}G ({spd:.1f} m/s)"
             )
-        self._update_ds4_ui_readout()
-        if self.cfg.get("camera_mode") == "phone_cam":
-            self._update_phone_cam_status()
 
     # =========================================================================
     # DUALSHOCK 4 HANDLERS
