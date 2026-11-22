@@ -548,6 +548,10 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
     - **Phone Camera (`phone_cam`):** Habilitado apenas quando um smartphone estiver ativamente pareado e conectado via WebSocket.
     - **DualShock 4 (`ds4`):** Habilitado apenas quando o controle estiver conectado (`is_connected = True`) via USB ou Bluetooth.
   - **Feedback Visual Aprimorado:** Quando o dispositivo correspondente estiver desconectado, o botão exibe o cursor proibido (`ForbiddenCursor`), o estilo visual desabilitado em cinza suave e tooltips explicativas em tempo real (ex.: *"PlayStation Camera not connected. Connect via USB 3.0 to start tracking"*), impedindo que o usuário tente iniciar uma sessão de rastreamento com dispositivos ausentes.
+- **Estabilidade Multithreading e Prevenção de Concorrência DirectShow (`_CAMERA_HW_LOCK`):**
+  - **Serialização de Hardware:** Introduzida a trava global reentrante `_CAMERA_HW_LOCK` em `sensor/camera_manager.py` para isolar todas as aberturas e liberações de `cv2.VideoCapture(CAP_DSHOW)` e evitar corrupção de heap do Windows (`0xc0000374`).
+  - **Sincronização Atômica de Warmup:** O `CameraController` agora rastreia formalmente o ciclo de vida da thread de pré-aquecimento (`self._warmup_thread`), garantindo que alternâncias rápidas entre modos (ex.: DualShock 4 -> Webcam -> Start Tracking) aguardem deterministicamente o encerramento da thread anterior antes de iniciar a sessão de rastreamento.
+  - **Correção de Tipos Win32 em `FindFirstFileW`:** Definidos explicitamente `restype = wintypes.HANDLE` e `argtypes` em `sensor/ps4_backend/driver_installer.py`, evitando truncamento de ponteiros de 64 bits em `c_long` e violações de acesso (`0xc0000005`) durante inspeções de pacotes de driver INF.
 
 ---
 

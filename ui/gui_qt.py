@@ -261,8 +261,8 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
     def _schedule_camera_warmup(self, delay_ms: int = 350):
         self.controller.camera.schedule_warmup(delay_ms)
 
-    def _cancel_camera_warmup(self):
-        self.controller.camera.cancel_warmup()
+    def _cancel_camera_warmup(self, sync: bool = False):
+        self.controller.camera.cancel_warmup(sync=sync)
 
     def _start_camera_warmup_async(self):
         self.controller.camera.start_warmup_async()
@@ -1145,7 +1145,7 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
             self._switch_tab("controller")
             if hasattr(self, "btn_start"):
                 self.btn_start.setText("START CONTROLLER (DS4)")
-            self._cancel_camera_warmup()
+            self._cancel_camera_warmup(sync=True)
             self._update_ds4_ui_readout()
             def _connect_done(_ok):
                 try:
@@ -1163,7 +1163,7 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
             if hasattr(self, "btn_tab_exp"):
                 self.btn_tab_exp.setVisible(True)
             if mode == "phone_cam":
-                self._cancel_camera_warmup()
+                self._cancel_camera_warmup(sync=True)
                 self._ensure_phone_cam_server_started()
                 self._refresh_phone_cam_qr()
                 self._update_phone_cam_status()

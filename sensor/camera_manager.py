@@ -26,6 +26,9 @@ from .ps4_backend import (
 
 PSCAM_TRAY_PATH = Path(r"C:\Program Files\PSCam4Win\PSCam4WinTray.exe")
 
+# Global lock to serialize DirectShow / Camera hardware access across warmup and tracking threads
+_CAMERA_HW_LOCK = threading.RLock()
+
 class CameraInfo:
     def __init__(self, index, name="Câmera", is_pscam=False):
         self.index = index
@@ -812,37 +815,38 @@ class LatestFrameCamera:
             self.fb_reader = FrameBusReader()
 
         # Prefer CAP_DSHOW on Windows for fast startup and mode control
-        self.cap = cv2.VideoCapture(self.camera_index, cv2.CAP_DSHOW)
-        if not self.cap.isOpened():
-            self.cap = cv2.VideoCapture(self.camera_index)
+        with _CAMERA_HW_LOCK:
+            self.cap = cv2.VideoCapture(self.camera_index, cv2.CAP_DSHOW)
+            if not self.cap.isOpened():
+                self.cap = cv2.VideoCapture(self.camera_index)
 
-        if not self.cap.isOpened():
-            if self.fb_reader and self.fb_reader.is_connected:
-                self.actual_w = self.target_w
-                self.actual_h = self.target_h
-                self.actual_fps = float(self.target_fps)
+            if not self.cap.isOpened():
+                if self.fb_reader and self.fb_reader.is_connected:
+                    self.actual_w = self.target_w
+                    self.actual_h = self.target_h
+                    self.actual_fps = float(self.target_fps)
+                else:
+                    raise RuntimeError(f"Não foi possível abrir a câmera índice {self.camera_index}.")
             else:
-                raise RuntimeError(f"Não foi possível abrir a câmera índice {self.camera_index}.")
-        else:
-            # Request resolution & FPS
-            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.target_w)
-            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.target_h)
-            self.cap.set(cv2.CAP_PROP_FPS, self.target_fps)
+                # Request resolution & FPS
+                self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.target_w)
+                self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.target_h)
+                self.cap.set(cv2.CAP_PROP_FPS, self.target_fps)
 
-            # For USB webcams needing MJPG for high FPS (PSCam uses native YUY2/NV12)
-            if not self.is_pscam and self.target_fps >= 50:
-                self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+                # For USB webcams needing MJPG for high FPS (PSCam uses native YUY2/NV12)
+                if not self.is_pscam and self.target_fps >= 50:
+                    self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
 
-            # Minimize buffer size to 1 frame to eliminate latency
-            try:
-                self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-            except Exception:
-                pass
+                # Minimize buffer size to 1 frame to eliminate latency
+                try:
+                    self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                except Exception:
+                    pass
 
-            self.actual_w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or self.target_w
-            self.actual_h = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or self.target_h
-            prop_fps = self.cap.get(cv2.CAP_PROP_FPS)
-            self.actual_fps = prop_fps if prop_fps and prop_fps > 0 else self.target_fps
+                self.actual_w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or self.target_w
+                self.actual_h = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or self.target_h
+                prop_fps = self.cap.get(cv2.CAP_PROP_FPS)
+                self.actual_fps = prop_fps if prop_fps and prop_fps > 0 else self.target_fps
 
         print(f"[CAMERA] Aberta câmera {self.camera_index}: Solicitado {self.target_w}x{self.target_h}@{self.target_fps}fps | "
               f"Obtido: {self.actual_w}x{self.actual_h}@{self.actual_fps:.1f}fps")
@@ -1090,10 +1094,11 @@ class LatestFrameCamera:
             except Exception:
                 pass
             self.fb_reader = None
-        if self.cap:
-            try:
-                self.cap.release()
-            except Exception:
-                pass
-            self.cap = None
+        with _CAMERA_HW_LOCK:
+            if self.cap:
+                try:
+                    self.cap.release()
+                except Exception:
+                    pass
+                self.cap = None
         print("[CAMERA] Câmera liberada com sucesso.")

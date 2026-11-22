@@ -159,9 +159,6 @@ class SensorAppController(QObject):
                     on_finished(success, err_msg)
                 except Exception:
                     pass
-            # Re-schedule camera warm-up for next song if in optical mode
-            if self.cfg.get("camera_mode") in ("pscam", "webcam"):
-                self.camera.schedule_warmup(500)
 
         started = self.session.start_tracking(
             prewarmed_camera=prewarmed,

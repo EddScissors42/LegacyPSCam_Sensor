@@ -93,12 +93,17 @@ class PS4DriverInstaller:
         found = False
         try:
             k32 = ctypes.windll.kernel32
+            k32.FindFirstFileW.restype = wintypes.HANDLE
+            k32.FindFirstFileW.argtypes = [wintypes.LPCWSTR, ctypes.c_void_p]
+            k32.FindClose.restype = wintypes.BOOL
+            k32.FindClose.argtypes = [wintypes.HANDLE]
+
             fd = _WIN32_FIND_DATAW()
-            invalid_handle = ctypes.c_void_p(-1).value
+            invalid_handle = wintypes.HANDLE(-1).value
             for inf_name in COMPATIBLE_INF_FILENAMES:
                 pattern = f"{repo_dir}\\{inf_name}_*"
                 h_find = k32.FindFirstFileW(pattern, ctypes.byref(fd))
-                if h_find and h_find != -1 and h_find != invalid_handle:
+                if h_find and h_find != invalid_handle and h_find != 0 and h_find != -1:
                     k32.FindClose(h_find)
                     found = True
                     break
