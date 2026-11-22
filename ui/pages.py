@@ -1376,7 +1376,7 @@ class UIPagesMixin:
         ds4_card.setProperty("class", "card")
         ds4_layout = QVBoxLayout(ds4_card)
         ds4_layout.setContentsMargins(16, 16, 16, 16)
-        ds4_layout.setSpacing(14)
+        ds4_layout.setSpacing(12)
 
         lbl_title = QLabel("DUALSHOCK® 4 CONTROLLER SETTINGS", ds4_card)
         lbl_title.setStyleSheet(
@@ -1384,7 +1384,13 @@ class UIPagesMixin:
         )
         ds4_layout.addWidget(lbl_title)
 
-        # Warning Callout Box
+        lbl_sub = QLabel("Configure motion sensors, tracked hand and hardware responsiveness.", ds4_card)
+        lbl_sub.setStyleSheet(
+            f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
+        )
+        ds4_layout.addWidget(lbl_sub)
+
+        # Warning Callout Box (Kept in same position)
         warn_box = QFrame(ds4_card)
         warn_box.setStyleSheet("""
             QFrame {
@@ -1415,7 +1421,7 @@ class UIPagesMixin:
         warn_layout.addWidget(lbl_warn_text, stretch=1)
         ds4_layout.addWidget(warn_box)
 
-        # Permissive Mode Toggle (Clones & Third-Party Controllers)
+        # Permissive Mode Toggle (Kept in same position)
         perm_box = QFrame(ds4_card)
         perm_box.setStyleSheet(f"""
             QFrame {{
@@ -1458,7 +1464,9 @@ class UIPagesMixin:
         perm_layout.addStretch()
         ds4_layout.addWidget(perm_box)
 
-        # Disconnected Balloon (Shown when DualShock 4 is not connected)
+        # =====================================================================
+        # Disconnected Balloon (Identical structure to Webcam & PS Camera)
+        # =====================================================================
         self.ds4_disconnected_box = QWidget(ds4_card)
         ds4_disc_layout = QVBoxLayout(self.ds4_disconnected_box)
         ds4_disc_layout.setContentsMargins(0, 0, 0, 0)
@@ -1490,110 +1498,188 @@ class UIPagesMixin:
         text_col.addWidget(self.lbl_ds4_conn_info)
         card_layout.addLayout(text_col, stretch=1)
         ds4_disc_layout.addWidget(self.ds4_status_card)
+
+        # Full-width action button matching webcam's "Search for Webcams"
+        self.btn_refresh_ds4 = QPushButton("Search for Controllers", self.ds4_disconnected_box)
+        self.btn_refresh_ds4.setProperty("class", "btn_balloon_action")
+        self.btn_refresh_ds4.setFixedHeight(42)
+        self.btn_refresh_ds4.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_refresh_ds4.clicked.connect(self._reconnect_ds4)
+        ds4_disc_layout.addWidget(self.btn_refresh_ds4)
+
         ds4_layout.addWidget(self.ds4_disconnected_box)
 
-        # Controller Details & Settings Frame (Shown when DualShock 4 is connected)
-        self.ds4_info_frame = QFrame(ds4_card)
-        self.ds4_info_frame.setStyleSheet(f"""
-            QFrame {{
-                background-color: {PALETTE["bg_card"]};
+        # =====================================================================
+        # Connected Controller View (Matching Webcam Card & Settings Blocks)
+        # =====================================================================
+        self.ds4_info_frame = QWidget(ds4_card)
+        ds4_info_layout = QVBoxLayout(self.ds4_info_frame)
+        ds4_info_layout.setContentsMargins(0, 0, 0, 0)
+        ds4_info_layout.setSpacing(10)
+
+        # Block 1: Active Controller Device & Refresh (Full-width block matching block_dev of Webcam)
+        block_ds4_dev = QFrame(self.ds4_info_frame)
+        block_ds4_dev.setObjectName("settingBlockDs4Dev")
+        block_ds4_dev.setFixedHeight(90)
+        block_ds4_dev.setStyleSheet(f"""
+            QFrame#settingBlockDs4Dev {{
+                background-color: #FFFFFF;
                 border: 1px solid {PALETTE["border_subtle"]};
-                border-radius: 8px;
+                border-radius: 10px;
+            }}
+            QFrame#settingBlockDs4Dev:hover {{
+                border-color: {PALETTE["input_border"]};
             }}
         """)
-        ds4_info_layout = QVBoxLayout(self.ds4_info_frame)
-        ds4_info_layout.setContentsMargins(16, 14, 16, 14)
-        ds4_info_layout.setSpacing(12)
+        ds4_dev_layout = QVBoxLayout(block_ds4_dev)
+        ds4_dev_layout.setContentsMargins(14, 10, 14, 10)
+        ds4_dev_layout.setSpacing(4)
 
-        self.lbl_ds4_status = QLabel("Status: Controller Ready for Setup (Awaiting Technical Driver Integration)", self.ds4_info_frame)
+        lbl_dev_title = QLabel("CONTROLLER HARDWARE", block_ds4_dev)
+        lbl_dev_title.setStyleSheet(
+            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent; border: none;"
+        )
+        ds4_dev_layout.addWidget(lbl_dev_title)
+
+        lbl_dev_sub = QLabel("Active Wireless / USB Motion Device", block_ds4_dev)
+        lbl_dev_sub.setStyleSheet(
+            f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
+        )
+        ds4_dev_layout.addWidget(lbl_dev_sub)
+
+        dev_ctrl_row = QHBoxLayout()
+        dev_ctrl_row.setContentsMargins(0, 0, 0, 0)
+        dev_ctrl_row.setSpacing(8)
+
+        # Styled Status badge container
+        status_box = QFrame(block_ds4_dev)
+        status_box.setFixedHeight(32)
+        status_box.setStyleSheet(f"""
+            QFrame {{
+                background-color: #F8FAFC;
+                border: 1px solid {PALETTE["border_subtle"]};
+                border-radius: 6px;
+                padding: 0px 8px;
+            }}
+        """)
+        st_box_layout = QHBoxLayout(status_box)
+        st_box_layout.setContentsMargins(6, 0, 6, 0)
+
+        self.lbl_ds4_status = QLabel("Status: Controller Connected", status_box)
         self.lbl_ds4_status.setStyleSheet(
             f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['ps_blue']}; background: transparent; border: none;"
         )
-        ds4_info_layout.addWidget(self.lbl_ds4_status)
+        st_box_layout.addWidget(self.lbl_ds4_status)
+        dev_ctrl_row.addWidget(status_box, stretch=1)
 
-        # Settings row: Tracked Hand & Sensitivity
-        settings_row = QHBoxLayout()
-        settings_row.setSpacing(16)
+        self.btn_refresh_ds4_icon = QPushButton("↻", block_ds4_dev)
+        self.btn_refresh_ds4_icon.setFixedSize(34, 32)
+        self.btn_refresh_ds4_icon.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_refresh_ds4_icon.setToolTip("Reconnect / Rescan Controller")
+        self.btn_refresh_ds4_icon.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {PALETTE["blue_pastel"]};
+                color: {PALETTE["ps_blue"]};
+                font-family: '{self.font_heading}', sans-serif;
+                font-size: 15px;
+                font-weight: bold;
+                border: 1px solid #CBD5E1;
+                border-radius: 6px;
+                padding: 0px;
+            }}
+            QPushButton:hover {{
+                background-color: {PALETTE["blue_pastel_hover"]};
+                border-color: {PALETTE["ps_blue"]};
+            }}
+            QPushButton:pressed {{
+                background-color: #B8E2F2;
+            }}
+        """)
+        self.btn_refresh_ds4_icon.clicked.connect(self._reconnect_ds4)
+        dev_ctrl_row.addWidget(self.btn_refresh_ds4_icon)
+        ds4_dev_layout.addLayout(dev_ctrl_row)
 
-        # Hand selection block
-        hand_box = QVBoxLayout()
-        hand_box.setSpacing(4)
-        lbl_hand = QLabel("TRACKED HAND (HOLDING CONTROLLER)", self.ds4_info_frame)
+        ds4_info_layout.addWidget(block_ds4_dev)
+
+        # Block 2: Side-by-side Blocks for Tracked Hand & Sensitivity (Matching block_res & block_fps of Webcam)
+        row_settings = QHBoxLayout()
+        row_settings.setSpacing(10)
+
+        # Hand block
+        block_hand = QFrame(self.ds4_info_frame)
+        block_hand.setObjectName("settingBlockDs4Hand")
+        block_hand.setFixedHeight(108)
+        block_hand.setStyleSheet(f"""
+            QFrame#settingBlockDs4Hand {{
+                background-color: #FFFFFF;
+                border: 1px solid {PALETTE["border_subtle"]};
+                border-radius: 10px;
+            }}
+            QFrame#settingBlockDs4Hand:hover {{
+                border-color: {PALETTE["input_border"]};
+            }}
+        """)
+        hand_layout = QVBoxLayout(block_hand)
+        hand_layout.setContentsMargins(14, 10, 14, 10)
+        hand_layout.setSpacing(4)
+
+        lbl_hand = QLabel("TRACKED HAND", block_hand)
         lbl_hand.setStyleSheet(
-            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: #0F172A; background: transparent; border: none;"
+            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent; border: none;"
         )
-        self.cb_ds4_hand = QComboBox(self.ds4_info_frame)
+        hand_layout.addWidget(lbl_hand)
+
+        lbl_hand_sub = QLabel("Holding Controller", block_hand)
+        lbl_hand_sub.setStyleSheet(
+            f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
+        )
+        hand_layout.addWidget(lbl_hand_sub)
+
+        self.cb_ds4_hand = QComboBox(block_hand)
+        self.cb_ds4_hand.setFixedHeight(32)
         self.cb_ds4_hand.addItem("Right Hand (Standard)")
         self.cb_ds4_hand.addItem("Left Hand")
-        self.cb_ds4_hand.setStyleSheet(f"""
-            QComboBox {{
-                background-color: #FFFFFF;
-                color: #0F172A;
-                font-family: '{self.font_body}', sans-serif;
-                border: 1px solid {PALETTE['tab_gray_border']};
-                border-radius: 6px;
-                padding: 6px 12px;
-                font-size: 11px;
-                font-weight: 500;
-                min-width: 170px;
-            }}
-            QComboBox:hover {{
-                border-color: {PALETTE['ps_blue']};
-            }}
-            QComboBox QAbstractItemView {{
-                background-color: #FFFFFF;
-                color: #0F172A;
-                selection-background-color: {PALETTE['ps_blue']};
-                selection-color: #FFFFFF;
-                border: 1px solid {PALETTE['tab_gray_border']};
-                border-radius: 6px;
-            }}
-        """)
-        hand_box.addWidget(lbl_hand)
-        hand_box.addWidget(self.cb_ds4_hand)
-
-        # Sensitivity block
-        sens_box = QVBoxLayout()
-        sens_box.setSpacing(4)
-        lbl_sens = QLabel("HARDWARE ACCELEROMETER GAIN", self.ds4_info_frame)
-        lbl_sens.setStyleSheet(
-            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: #0F172A; background: transparent; border: none;"
-        )
-        self.cb_ds4_sens = QComboBox(self.ds4_info_frame)
-        self.cb_ds4_sens.addItem("1.00x (Standard Hardware Scale)")
-        self.cb_ds4_sens.addItem("1.25x (High Energy / Fast Dances)")
-        self.cb_ds4_sens.addItem("0.85x (Smooth / Gentle Gestures)")
-        self.cb_ds4_sens.setStyleSheet(f"""
-            QComboBox {{
-                background-color: #FFFFFF;
-                color: #0F172A;
-                font-family: '{self.font_body}', sans-serif;
-                border: 1px solid {PALETTE['tab_gray_border']};
-                border-radius: 6px;
-                padding: 6px 12px;
-                font-size: 11px;
-                font-weight: 500;
-                min-width: 190px;
-            }}
-            QComboBox:hover {{
-                border-color: {PALETTE['ps_blue']};
-            }}
-            QComboBox QAbstractItemView {{
-                background-color: #FFFFFF;
-                color: #0F172A;
-                selection-background-color: {PALETTE['ps_blue']};
-                selection-color: #FFFFFF;
-                border: 1px solid {PALETTE['tab_gray_border']};
-                border-radius: 6px;
-            }}
-        """)
-        sens_box.addWidget(lbl_sens)
-        sens_box.addWidget(self.cb_ds4_sens)
-
         current_hand = self.cfg.get("ds4_hand", "right").lower()
         self.cb_ds4_hand.setCurrentIndex(0 if current_hand == "right" else 1)
         self.cb_ds4_hand.currentIndexChanged.connect(self._on_ds4_hand_changed)
+        hand_layout.addWidget(self.cb_ds4_hand)
+        row_settings.addWidget(block_hand, stretch=1)
 
+        # Sensitivity block
+        block_sens = QFrame(self.ds4_info_frame)
+        block_sens.setObjectName("settingBlockDs4Sens")
+        block_sens.setFixedHeight(108)
+        block_sens.setStyleSheet(f"""
+            QFrame#settingBlockDs4Sens {{
+                background-color: #FFFFFF;
+                border: 1px solid {PALETTE["border_subtle"]};
+                border-radius: 10px;
+            }}
+            QFrame#settingBlockDs4Sens:hover {{
+                border-color: {PALETTE["input_border"]};
+            }}
+        """)
+        sens_layout = QVBoxLayout(block_sens)
+        sens_layout.setContentsMargins(14, 10, 14, 10)
+        sens_layout.setSpacing(4)
+
+        lbl_sens = QLabel("MOTION SENSITIVITY", block_sens)
+        lbl_sens.setStyleSheet(
+            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent; border: none;"
+        )
+        sens_layout.addWidget(lbl_sens)
+
+        lbl_sens_sub = QLabel("Hardware Accelerometer Gain", block_sens)
+        lbl_sens_sub.setStyleSheet(
+            f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
+        )
+        sens_layout.addWidget(lbl_sens_sub)
+
+        self.cb_ds4_sens = QComboBox(block_sens)
+        self.cb_ds4_sens.setFixedHeight(32)
+        self.cb_ds4_sens.addItem("1.00x (Standard Hardware Scale)")
+        self.cb_ds4_sens.addItem("1.25x (High Energy / Fast Dances)")
+        self.cb_ds4_sens.addItem("0.85x (Smooth / Gentle Gestures)")
         current_sens = float(self.cfg.get("ds4_sensitivity", 1.0))
         if abs(current_sens - 1.25) < 0.05:
             self.cb_ds4_sens.setCurrentIndex(1)
@@ -1602,23 +1688,17 @@ class UIPagesMixin:
         else:
             self.cb_ds4_sens.setCurrentIndex(0)
         self.cb_ds4_sens.currentIndexChanged.connect(self._on_ds4_sens_changed)
+        sens_layout.addWidget(self.cb_ds4_sens)
+        row_settings.addWidget(block_sens, stretch=1)
 
-        settings_row.addLayout(hand_box, stretch=0)
-        settings_row.addLayout(sens_box, stretch=1)
-        ds4_info_layout.addLayout(settings_row)
+        ds4_info_layout.addLayout(row_settings)
 
-        # Real-time Telemetry Readout
-        self.lbl_ds4_accel = QLabel("3D Accelerometer: Searching for controller...", self.ds4_info_frame)
-        self.lbl_ds4_accel.setStyleSheet(
-            f"font-family: '{self.font_body}'; font-size: 11px; font-weight: 600; color: {PALETTE['text_main']}; background: transparent; border: none;"
-        )
-        ds4_info_layout.addWidget(self.lbl_ds4_accel)
-
-        # Quick Action Buttons: Test Rumble, Reconnect & Skip Finish
+        # Block 3: Quick Action Buttons (Rumble, Reconnect, Skip Finish)
         actions_row = QHBoxLayout()
         actions_row.setSpacing(10)
 
         self.btn_ds4_rumble = QPushButton("Test Rumble Vibration", self.ds4_info_frame)
+        self.btn_ds4_rumble.setFixedHeight(36)
         self.btn_ds4_rumble.setStyleSheet(f"""
             QPushButton {{
                 background-color: #FFFFFF;
@@ -1628,7 +1708,7 @@ class UIPagesMixin:
                 font-weight: bold;
                 border: 1px solid {PALETTE["tab_gray_border"]};
                 border-radius: 6px;
-                padding: 6px 14px;
+                padding: 6px 16px;
             }}
             QPushButton:hover {{
                 border-color: {PALETTE["ps_blue"]};
@@ -1639,6 +1719,7 @@ class UIPagesMixin:
         self.btn_ds4_rumble.clicked.connect(self._test_ds4_rumble)
 
         self.btn_ds4_reconnect = QPushButton("Reconnect Controller", self.ds4_info_frame)
+        self.btn_ds4_reconnect.setFixedHeight(36)
         self.btn_ds4_reconnect.setStyleSheet(f"""
             QPushButton {{
                 background-color: #FFFFFF;
@@ -1648,7 +1729,7 @@ class UIPagesMixin:
                 font-weight: bold;
                 border: 1px solid {PALETTE["tab_gray_border"]};
                 border-radius: 6px;
-                padding: 6px 14px;
+                padding: 6px 16px;
             }}
             QPushButton:hover {{
                 border-color: {PALETTE["ps_blue"]};
@@ -1659,6 +1740,7 @@ class UIPagesMixin:
         self.btn_ds4_reconnect.clicked.connect(self._reconnect_ds4)
 
         self.btn_ds4_skip_finish = QPushButton("Skip Finish", self.ds4_info_frame)
+        self.btn_ds4_skip_finish.setFixedHeight(36)
         self.btn_ds4_skip_finish.setStyleSheet(f"""
             QPushButton {{
                 background-color: #FFFFFF;
@@ -1668,7 +1750,7 @@ class UIPagesMixin:
                 font-weight: bold;
                 border: 1px solid {PALETTE["tab_gray_border"]};
                 border-radius: 6px;
-                padding: 6px 14px;
+                padding: 6px 16px;
             }}
             QPushButton:hover {{
                 border-color: {PALETTE["ps_blue"]};
@@ -1676,7 +1758,7 @@ class UIPagesMixin:
             }}
         """)
         self.btn_ds4_skip_finish.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_ds4_skip_finish.setToolTip("for Just Dance 2022 phone tutorial")
+        self.btn_ds4_skip_finish.setToolTip("Skip tutorial finish step for Just Dance phone controller")
         self.btn_ds4_skip_finish.clicked.connect(self._on_skip_finish_clicked)
 
         actions_row.addWidget(self.btn_ds4_rumble)
@@ -1685,15 +1767,20 @@ class UIPagesMixin:
         actions_row.addStretch()
         ds4_info_layout.addLayout(actions_row)
 
+        # Hidden Telemetry Readout (kept for backward compatibility, hidden per user request)
+        self.lbl_ds4_accel = QLabel("", self.ds4_info_frame)
+        self.lbl_ds4_accel.setVisible(False)
+        ds4_info_layout.addWidget(self.lbl_ds4_accel)
+
         # Instruction details
         lbl_instructions = QLabel(
             "• Hold the DualShock 4 in your active dancing hand with the light bar pointing forward.\n"
-            "• When started, the controller's internal 6-axis IMU will stream physical 3D G-force data directly to Just Dance via the Virtual Phone scoring bridge.",
+            "• When started, the controller's internal 6-axis IMU will stream motion data directly to Just Dance via the Virtual Phone scoring bridge.",
             self.ds4_info_frame
         )
         lbl_instructions.setWordWrap(True)
         lbl_instructions.setStyleSheet(
-            f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
+            f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['text_muted']}; line-height: 1.4; background: transparent; border: none;"
         )
         ds4_info_layout.addWidget(lbl_instructions)
 
