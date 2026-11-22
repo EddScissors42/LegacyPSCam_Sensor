@@ -569,6 +569,13 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
   - **Bottom-Center Pill (Barra de Atalhos):** Pílula centralizada com atalhos de teclado limpos `[Q/ESC] Exit • [R] Reconnect • [L1/R1] Coach • [H] Cycle HUD`.
   - **Suporte a Ciclo de HUD (`[H]`):** Alternância entre HUD Completo (0), Minimalista (1) e Desativado (2) através da tecla `[H]`.
 
+### 38. Resiliência de Câmera Frontal no Smartphone e Fallback em Escada (v0.9.4 Alpha)
+- **Cascata Progressiva de Restrições (`startCamera()`):**
+  - **Eliminação de `OverconstrainedError`:** Removida a restrição rígida de taxa de quadros máxima (`max: 30`), substituída por preferência ideal (`ideal: targetFps`), permitindo que sensores de câmera frontal com taxas variáveis ou limitadas pelo driver sejam aceitos sem rejeição pelo navegador.
+  - **Identificação Exata por Dispositivo (`enumerateDevices`):** Implementada busca antecipada por `deviceId` através de enumeração de dispositivos de hardware, mapeando sensores frontais (`front`, `selfie`, `face`, `anterior`, `frontal`) e traseiros (`back`, `rear`, `environment`, `traseir`) com fallback progressivo até o modo mais permissivo.
+  - **Tratamento de Liberação de Hardware:** Inserido intervalo de liberação de 160ms após parada de trilhas de mídia para permitir que o daemon do Android Camera2 / iOS AVFoundation finalize a sessão antes de abrir o novo sensor, prevenindo `NotReadableError` e `TrackStartError`.
+  - **Diagnóstico Preciso de Erros:** Tratamento diferenciado para erros de câmera na interface web mobile (`NotAllowedError` para permissão, `NotReadableError` para hardware ocupado por outros apps, `OverconstrainedError` para limitações de lente e `NotFoundError`), eliminando mensagens falsas de "Camera Permission Denied" quando a permissão já foi concedida.
+
 ---
 
 ## Roadmap Futuro

@@ -805,36 +805,166 @@ async function requestWakeLock() {
 async function startCamera() {
   if (manualDisconnect) return;
   if (stream) {
-    stream.getTracks().forEach(t => t.stop());
+    try {
+      stream.getTracks().forEach(t => t.stop());
+    } catch (e) {}
     stream = null;
+    videoEl.srcObject = null;
+    // Give mobile camera HAL driver 160ms to cleanly release hardware
+    await new Promise(r => setTimeout(r, 160));
   }
-  try {
-    const constraints = {
+  if (manualDisconnect) return;
+
+  // 1. Attempt device enumeration if available to pinpoint matching lens deviceId
+  let targetDeviceId = null;
+  if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+    try {
+      const allDevs = await navigator.mediaDevices.enumerateDevices();
+      const vDevs = allDevs.filter(d => d.kind === "videoinput");
+      const wantFront = (facingMode === "user");
+      const matched = vDevs.find(d => {
+        const lbl = (d.label || "").toLowerCase();
+        return wantFront
+          ? (lbl.includes("front") || lbl.includes("user") || lbl.includes("selfie") || lbl.includes("face") || lbl.includes("anterior") || lbl.includes("frontal"))
+          : (lbl.includes("back") || lbl.includes("rear") || lbl.includes("environment") || lbl.includes("traseir") || lbl.includes("posterior"));
+      });
+      if (matched && matched.deviceId) {
+        targetDeviceId = matched.deviceId;
+      }
+    } catch (e) {}
+  }
+
+  // 2. Build progressive fallback constraints (from ideal quality down to permissive fallback)
+  const candidateConstraints = [];
+
+  if (targetDeviceId) {
+    candidateConstraints.push({
       audio: false,
       video: {
-        facingMode: { ideal: facingMode },
+        deviceId: { exact: targetDeviceId },
         width: { ideal: targetW },
         height: { ideal: targetH },
-        frameRate: { ideal: targetFps, max: Math.max(30, targetFps) }
+        frameRate: { ideal: targetFps }
       }
-    };
-    stream = await navigator.mediaDevices.getUserMedia(constraints);
-    if (manualDisconnect) {
-      stream.getTracks().forEach(t => t.stop());
-      stream = null;
-      return;
-    }
-    videoEl.srcObject = stream;
-    videoEl.className = (facingMode === "user") ? "mirrored" : "";
-    updateLensButtons();
-    await videoEl.play();
-    requestWakeLock();
-    sendHello();
-  } catch (err) {
-    setStatus("err", "Camera Permission Denied");
-    document.getElementById("infoBox").textContent =
-      "Could not access camera: " + err.message + ". Please allow camera access in your browser.";
+    });
+    candidateConstraints.push({
+      audio: false,
+      video: {
+        deviceId: { exact: targetDeviceId }
+      }
+    });
   }
+
+  // Ideal facingMode + resolution + FPS (NO restrictive 'max' boundary!)
+  candidateConstraints.push({
+    audio: false,
+    video: {
+      facingMode: { ideal: facingMode },
+      width: { ideal: targetW },
+      height: { ideal: targetH },
+      frameRate: { ideal: targetFps }
+    }
+  });
+
+  // Direct string facingMode + resolution
+  candidateConstraints.push({
+    audio: false,
+    video: {
+      facingMode: facingMode,
+      width: { ideal: targetW },
+      height: { ideal: targetH }
+    }
+  });
+
+  // Ideal facingMode without resolution restrictions
+  candidateConstraints.push({
+    audio: false,
+    video: {
+      facingMode: { ideal: facingMode }
+    }
+  });
+
+  // Direct string facingMode alone
+  candidateConstraints.push({
+    audio: false,
+    video: {
+      facingMode: facingMode
+    }
+  });
+
+  // Last-resort generic video fallback
+  candidateConstraints.push({
+    audio: false,
+    video: true
+  });
+
+  let newStream = null;
+  let lastErr = null;
+
+  for (let i = 0; i < candidateConstraints.length; i++) {
+    try {
+      newStream = await navigator.mediaDevices.getUserMedia(candidateConstraints[i]);
+      if (newStream) break;
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+
+  if (!newStream) {
+    const errName = (lastErr && lastErr.name) ? lastErr.name : "UnknownError";
+    const errMsg = (lastErr && lastErr.message) ? lastErr.message : "Camera not accessible";
+
+    if (errName === "NotAllowedError" || errName === "PermissionDeniedError") {
+      setStatus("err", "Camera Permission Denied");
+      document.getElementById("infoBox").textContent =
+        "Camera permission was denied in your browser. Please tap the lock/tune icon in the address bar to allow Camera access, then tap Front/Rear Camera to retry.";
+    } else if (errName === "NotReadableError" || errName === "TrackStartError") {
+      setStatus("err", "Camera Hardware Busy");
+      document.getElementById("infoBox").textContent =
+        "The camera hardware is locked or in use by another app (e.g. WhatsApp, Instagram, system camera). Please close other camera apps and tap Front/Rear Camera to retry.";
+    } else if (errName === "OverconstrainedError") {
+      setStatus("err", "Lens Unsupported");
+      document.getElementById("infoBox").textContent =
+        "Front camera hardware does not support the requested video constraints. Tap Rear Camera to continue dancing.";
+    } else if (errName === "NotFoundError" || errName === "DevicesNotFoundError") {
+      setStatus("err", "Camera Not Found");
+      document.getElementById("infoBox").textContent =
+        "No camera hardware was detected on this mobile device.";
+    } else {
+      setStatus("err", "Camera Error (" + errName + ")");
+      document.getElementById("infoBox").textContent =
+        "Could not start camera: " + errMsg + " (" + errName + "). Tap Front/Rear Camera to retry.";
+    }
+    return;
+  }
+
+  stream = newStream;
+  if (manualDisconnect) {
+    stream.getTracks().forEach(t => t.stop());
+    stream = null;
+    return;
+  }
+  videoEl.srcObject = stream;
+  try {
+    await videoEl.play();
+  } catch (e) {}
+
+  // Determine actual facingMode from track settings if available
+  try {
+    const track = stream.getVideoTracks()[0];
+    const s = track.getSettings ? track.getSettings() : {};
+    if (s.facingMode && (s.facingMode === "user" || s.facingMode === "environment")) {
+      facingMode = s.facingMode;
+    }
+  } catch (e) {}
+
+  videoEl.className = (facingMode === "user") ? "mirrored" : "";
+  updateLensButtons();
+  setStatus(streamingActive ? "ok" : "warn", streamingActive ? "Streaming to PC" : "Ready • Standby");
+  document.getElementById("infoBox").textContent =
+    `Connected to PC via Secure TLS (WSS). Active Lens: ${facingMode === "user" ? "Front Camera" : "Rear Camera"}.`;
+  requestWakeLock();
+  sendHello();
 }
 
 function updateLensButtons() {
@@ -851,10 +981,11 @@ function updateLensButtons() {
   }
 }
 
-function setCameraLens(mode) {
+async function setCameraLens(mode) {
   if (facingMode === mode && stream) return;
   facingMode = mode;
-  startCamera();
+  updateLensButtons();
+  await startCamera();
 }
 
 function toggleCameraLens() {
@@ -1047,7 +1178,7 @@ function connectWebSocket() {
           targetFps = msg.fps;
           needRestartCam = true;
         }
-        if (msg.lens && msg.lens !== facingMode) {
+        if (msg.lens && msg.lens !== facingMode && (!stream || msg.force_lens)) {
           facingMode = msg.lens;
           needRestartCam = true;
         }
