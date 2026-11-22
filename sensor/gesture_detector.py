@@ -55,6 +55,30 @@ def check_arm_raised(px_joints: Optional[List[Tuple[float, float, float]]]) -> b
     return bool(r_up or l_up)
 
 
+def get_raised_hand_coords(px_joints: Optional[List[Tuple[float, float, float]]]) -> Optional[Tuple[int, int]]:
+    """Returns the (x, y) coordinates of the active raised hand, or None if neither hand is up."""
+    if not px_joints or len(px_joints) < 12:
+        return None
+
+    head = px_joints[3]
+    sh_l, sh_r = px_joints[4], px_joints[8]
+    wrist_l, wrist_r = px_joints[6], px_joints[10]
+    hand_l, hand_r = px_joints[7], px_joints[11]
+
+    ref_y = head[1] if (len(head) > 2 and head[2] > 0.3) else min(sh_l[1], sh_r[1]) - 20
+
+    r_up = (hand_r[2] > 0.3 and (hand_r[1] < ref_y or (hand_r[1] < sh_r[1] - 25 and wrist_r[1] < sh_r[1])))
+    l_up = (hand_l[2] > 0.3 and (hand_l[1] < ref_y or (hand_l[1] < sh_l[1] - 25 and wrist_l[1] < sh_l[1])))
+
+    if r_up and l_up:
+        return (int(hand_r[0]), int(hand_r[1])) if hand_r[1] < hand_l[1] else (int(hand_l[0]), int(hand_l[1]))
+    elif r_up:
+        return (int(hand_r[0]), int(hand_r[1]))
+    elif l_up:
+        return (int(hand_l[0]), int(hand_l[1]))
+    return None
+
+
 class ArmRaiseGestureDetector:
     """
     Modular state machine that detects an arm held raised for a specified duration,
@@ -71,11 +95,13 @@ class ArmRaiseGestureDetector:
         self.last_trigger_time: float = 0.0
         self.feedback_duration: float = 1.4
         self.active_player_idx: Optional[int] = None
+        self.last_hand_pos: Optional[Tuple[int, int]] = None
 
     def reset(self):
         self.start_time = None
         self.triggered = False
         self.active_player_idx = None
+        self.last_hand_pos = None
 
     def update(
         self,
@@ -123,9 +149,11 @@ class ArmRaiseGestureDetector:
 
         in_cooldown = (now - self.last_trigger_time < self.cooldown_seconds)
         raising_player = None
+        current_hand_pos = None
         for idx, px in valid_players:
             if check_arm_raised(px):
                 raising_player = idx
+                current_hand_pos = get_raised_hand_coords(px)
                 break
 
         arm_up = (raising_player is not None)
@@ -136,6 +164,8 @@ class ArmRaiseGestureDetector:
 
         if arm_up and not in_cooldown:
             self.active_player_idx = raising_player
+            if current_hand_pos:
+                self.last_hand_pos = current_hand_pos
             if self.start_time is None:
                 self.start_time = now
                 self.triggered = False
@@ -183,4 +213,5 @@ class ArmRaiseGestureDetector:
             "triggered": just_triggered,
             "player_idx": self.active_player_idx,
             "feedback_active": feedback_active,
+            "hand_pos": current_hand_pos if holding else self.last_hand_pos,
         }

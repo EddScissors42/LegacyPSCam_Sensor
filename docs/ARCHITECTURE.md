@@ -176,11 +176,13 @@ flowchart TD
   4. Trata atalhos: `[C]` Recalibrar, `[M]` Alternar espelhamento, `[H]` Ocultar HUD, `[Q/ESC]` Sair.
   5. Fecha e desaloca os recursos de forma limpa ao encerrar.
 
-### 6. `tracking_overlay.py` — Renderizador de HUD, Silhueta e Esqueleto
+### 6. `tracking_overlay.py` — Renderizador de HUD, Silhueta, Esqueleto e Efeitos Gamificados
 - **Responsabilidade:** 
-  1. `draw_player_silhouette`: Extrai os contornos da máscara `320x240`, escala os vértices para a resolução do frame de preview e aplica `cv2.addWeighted` exclusivamente dentro da *Bounding Box* (ROI) do jogador, eliminando cópias de frame inteiro a 60 FPS.
-  2. `draw_skeleton`: Desenha os nós articulares e os ossos com gradiente de cores.
-  3. `draw_hud`: Exibe os banners superior e inferior usando fatias de ROI in-place com contadores reais de FPS da câmera e da inferência, status do canal IPC e atalhos de teclado.
+  1. `draw_rounded_glass_pill`: Desenho ultra-otimizado (< 0.05ms) de cápsulas flutuantes translúcidas ("Glass Pills") com cantos arredondados e bordas anti-aliasing sobre ROIs restritos.
+  2. `draw_player_silhouette`: Extrai os contornos da máscara anatômica `320x240`, escala os vértices para o frame de preview e renderiza a silhueta semitransparente ("sombrinha") com contorno neon duplo (glow suave colorido de 3px + linha branca nítida de 1px com `cv2.LINE_AA`).
+  3. `draw_skeleton`: Desenha articulações e ossos coloridos por jogador (P1 Azul / P2 Laranja Claro). Inclui a **Scoring Hand Aura**, halo dinâmico pulsante na mão de pontuação (Virtual Phone) cuja amplitude e brilho reagem à velocidade do braço (`hand_speed`).
+  4. `draw_gesture_feedback`: Anel radial neon de progresso (0° a 360°) posicionado dinamicamente ao redor da mão erguida do jogador (`hand_pos`), com ponto luminoso orbitante e ondas expansivas verdes ao disparar o comando de `[ENTER]`.
+  5. `draw_hud`: Interface moderna dividida em 4 cápsulas flutuantes (Branding & Câmera, Status & Calibração dos Dançarinos, Métricas de FPS & IPC, e Atalhos de Teclado compactos na base). Suporta 3 modos cicláveis com a tecla `[H]` (Modo 0: Completo, Modo 1: Minimalista, Modo 2: Desligado/Espelho Puro).
 
 ### 7. `kinect_shared_memory.py` — Ponte IPC Multi-Canal (`KinectBridge`)
 - **Responsabilidade:** Gerencia os três canais de memória mapeada consumidos pelo `Kinect10.dll`:

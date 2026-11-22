@@ -432,7 +432,9 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None, prewar
             if is_tracked and display_mask is not None:
                 display_frame = overlay.draw_multi_player_silhouettes(display_frame, display_mask)
 
-            # Render Skeletons on top for each active player
+            # Render Skeletons on top for each active player with Scoring Hand Aura
+            scoring_hand_side = str(getattr(vphone, "hand", "right")).lower()
+            current_hand_speed = float(getattr(vphone.accelerometer, "latest_speed", 0.0))
             for s_idx, p_px in enumerate(display_players_px):
                 if p_px:
                     display_frame = overlay.draw_skeleton(
@@ -440,6 +442,8 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None, prewar
                         p_px,
                         player_idx=s_idx,
                         show_badge=(max_players >= 2),
+                        scoring_hand=scoring_hand_side,
+                        hand_speed=current_hand_speed,
                     )
 
             primary_calib = primary_p.is_calibrated if primary_p else tracker.calibrator.is_calibrated
@@ -457,24 +461,12 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None, prewar
                 tracked_mask=multi_res.tracked_mask,
             )
 
-            # Render gesture hold progress / confirmation feedback on preview
-            if gesture_info.get("holding"):
-                elapsed = min(gesture_info["target"], gesture_info["elapsed"])
-                pct = int(gesture_info["progress"] * 100)
-                target_s = gesture_info["target"]
-                p_idx = gesture_info.get("player_idx")
-                p_tag = f"P{p_idx + 1} " if (p_idx is not None and max_players >= 2) else ""
-                hud_txt = f"{p_tag}HOLD ARM UP: {elapsed:.1f}s / {target_s:.1f}s ({pct}%) -> [ENTER]"
-                cv2.putText(display_frame, hud_txt, (max(20, fw // 2 - 190), fh - 44),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0), 3, cv2.LINE_AA)
-                cv2.putText(display_frame, hud_txt, (max(20, fw // 2 - 190), fh - 44),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 240, 255), 2, cv2.LINE_AA)
-            elif gesture_info.get("feedback_active"):
-                hud_txt = ">>> ENTER COMMAND SENT! <<<"
-                cv2.putText(display_frame, hud_txt, (max(20, fw // 2 - 150), fh - 44),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 0, 0), 4, cv2.LINE_AA)
-                cv2.putText(display_frame, hud_txt, (max(20, fw // 2 - 150), fh - 44),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.65, (50, 255, 50), 2, cv2.LINE_AA)
+            # Render modern gesture radial progress ring & success pulse
+            display_frame = overlay.draw_gesture_feedback(
+                display_frame,
+                gesture_info,
+                max_players=max_players,
+            )
 
             cv2.imshow(window_name, display_frame)
 

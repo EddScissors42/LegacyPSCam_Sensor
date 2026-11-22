@@ -515,6 +515,27 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
   - O perfil **Competitive (Lite AI)** passa a ser o padrão recomendado (`RECOMMENDED`) da interface para garantir máxima fluidez em 1P e 2P.
   - Quando **2 Players (Duo)** é selecionado na aba **Calibration**, um banner de aviso logo abaixo da seleção de modelo orienta que o **Lite AI** é o modelo ideal para sustentar FPS estável na CPU com 2 jogadores.
 
+### 35. Modernização Visual do HUD & Efeitos Gamificados de Rastreamento (v0.9.1 Alpha)
+- **Cápsulas Flutuantes Estilo Glass Pills (`draw_rounded_glass_pill`):**
+  - Substituição das antigas barras pretas horizontais opacas que cortavam o topo e a base da tela por cápsulas flutuantes com cantos arredondados, fundo de vidro escuro translúcido (`alpha=0.62`) e bordas sutis neon/azuladas.
+  - **Distribuição Anatômica Inteligente:**
+    - **Pílula Superior Esquerda:** Branding da aplicação ("LEGACY PSCAM") e modelo/resolução da câmera.
+    - **Pílula Superior Central:** Status do dançarino (`TRACKING ACTIVE` / `SEARCHING`), nível de calibração (`FULL BODY` / `UPPER BODY`) e indicador de slots ativos (`P1` em Azul e `P2` em Laranja Claro).
+    - **Pílula Superior Direita:** Métricas em tempo real de FPS da câmera, FPS do pipeline de tracking e integridade da ponte IPC (`Kinect JDP1/JMI1`).
+    - **Pílula Inferior Central:** Badges compactos dos atalhos de teclado (`[C] Calibrar • [M] Espelho • [H] Ciclar HUD • [Q/ESC] Sair`), liberando completamente os cantos inferiores da tela para que os pés dos dançarinos fiquem 100% visíveis em corpo inteiro.
+- **Ciclo de Modos de HUD (`[H]`):**
+  - **Modo 0 (Full HUD):** Exibe todas as métricas detalhadas (câmera, FPS, IPC e atalhos).
+  - **Modo 1 (Minimalist / Clean Dance):** Exibe apenas a pílula central com o status dos dançarinos e indicador de calibração, reduzindo distrações na tela.
+  - **Modo 2 (Off / Immersive Mirror):** Desativa completamente todo o HUD textual, mantendo apenas a silhueta do jogador e o esqueleto anatômico para uma experiência de espelho de dança totalmente imersiva.
+- **Anel de Progresso Radial de Gesto (`draw_gesture_feedback`):**
+  - Ao erguer a mão por 1.5–2.0 segundos para disparar o comando de `[ENTER]`, um anel radial de progresso neon (`cv2.ellipse` de 0° a 360°) renderiza diretamente ao redor da mão erguida do jogador, acompanhando seu movimento em tempo real.
+  - Inclui ponto luminoso orbitante indicador de progresso e, ao atingir 100%, emite ondas concêntricas expansivas verdes com aviso luminoso `ENTER SENT!`.
+- **Aura Dinâmica na Mão de Pontuação (Scoring Hand Aura):**
+  - O jogador que utiliza a emulação de celular (Virtual Phone) recebe um halo pulsante e anéis radiantes na mão ativa de pontuação (mão direita ou esquerda configurada).
+  - O raio e o brilho do halo reagem dinamicamente à velocidade instantânea do braço (`hand_speed`), oferecendo feedback visual imediato para movimentos rápidos e viradas de dança.
+- **Contorno Neon Duplo na Silhueta (`draw_player_silhouette`):**
+  - O contorno da silhueta foi aprimorado com uma camada dupla: um glow suave colorido de 3px com interpolação anti-aliasing seguido por uma linha de acabamento interna ultra-nítida de 1px, resultando em um visual moderno com identidade visual limpa.
+
 ---
 
 ## Roadmap Futuro
