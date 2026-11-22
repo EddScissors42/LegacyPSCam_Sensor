@@ -7,6 +7,7 @@ Decoupled from Qt UI presentation. Fully lazy via PEP 562.
 import sys
 import math
 import threading
+import time
 from typing import Optional, Tuple, Dict, Any, Callable
 
 from sensor.config_manager import ConfigManager, parse_preset
@@ -184,8 +185,9 @@ class DeviceController:
             try:
                 ds4 = self.get_ds4()
                 if ds4.is_connected:
-                    ds4.disconnect()
-                    time.sleep(0.1)
+                    if callback:
+                        callback(True)
+                    return
                 ok = ds4.connect(permissive=perm)
                 if ok:
                     ds4.trigger_rumble(small=140, large=80, duration_sec=0.15)

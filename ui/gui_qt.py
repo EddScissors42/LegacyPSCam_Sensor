@@ -182,6 +182,7 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
         self._set_mode(initial_mode, animate=False)
         if initial_mode == "ds4":
             self._update_pscam_status()
+        self._update_start_button_state()
 
         if auto_discover:
             self._refresh_cameras_async()
@@ -769,7 +770,8 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
         self.btn_start = QPushButton("START TRACKING", self.content_widget)
         self.btn_start.setProperty("class", "btn_cta")
         self.btn_start.setFixedHeight(48)
-        self.btn_start.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_start.setEnabled(False)
+        self.btn_start.setCursor(Qt.CursorShape.ForbiddenCursor)
         self.btn_start.clicked.connect(self._start_tracking)
         content_layout.addWidget(self.btn_start)
 
@@ -911,6 +913,86 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
     def is_camera_accessible(self) -> bool:
         """Returns True if the currently selected camera device is connected and accessible."""
         return self.controller.camera.is_camera_accessible(self.cfg.get("camera_mode", "pscam"))
+
+    def is_device_ready_for_tracking(self, mode: Optional[str] = None) -> bool:
+        """Returns True if the peripheral/camera corresponding to the active mode is connected and ready."""
+        m = mode or self.cfg.get("camera_mode", "pscam")
+        if m == "ds4":
+            try:
+                st = self.controller.devices.get_ds4_readout()
+                return bool(st.get("is_connected", False))
+            except Exception:
+                return False
+        elif m == "pscam":
+            return (getattr(self, "_current_pscam_state", "DISCONNECTED") == "READY")
+        elif m == "phone_cam":
+            try:
+                st = self.controller.devices.get_phone_cam_status()
+                return bool(st.get("is_connected", False))
+            except Exception:
+                return False
+        else:  # webcam
+            cams = getattr(self, "camera_list", [])
+            webcams = [c for c in cams if not c.is_pscam]
+            if not webcams and not any(c.is_pscam for c in cams):
+                webcams = cams
+            return len(webcams) > 0
+
+    def _update_start_button_state(self):
+        """
+        Dynamically updates the enabled state, text, cursor and tooltip of the primary CTA
+        button (btn_start) based on whether tracking is currently active and whether the
+        hardware/stream required for the active mode is fully connected and ready.
+        """
+        if not hasattr(self, "btn_start"):
+            return
+
+        if getattr(self, "is_tracking_active", False):
+            self.btn_start.setText("TRACKING IN PROGRESS...")
+            self.btn_start.setEnabled(False)
+            self.btn_start.setCursor(Qt.CursorShape.ForbiddenCursor)
+            self.btn_start.setToolTip("Dance tracking is currently active.")
+            return
+
+        mode = self.cfg.get("camera_mode", "pscam")
+        ready = self.is_device_ready_for_tracking(mode)
+
+        if mode == "ds4":
+            self.btn_start.setText("START CONTROLLER (DS4)")
+            self.btn_start.setEnabled(ready)
+            if ready:
+                self.btn_start.setCursor(Qt.CursorShape.PointingHandCursor)
+                self.btn_start.setToolTip("Start motion tracking with DualShock 4 controller")
+            else:
+                self.btn_start.setCursor(Qt.CursorShape.ForbiddenCursor)
+                self.btn_start.setToolTip("DualShock 4 not connected. Connect via USB cable or pair via Bluetooth.")
+        elif mode == "pscam":
+            self.btn_start.setText("START TRACKING")
+            self.btn_start.setEnabled(ready)
+            if ready:
+                self.btn_start.setCursor(Qt.CursorShape.PointingHandCursor)
+                self.btn_start.setToolTip("Start tracking with PlayStation Camera (60 FPS)")
+            else:
+                self.btn_start.setCursor(Qt.CursorShape.ForbiddenCursor)
+                self.btn_start.setToolTip("PlayStation Camera not connected. Connect via USB 3.0 to start tracking.")
+        elif mode == "phone_cam":
+            self.btn_start.setText("START TRACKING")
+            self.btn_start.setEnabled(ready)
+            if ready:
+                self.btn_start.setCursor(Qt.CursorShape.PointingHandCursor)
+                self.btn_start.setToolTip("Start tracking with connected Smartphone Camera")
+            else:
+                self.btn_start.setCursor(Qt.CursorShape.ForbiddenCursor)
+                self.btn_start.setToolTip("Smartphone not connected. Scan the QR code to connect your phone.")
+        else:  # webcam
+            self.btn_start.setText("START TRACKING")
+            self.btn_start.setEnabled(ready)
+            if ready:
+                self.btn_start.setCursor(Qt.CursorShape.PointingHandCursor)
+                self.btn_start.setToolTip("Start tracking with selected Webcam")
+            else:
+                self.btn_start.setCursor(Qt.CursorShape.ForbiddenCursor)
+                self.btn_start.setToolTip("No webcam detected. Connect a camera to start tracking.")
 
     def _disabled_tab_css(self) -> str:
         return f"""
@@ -1095,6 +1177,7 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
             if hasattr(self, "btn_start"):
                 self.btn_start.setText("START TRACKING")
         self._update_exp_view_for_mode(mode)
+        self._update_start_button_state()
         self._save_settings()
 
     def _update_sidebar_buttons(self):
@@ -1170,6 +1253,7 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
                 self.display_card.setVisible(True)
 
         self._update_tab_availability()
+        self._update_start_button_state()
 
     def _refresh_presets(self):
         mode = self.cfg.get("camera_mode", "pscam")
@@ -1343,6 +1427,7 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
             self.btn_refresh_webcam.setText("Search for Webcams")
         self._update_pscam_status()
         self._update_camera_dropdown_for_mode()
+        self._update_start_button_state()
 
     def _on_camera_selected(self, index: int):
         sel_text = self.cb_cameras.currentText()
@@ -1477,6 +1562,7 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
             if not is_conn and self.is_tracking_active and self.cfg.get("camera_mode") == "phone_cam":
                 self.controller.session.stop_tracking()
             self._update_video_view_visibility()
+        self._update_start_button_state()
 
     # =========================================================================
     # VIRTUAL PHONE CONTROLLER (CELULAR VIRTUAL) HANDLERS
@@ -1828,6 +1914,7 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
             self.lbl_ds4_accel.setStyleSheet(
                 f"font-family: '{self.font_body}'; font-size: 11px; font-weight: 500; color: {PALETTE['text_muted']}; background: transparent; border: none;"
             )
+        self._update_start_button_state()
 
     def _test_ds4_rumble(self):
         ok = self.controller.devices.trigger_test_rumble()
@@ -1967,6 +2054,8 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
     def _start_tracking(self):
         if self.is_tracking_active:
             return
+        if hasattr(self, "btn_start") and not self.btn_start.isEnabled():
+            return
 
         mode = self.cfg.get("camera_mode", "pscam")
         ok, title, msg = self.controller.validate_pre_tracking(mode)
@@ -1991,11 +2080,7 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
         self.is_tracking_active = False
         if hasattr(self, "lbl_vphone_accel"):
             self.lbl_vphone_accel.setVisible(False)
-        if self.cfg.get("camera_mode") == "ds4":
-            self.btn_start.setText("START CONTROLLER (DS4)")
-        else:
-            self.btn_start.setText("START TRACKING")
-        self.btn_start.setEnabled(True)
+        self._update_start_button_state()
         self.showNormal()
         self.activateWindow()
         self._refresh_cameras()

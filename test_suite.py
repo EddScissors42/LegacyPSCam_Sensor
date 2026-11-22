@@ -1246,6 +1246,13 @@ def test_ds4_controller():
     g_force = mag / scale
     assert math.isclose(g_force, 1.0, rel_tol=1e-2)
 
+    # 6. Verify DeviceController get_ds4_readout() and state contract
+    from ui.controllers.device_controller import DeviceController
+    dc = DeviceController()
+    st = dc.get_ds4_readout()
+    assert isinstance(st, dict)
+    assert "is_connected" in st
+
     print("  -> DualShock 4 & Clone IMU Compatibility PASSED")
 
 
@@ -2084,6 +2091,15 @@ def test_multi_player_tracking():
         win.cb_players_mode.setCurrentIndex(0)  # Restore 1 Player (Solo)
         assert win.cfg["max_players"] == 1
         assert win.two_player_warn_box.isHidden(), "2P warning box must be hidden in 1-Player mode"
+
+        # 7. Verify Reactive Start Button (disabled when peripheral is disconnected)
+        win._set_mode("pscam", animate=False)
+        assert win.btn_start.isEnabled() is False, "Start button must be disabled when PS Camera is not connected"
+        assert win.btn_start.text() == "START TRACKING"
+
+        win._set_mode("phone_cam", animate=False)
+        assert win.btn_start.isEnabled() is False, "Start button must be disabled when Phone Camera is not connected"
+        assert win.btn_start.text() == "START TRACKING"
         win.close()
 
     print("  -> Multi-Player (2P Duo) Pose Engine, Anti-Swap Memory & JDP2/JMI2 IPC PASSED")

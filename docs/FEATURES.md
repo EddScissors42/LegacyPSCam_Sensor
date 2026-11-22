@@ -536,6 +536,19 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
 - **Contorno Neon Duplo na Silhueta (`draw_player_silhouette`):**
   - O contorno da silhueta foi aprimorado com uma camada dupla: um glow suave colorido de 3px com interpolação anti-aliasing seguido por uma linha de acabamento interna ultra-nítida de 1px, resultando em um visual moderno com identidade visual limpa.
 
+### 36. Transição Fluida no USB para DualShock 4 & Validação Reativa do Botão Start Tracking (v0.9.2 Alpha)
+- **Conexão USB Estável e Transição Imediata da Interface (`DS4Controller` & `DeviceController`):**
+  - **Correção de Escopo de Tempo:** Adicionado o módulo padrão `time` em `ui/controllers/device_controller.py`, eliminando a interrupção silenciosa (`NameError`) no cálculo da taxa instantânea em Hz e permitindo que o estado de conexão seja lido de forma contínua e determinística.
+  - **Transição Automática de Tela:** Ao plugar o controle via cabo USB, a interface do usuário oculta imediatamente o balão informativo `ds4_disconnected_box` ("Connecting to...") e ativa o quadro de métricas e status `ds4_info_frame`, apresentando em tempo real nível de bateria com indicador de carregamento `[Charging]`, frequência de amostragem em Hz e telemetria tridimensional do acelerômetro (`X`, `Y`, `Z` e magnitude `|G|`).
+  - **Prevenção de Re-desconexão Indesejada:** Ajustado o worker `connect_ds4_async` para não forçar ciclo de desconexão e delay caso o dispositivo já se encontre conectado, evitando desconexões instantâneas durante requisições assíncronas concorrentes.
+- **Validação Reativa do Botão Principal "Start Tracking" / "Start Controller" (`_update_start_button_state`):**
+  - O botão de ação principal da janela (`btn_start`) agora é dinamicamente habilitado (`setEnabled(True)`) apenas quando o hardware ou stream do modo selecionado estiver fisicamente detectado, pareado e pronto para uso:
+    - **PlayStation Camera (`pscam`):** Habilitado apenas quando a câmera estiver conectada e o driver WinUSB/DirectShow reportar status `READY`.
+    - **Webcam (`webcam`):** Habilitado apenas quando houver pelo menos uma câmera válida detectada e selecionada no sistema.
+    - **Phone Camera (`phone_cam`):** Habilitado apenas quando um smartphone estiver ativamente pareado e conectado via WebSocket.
+    - **DualShock 4 (`ds4`):** Habilitado apenas quando o controle estiver conectado (`is_connected = True`) via USB ou Bluetooth.
+  - **Feedback Visual Aprimorado:** Quando o dispositivo correspondente estiver desconectado, o botão exibe o cursor proibido (`ForbiddenCursor`), o estilo visual desabilitado em cinza suave e tooltips explicativas em tempo real (ex.: *"PlayStation Camera not connected. Connect via USB 3.0 to start tracking"*), impedindo que o usuário tente iniciar uma sessão de rastreamento com dispositivos ausentes.
+
 ---
 
 ## Roadmap Futuro
