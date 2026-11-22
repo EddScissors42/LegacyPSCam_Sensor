@@ -441,7 +441,25 @@ class TrackingOverlay:
             tracked_mask = 1 if is_tracked else 0
 
         # =====================================================================
-        # TOP CENTER PILL: DANCER TRACKING STATUS (Visible in Full & Minimalist)
+        # TOP RIGHT PILL: FPS & IPC BRIDGE TELEMETRY (Only in Full HUD)
+        # =====================================================================
+        right_w, right_h = 236, 44
+        right_x, right_y = fw - right_w - 16, 14
+        if self.hud_mode == 0:
+            draw_rounded_glass_pill(frame, right_x, right_y, right_w, right_h, radius=12, bg_color=COLOR_GLASS_BG, alpha=0.74, border_color=COLOR_GLASS_BORDER)
+
+            # Green pulse for IPC Active
+            ipc_dot_x, ipc_dot_y = right_x + 18, right_y + 22
+            cv2.circle(frame, (ipc_dot_x, ipc_dot_y), 4, COLOR_STATUS_OK, -1, cv2.LINE_AA)
+            cv2.circle(frame, (ipc_dot_x, ipc_dot_y), 6, COLOR_STATUS_OK, 1, cv2.LINE_AA)
+
+            fps_text = f"CAM: {cam_fps:.0f} FPS  |  AI: {track_fps:.0f} FPS"
+            cv2.putText(frame, fps_text, (right_x + 32, right_y + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.40, COLOR_NEON_CYAN, 1, cv2.LINE_AA)
+            bridge_text = "IPC: JDP2 & JMI2 Active" if max_players >= 2 else "IPC: JDP1 & JMI1 Active"
+            cv2.putText(frame, bridge_text, (right_x + 32, right_y + 36), cv2.FONT_HERSHEY_SIMPLEX, 0.35, COLOR_STATUS_OK, 1, cv2.LINE_AA)
+
+        # =====================================================================
+        # RIGHT PILL (BELOW FPS): DANCER TRACKING STATUS (Visible in Full & Minimalist)
         # =====================================================================
         if max_players >= 2:
             p1_on = bool(tracked_mask & 1)
@@ -464,37 +482,38 @@ class TrackingOverlay:
                 badge_color = COLOR_STATUS_WAIT
         else:
             if is_tracked:
-                tier_desc = "Full Body (100% Calibrated)" if calibration_tier == "full_body" else "Flexible Half Body / Desk"
+                tier_desc = "Full Body Calibrated" if calibration_tier == "full_body" else "Flexible Half Body / Desk"
                 status_text = "DANCER ACTIVE"
                 status_sub = tier_desc
                 badge_color = COLOR_STATUS_OK
             else:
-                status_text = "SEARCHING FOR DANCER..."
+                status_text = "SEARCHING DANCER..."
                 status_sub = "Step into camera frame"
                 badge_color = COLOR_STATUS_WAIT
 
-        center_w, center_h = 280, 44
-        center_x = (fw - center_w) // 2
-        center_y = 14
-        draw_rounded_glass_pill(frame, center_x, center_y, center_w, center_h, radius=12, bg_color=COLOR_GLASS_BG, alpha=0.78, border_color=badge_color)
+        status_w, status_h = 236, 44
+        status_x = fw - status_w - 16
+        # In Minimalist mode, place at top right (y=14); in Full HUD, stack directly below FPS pill (y=66)
+        status_y = 14 if self.hud_mode == 1 else (right_y + right_h + 8)
+        draw_rounded_glass_pill(frame, status_x, status_y, status_w, status_h, radius=12, bg_color=COLOR_GLASS_BG, alpha=0.78, border_color=badge_color)
 
         # Pulsing status dot
         pulse_r = int(5 + (math.sin(now * 4.0) + 1.0) * 1.5)
-        dot_x, dot_y = center_x + 18, center_y + 22
+        dot_x, dot_y = status_x + 18, status_y + 22
         cv2.circle(frame, (dot_x, dot_y), pulse_r + 2, badge_color, 1, cv2.LINE_AA)
         cv2.circle(frame, (dot_x, dot_y), 4, badge_color, -1, cv2.LINE_AA)
 
-        cv2.putText(frame, status_text, (center_x + 36, center_y + 20), cv2.FONT_HERSHEY_DUPLEX, 0.44, COLOR_TEXT_WHITE, 1, cv2.LINE_AA)
-        cv2.putText(frame, status_sub, (center_x + 36, center_y + 36), cv2.FONT_HERSHEY_SIMPLEX, 0.35, COLOR_TEXT_DIM, 1, cv2.LINE_AA)
+        cv2.putText(frame, status_text, (status_x + 34, status_y + 20), cv2.FONT_HERSHEY_DUPLEX, 0.42, COLOR_TEXT_WHITE, 1, cv2.LINE_AA)
+        cv2.putText(frame, status_sub, (status_x + 34, status_y + 36), cv2.FONT_HERSHEY_SIMPLEX, 0.33, COLOR_TEXT_DIM, 1, cv2.LINE_AA)
 
-        # In Minimalist Mode (hud_mode == 1), only the center status badge is shown
+        # In Minimalist Mode (hud_mode == 1), only the status badge is shown
         if self.hud_mode == 1:
             return frame
 
         # =====================================================================
         # TOP LEFT PILL: BRANDING & CAMERA PROFILE
         # =====================================================================
-        left_w, left_h = 270, 44
+        left_w, left_h = min(260, max(200, fw - right_w - 48)), 44
         left_x, left_y = 16, 14
         draw_rounded_glass_pill(frame, left_x, left_y, left_w, left_h, radius=12, bg_color=COLOR_GLASS_BG, alpha=0.74, border_color=COLOR_GLASS_BORDER)
 
@@ -503,32 +522,17 @@ class TrackingOverlay:
         cv2.circle(frame, (orb_x, orb_y), 7, (255, 120, 20), -1, cv2.LINE_AA)
         cv2.circle(frame, (orb_x, orb_y), 9, (255, 255, 255), 1, cv2.LINE_AA)
 
-        cv2.putText(frame, "LEGACY PSCAM SENSOR", (left_x + 36, left_y + 20), cv2.FONT_HERSHEY_DUPLEX, 0.46, COLOR_TEXT_WHITE, 1, cv2.LINE_AA)
+        cv2.putText(frame, "LEGACY PSCAM SENSOR", (left_x + 36, left_y + 20), cv2.FONT_HERSHEY_DUPLEX, 0.44, COLOR_TEXT_WHITE, 1, cv2.LINE_AA)
         mode_tag = "[2P DUO]" if max_players >= 2 else "[1P SOLO]"
         cam_sub = f"{camera_info_str} {mode_tag} {'[MIRROR]' if is_mirrored else ''}"
-        cv2.putText(frame, cam_sub, (left_x + 36, left_y + 36), cv2.FONT_HERSHEY_SIMPLEX, 0.35, COLOR_TEXT_DIM, 1, cv2.LINE_AA)
-
-        # =====================================================================
-        # TOP RIGHT PILL: FPS & IPC BRIDGE TELEMETRY
-        # =====================================================================
-        right_w, right_h = 230, 44
-        right_x, right_y = fw - right_w - 16, 14
-        draw_rounded_glass_pill(frame, right_x, right_y, right_w, right_h, radius=12, bg_color=COLOR_GLASS_BG, alpha=0.74, border_color=COLOR_GLASS_BORDER)
-
-        # Green pulse for IPC Active
-        ipc_dot_x, ipc_dot_y = right_x + 18, right_y + 22
-        cv2.circle(frame, (ipc_dot_x, ipc_dot_y), 4, COLOR_STATUS_OK, -1, cv2.LINE_AA)
-        cv2.circle(frame, (ipc_dot_x, ipc_dot_y), 6, COLOR_STATUS_OK, 1, cv2.LINE_AA)
-
-        fps_text = f"CAM: {cam_fps:.0f} FPS  |  AI: {track_fps:.0f} FPS"
-        cv2.putText(frame, fps_text, (right_x + 32, right_y + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.40, COLOR_NEON_CYAN, 1, cv2.LINE_AA)
-        bridge_text = "IPC: JDP2 & JMI2 Active" if max_players >= 2 else "IPC: JDP1 & JMI1 Active"
-        cv2.putText(frame, bridge_text, (right_x + 32, right_y + 36), cv2.FONT_HERSHEY_SIMPLEX, 0.35, COLOR_STATUS_OK, 1, cv2.LINE_AA)
+        if len(cam_sub) > 30 and left_w < 260:
+            cam_sub = cam_sub[:28] + ".."
+        cv2.putText(frame, cam_sub, (left_x + 36, left_y + 36), cv2.FONT_HERSHEY_SIMPLEX, 0.34, COLOR_TEXT_DIM, 1, cv2.LINE_AA)
 
         # =====================================================================
         # BOTTOM CENTER PILL: CONSOLE SHORTCUT BADGES
         # =====================================================================
-        bot_w, bot_h = min(fw - 32, 480), 32
+        bot_w, bot_h = min(fw - 32, 460), 32
         bot_x = (fw - bot_w) // 2
         bot_y = max(60, fh - bot_h - 12)
         draw_rounded_glass_pill(frame, bot_x, bot_y, bot_w, bot_h, radius=10, bg_color=COLOR_GLASS_BG, alpha=0.78, border_color=COLOR_GLASS_BORDER)

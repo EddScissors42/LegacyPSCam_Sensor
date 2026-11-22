@@ -520,12 +520,12 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
   - Substituição das antigas barras pretas horizontais opacas que cortavam o topo e a base da tela por cápsulas flutuantes com cantos arredondados, fundo de vidro escuro translúcido (`alpha=0.62`) e bordas sutis neon/azuladas.
   - **Distribuição Anatômica Inteligente:**
     - **Pílula Superior Esquerda:** Branding da aplicação ("LEGACY PSCAM") e modelo/resolução da câmera.
-    - **Pílula Superior Central:** Status do dançarino (`TRACKING ACTIVE` / `SEARCHING`), nível de calibração (`FULL BODY` / `UPPER BODY`) e indicador de slots ativos (`P1` em Azul e `P2` em Laranja Claro).
     - **Pílula Superior Direita:** Métricas em tempo real de FPS da câmera, FPS do pipeline de tracking e integridade da ponte IPC (`Kinect JDP1/JMI1`).
+    - **Pílula Lateral Direita (Abaixo de FPS):** Status do dançarino (`DANCER ACTIVE` / `SEARCHING DANCER...`), nível de calibração (`FULL BODY` / `HALF BODY`) e indicador de slots ativos (`P1` em Azul e `P2` em Laranja Claro), empilhado verticalmente logo abaixo do bloco de FPS para eliminar qualquer compressão horizontal em resoluções 4:3 (como 640x480) e manter o centro superior 100% livre.
     - **Pílula Inferior Central:** Badges compactos dos atalhos de teclado (`[C] Calibrar • [M] Espelho • [H] Ciclar HUD • [Q/ESC] Sair`), liberando completamente os cantos inferiores da tela para que os pés dos dançarinos fiquem 100% visíveis em corpo inteiro.
 - **Ciclo de Modos de HUD (`[H]`):**
-  - **Modo 0 (Full HUD):** Exibe todas as métricas detalhadas (câmera, FPS, IPC e atalhos).
-  - **Modo 1 (Minimalist / Clean Dance):** Exibe apenas a pílula central com o status dos dançarinos e indicador de calibração, reduzindo distrações na tela.
+  - **Modo 0 (Full HUD):** Exibe todas as métricas detalhadas (câmera, FPS, IPC, status e atalhos).
+  - **Modo 1 (Minimalist / Clean Dance):** Exibe apenas a pílula de status no canto superior direito, reduzindo distrações na tela.
   - **Modo 2 (Off / Immersive Mirror):** Desativa completamente todo o HUD textual, mantendo apenas a silhueta do jogador e o esqueleto anatômico para uma experiência de espelho de dança totalmente imersiva.
 - **Anel de Progresso Radial de Gesto (`draw_gesture_feedback`):**
   - Ao erguer a mão por 1.5–2.0 segundos para disparar o comando de `[ENTER]`, um anel radial de progresso neon (`cv2.ellipse` de 0° a 360°) renderiza diretamente ao redor da mão erguida do jogador, acompanhando seu movimento em tempo real.
