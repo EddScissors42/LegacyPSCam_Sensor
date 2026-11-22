@@ -24,7 +24,7 @@ O projeto segue estritamente as convenções padrão do ecossistema Python (PEP 
 O projeto adota uma convenção estrita de versionamento semântico pragmático centralizada em `version.py`:
 
 ```python
-__version__ = "0.7.3"
+__version__ = "0.10.0"
 STAGE = "Alpha"
 VERSION_STRING = f"v{__version__} ({STAGE})"
 WINDOW_TITLE = f"Legacy PSCam Sensor {VERSION_STRING}"
@@ -71,6 +71,9 @@ if target_fps >= 50 and not is_pscam:
 
 ### 4. Contrato Binário de 344 Bytes da Memória Compartilhada
 O arquivo mapeado `Local\LegacyWebcamKinectPose` deve ter exatamente **344 bytes** e o protocolo seqlock deve alternar entre ímpar durante escrita e par ao finalizar.
+
+### 5. Desacoplamento Estrito entre UI e Backend (Padrão MVP / Controllers)
+Toda lógica de hardware (câmeras, DirectShow, WinUSB), rede (WebSockets UbiArt, servidores HTTPS Phone Camera), dispositivos (DualShock 4 HID) e ciclo de vida de sessões de tracking DEVE residir exclusivamente nos controladores em `ui/controllers/` (`CameraController`, `DeviceController`, `SessionController`, unificados por `SensorAppController`). A classe `LegacySensorQtGUI` em `ui/gui_qt.py` deve atuar puramente como camada View de apresentação visual, delegando operações para `self.controller` e reagindo a sinais Qt thread-safe.
 
 ---
 

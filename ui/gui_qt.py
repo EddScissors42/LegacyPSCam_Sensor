@@ -84,6 +84,7 @@ from sensor.camera_manager import CameraManager
 from sensor.kinect_shared_memory import KinectBridge, get_kinect_bridge, close_kinect_bridge
 from sensor.kinect_emulator import KinectEmulatorDaemon, get_kinect_emulator
 from sensor import tracking_session
+from .controllers import SensorAppController
 import sensor
 
 # Lazy wrappers for secondary modules (PEP 562 zero-overhead import at startup)
@@ -122,7 +123,7 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
     cameras_refreshed_signal = Signal(list)
     tracking_finished_signal = Signal(bool, str)
 
-    def __init__(self, parent=None, *args, auto_discover=True, **kwargs):
+    def __init__(self, parent=None, *args, auto_discover=True, controller: Optional[SensorAppController] = None, **kwargs):
         if parent is not None and not isinstance(parent, QWidget):
             parent = None
         super().__init__(parent)
@@ -138,18 +139,18 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
         self.font_heading = loaded_fonts.get("heading", FONT_HEADING)
         self.font_body = loaded_fonts.get("body", FONT_BODY)
 
-        # Initialize shared memory bridges immediately on startup so Just Dance connects seamlessly
-        self.bridge = get_kinect_bridge()
-
+        # Configuration and decoupled application controller facade
         self.cfg_mgr = ConfigManager()
         self.cfg = self.cfg_mgr.config
-        self.is_tracking_active = False
-        self._tracking_stop_event = threading.Event()
-        self._last_hw_snapshot = CameraManager.get_hardware_snapshot()
-        self._last_pscam_state = None
+        self.controller = controller or SensorAppController(self.cfg_mgr, parent=self)
+
+        # Initialize shared memory bridges immediately on startup so Just Dance connects seamlessly
+        self.bridge = get_kinect_bridge()
+        self.controller.session.start_kinect_emulator()
+        self.kinect_emulator = self.controller.session.kinect_emulator
+
         self._current_pscam_state = "DISCONNECTED"
         self._is_refreshing_cams = False
-        self.camera_list = []
         self.active_tab = "video"
         self.current_calib_preset = self.cfg.get("tracking_preset", "competitive")
         if self.current_calib_preset == "stable":
@@ -164,38 +165,15 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
         self._is_connecting_ds4 = False
         self.calib_cards = {}
 
-        # Lazy controller states (never blocks cold GUI startup)
-        self._ds4 = None
-        self._vphone = None
-        if self.cfg.get("camera_mode") == "ds4":
-            self._init_ds4_config()
-
-        if (
-            self.cfg.get("virtual_phone_enabled", False)
-            or self.cfg.get("benchmark_auto_record", False)
-            or self.cfg.get("virtual_phone_auto_record", False)
-        ):
-            self.vphone.set_enabled(True)
-
-        # Camera pre-warming state (instant 0s startup for START TRACKING)
-        self._prewarmed_camera = None
-        self._warmup_lock = threading.Lock()
-        self._warmup_timer = QTimer(self)
-        self._warmup_timer.setSingleShot(True)
-        self._warmup_timer.timeout.connect(self._start_camera_warmup_async)
-
-        # Initialize Kinect Emulator Daemon (Zero-File-Replacement Mode — Always Active)
-        self.cfg["emulate_kinect_enabled"] = True
-        self.kinect_emulator = get_kinect_emulator(self.cfg)
-        self.kinect_emulator.enabled = True
-        self.kinect_emulator.start()
-
         self._load_pixmaps()
         self._setup_palette()
         self._setup_style()
         self._build_ui()
 
-        # Connect thread-safe Qt signals
+        # Connect controller signals to UI presentation slots
+        self.controller.cameras_refreshed.connect(self._on_cameras_refreshed)
+        self.controller.pscam_state_changed.connect(self._apply_pscam_state)
+        self.controller.tracking_finished.connect(self._on_tracking_finished)
         self.cameras_refreshed_signal.connect(self._on_cameras_refreshed)
         self.tracking_finished_signal.connect(self._on_tracking_finished)
 
@@ -240,147 +218,59 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
 
         threading.Thread(target=_warm_worker, daemon=True, name="MediaPipePrewarmThread").start()
 
+    # =========================================================================
+    # CONTROLLER DELEGATES & COMPATIBILITY PROPERTIES
+    # =========================================================================
     @property
     def vphone(self):
-        if getattr(self, "_vphone", None) is None:
-            self._ensure_vphone_configured()
-        return self._vphone
+        return self.controller.devices.vphone
 
     @vphone.setter
     def vphone(self, val):
-        self._vphone = val
+        self.controller.devices._vphone = val
 
-    def _ensure_vphone_configured(self):
-        if getattr(self, "_vphone", None) is None:
-            self._vphone = get_virtual_phone()
-            self._vphone.configure(
-                host=str(self.cfg.get("virtual_phone_host", "127.0.0.1")),
-                port=int(self.cfg.get("virtual_phone_port", 8080)),
-                hand=str(self.cfg.get("virtual_phone_hand", "right")),
-                sensitivity=float(self.cfg.get("virtual_phone_sensitivity", 1.0)),
-                phone_name=str(self.cfg.get("virtual_phone_name", "Legacy PSCam Phone")),
-                auto_record=bool(self.cfg.get("benchmark_auto_record", self.cfg.get("virtual_phone_auto_record", False))),
-                adaptive=bool(self.cfg.get("virtual_phone_adaptive", False)),
-            )
-        return self._vphone
+    @property
+    def camera_list(self):
+        return self.controller.camera.camera_list
 
-    def _init_ds4_config(self):
-        ds4 = getattr(self, "_ds4", None) or get_ds4_controller()
-        self._ds4 = ds4
-        ds4.hand = str(self.cfg.get("ds4_hand", "right"))
-        ds4.sensitivity = float(self.cfg.get("ds4_sensitivity", 1.0))
-        ds4.permissive_mode = bool(self.cfg.get("ds4_permissive_mode", True))
+    @camera_list.setter
+    def camera_list(self, val):
+        self.controller.camera.camera_list = val
+
+    @property
+    def is_tracking_active(self):
+        return self.controller.session.is_tracking_active
+
+    @is_tracking_active.setter
+    def is_tracking_active(self, val):
+        self.controller.session.is_tracking_active = bool(val)
+
+    @property
+    def _tracking_stop_event(self):
+        return self.controller.session._tracking_stop_event
+
+    @property
+    def _prewarmed_camera(self):
+        return self.controller.camera._prewarmed_camera
+
+    @_prewarmed_camera.setter
+    def _prewarmed_camera(self, val):
+        self.controller.camera._prewarmed_camera = val
 
     def _schedule_camera_warmup(self, delay_ms: int = 350):
-        """Schedules background camera warm-up with debounce to eliminate 2s START TRACKING delay."""
-        if getattr(self, "_is_closing", False) or getattr(self, "is_tracking_active", False):
-            return
-        if hasattr(self, "_warmup_timer"):
-            self._warmup_timer.start(delay_ms)
+        self.controller.camera.schedule_warmup(delay_ms)
 
     def _cancel_camera_warmup(self):
-        """Cancels any pending warm-up and safely releases the pre-warmed instance."""
-        if hasattr(self, "_warmup_timer") and self._warmup_timer.isActive():
-            self._warmup_timer.stop()
-        with getattr(self, "_warmup_lock", threading.Lock()):
-            cam = getattr(self, "_prewarmed_camera", None)
-            self._prewarmed_camera = None
-        if cam is not None:
-            def _close_cam():
-                try:
-                    cam.release()
-                except Exception:
-                    pass
-            threading.Thread(target=_close_cam, daemon=True, name="CameraPrewarmCloser").start()
+        self.controller.camera.cancel_warmup()
 
     def _start_camera_warmup_async(self):
-        """Asynchronously pre-negotiates camera in low-CPU standby mode (<0.4% CPU)."""
-        if getattr(self, "_is_closing", False) or getattr(self, "is_tracking_active", False):
-            return
-        mode = self.cfg.get("camera_mode", "pscam")
-        if mode not in ("pscam", "webcam"):
-            return
-
-        def _warmup_worker():
-            with getattr(self, "_warmup_lock", threading.Lock()):
-                if getattr(self, "_is_closing", False) or getattr(self, "is_tracking_active", False):
-                    return
-
-                cam_idx = self.cfg.get("camera_index", 0)
-                if mode == "pscam":
-                    ps_cams = [c for c in getattr(self, "camera_list", []) if c.is_pscam]
-                    if ps_cams:
-                        cam_idx = ps_cams[0].index
-                    preset_str = self.cfg.get("pscam_preset", "1280x800 @ 60 FPS")
-                else:
-                    preset_str = self.cfg.get("webcam_preset", "640x480 @ 30 FPS")
-
-                w, h, target_fps = parse_preset(preset_str)
-                mirror = self.cfg.get("mirror_horizontal", True)
-                camera_orientation = int(self.cfg.get("camera_orientation", 0))
-                ps4_eye = str(self.cfg.get("ps4_eye", "right")).strip().lower()
-                ps4_backend_mode = str(self.cfg.get("ps4_camera_backend", "native")).strip().lower()
-
-                # If already running and compatible, keep it
-                if (
-                    getattr(self, "_prewarmed_camera", None) is not None
-                    and getattr(self._prewarmed_camera, "running", False)
-                    and getattr(self._prewarmed_camera, "is_compatible", lambda **k: True)(
-                        camera_index=cam_idx,
-                        target_w=w,
-                        target_h=h,
-                        target_fps=target_fps,
-                        mirror=mirror,
-                        is_pscam=(mode == "pscam"),
-                        orientation=camera_orientation,
-                        ps4_eye=ps4_eye,
-                        ps4_backend_mode=ps4_backend_mode,
-                        is_phone_cam=False,
-                    )
-                ):
-                    return
-
-                # Release stale instance if settings changed
-                old_cam = getattr(self, "_prewarmed_camera", None)
-                self._prewarmed_camera = None
-                if old_cam is not None:
-                    try:
-                        old_cam.release()
-                    except Exception:
-                        pass
-
-                # If PS4 Camera, ensure driver is ready before DirectShow/WinUSB connect
-                if mode == "pscam" and ps4_backend_mode != "pscam4win":
-                    CameraManager.initialize_ps4_camera()
-
-                try:
-                    from sensor.camera_manager import LatestFrameCamera
-                    cam = LatestFrameCamera(
-                        camera_index=cam_idx,
-                        target_w=w,
-                        target_h=h,
-                        target_fps=target_fps,
-                        mirror=mirror,
-                        is_pscam=(mode == "pscam"),
-                        orientation=camera_orientation,
-                        ps4_eye=ps4_eye,
-                        ps4_backend_mode=ps4_backend_mode,
-                        is_phone_cam=False,
-                        is_prewarming=True,
-                    )
-                    self._prewarmed_camera = cam
-                    print(f"[WARMUP] Câmera pré-aquecida pronta em standby: {w}x{h}@{target_fps}fps")
-                except Exception as e:
-                    self._prewarmed_camera = None
-
-        threading.Thread(target=_warmup_worker, daemon=True, name="CameraWarmupThread").start()
+        self.controller.camera.start_warmup_async()
 
     def _take_prewarmed_camera(self):
-        """Atomically extracts the pre-warmed camera instance for handoff to tracking session."""
-        with getattr(self, "_warmup_lock", threading.Lock()):
-            cam = getattr(self, "_prewarmed_camera", None)
-            self._prewarmed_camera = None
-            return cam
+        return self.controller.camera.take_prewarmed_camera()
+
+    def _init_ds4_config(self):
+        self.controller.devices._init_ds4_config()
 
     def _load_pixmaps(self):
         """Loads pure PIL RGBA icons and converts them into antialiased QPixmaps with 4x supersampling."""
@@ -1010,19 +900,7 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
     # =========================================================================
     def is_camera_accessible(self) -> bool:
         """Returns True if the currently selected camera device is connected and accessible."""
-        mode = self.cfg.get("camera_mode", "pscam")
-        if mode == "ds4":
-            return True
-        elif mode == "pscam":
-            return getattr(self, "_current_pscam_state", "DISCONNECTED") == "READY"
-        elif mode == "phone_cam":
-            return bool(get_phone_camera_server().is_client_connected)
-        else:
-            cams = getattr(self, "camera_list", [])
-            webcams = [c for c in cams if not c.is_pscam]
-            if not webcams and not any(c.is_pscam for c in cams):
-                webcams = cams
-            return len(webcams) > 0
+        return self.controller.camera.is_camera_accessible(self.cfg.get("camera_mode", "pscam"))
 
     def _disabled_tab_css(self) -> str:
         return f"""
@@ -1385,7 +1263,7 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
         self._update_video_view_visibility()
 
     def _update_pscam_status(self):
-        info = CameraManager.get_ps4_camera_state()
+        info = self.controller.camera.get_ps4_state()
         self._apply_pscam_state(info)
 
     def _apply_pscam_state(self, ps4_info: dict):
@@ -1424,64 +1302,26 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
         self._update_video_view_visibility()
 
     def _periodic_check(self):
-        if self.is_tracking_active:
-            return
-
+        diag = self.controller.periodic_check()
         if self.cfg.get("camera_mode") == "phone_cam":
             self._update_phone_cam_status()
-
-        current_snapshot = CameraManager.get_hardware_snapshot()
-        hw_changed = (current_snapshot != self._last_hw_snapshot)
-        if hw_changed:
-            self._last_hw_snapshot = current_snapshot
-            from sensor.ps4_backend import PS4DriverInstaller
-            PS4DriverInstaller.invalidate_cache()
-
-        ps4_info = CameraManager.get_ps4_camera_state()
-        state_key = (ps4_info.get("state"), ps4_info.get("running"))
-        if self._last_pscam_state != state_key:
-            self._last_pscam_state = state_key
-            self._apply_pscam_state(ps4_info)
-
-        if hw_changed:
-            self._refresh_cameras_async()
 
     def _refresh_cameras(self):
         self._refresh_cameras_async()
 
     def _refresh_cameras_async(self):
-        if self._is_refreshing_cams or getattr(self, "is_tracking_active", False):
-            return
-        self._is_refreshing_cams = True
         if hasattr(self, "btn_refresh"):
             self.btn_refresh.setEnabled(False)
             self.btn_refresh.setText("…")
         if hasattr(self, "btn_refresh_webcam"):
             self.btn_refresh_webcam.setEnabled(False)
             self.btn_refresh_webcam.setText("Searching...")
-
-        def worker():
-            if getattr(self, "is_tracking_active", False) or getattr(self, "_is_closing", False):
-                self._is_refreshing_cams = False
-                return
-            try:
-                cams = CameraManager.enumerate_cameras()
-            except Exception:
-                cams = []
-            if not getattr(self, "_is_closing", False) and not getattr(self, "is_tracking_active", False):
-                try:
-                    self.cameras_refreshed_signal.emit(cams)
-                except RuntimeError:
-                    pass
-            self._is_refreshing_cams = False
-
-        threading.Thread(target=worker, daemon=True).start()
+        self.controller.camera.refresh_cameras_async()
 
     @Slot(list)
     def _on_cameras_refreshed(self, cams):
         if getattr(self, "_is_closing", False):
             return
-        self._is_refreshing_cams = False
         self.camera_list = cams
         if hasattr(self, "btn_refresh"):
             self.btn_refresh.setEnabled(True)
@@ -1562,38 +1402,21 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
     # PHONE CAMERA (WI-FI WEBAPP & QR CODE) HANDLERS
     # =========================================================================
     def _ensure_phone_cam_server_started(self):
-        srv = get_phone_camera_server(port=int(self.cfg.get("phone_cam_port", 8443)))
-        if not srv.running:
-            srv.start()
-        w, h, fps = parse_preset(self.cfg.get("phone_cam_preset", "640x480 @ 30 FPS"))
-        lens = str(self.cfg.get("phone_cam_lens", "user")).strip().lower()
-        srv.configure_stream(width=w, height=h, fps=fps, lens=lens)
-        return srv
+        return self.controller.devices.ensure_phone_cam_server_started()
 
     def _refresh_phone_cam_qr(self, _checked: bool = False, rotate_token: bool = False):
-        srv = self._ensure_phone_cam_server_started()
-        if rotate_token:
-            srv.rotate_session_token()
-        url = srv.get_connect_url()
+        pil_qr, url = self.controller.devices.render_pairing_qr_image(rotate_token=rotate_token)
         if hasattr(self, "lbl_phone_cam_url"):
             self.lbl_phone_cam_url.setText(url)
-        if hasattr(self, "lbl_phone_qr_img"):
+        if hasattr(self, "lbl_phone_qr_img") and pil_qr is not None:
             try:
-                pil_qr = QRCodeGenerator.render_pil_image(
-                    url,
-                    box_size_px=154 * 2,
-                    fg_color=(15, 23, 42, 255),
-                    bg_color=(255, 255, 255, 255),
-                    quiet_zone=2,
-                )
                 pix_qr = pil_to_qpixmap(pil_qr, dpr=2.0)
                 self.lbl_phone_qr_img.setPixmap(pix_qr)
             except Exception as e:
                 print(f"[WARN] Failed to render Phone Camera QR Code: {e}")
 
     def _on_copy_phone_cam_url(self):
-        srv = self._ensure_phone_cam_server_started()
-        url = srv.get_connect_url()
+        url = self.controller.devices.get_phone_cam_url()
         cb = QApplication.clipboard()
         if cb is not None:
             cb.setText(url)
@@ -1609,33 +1432,29 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
         preset = f"{res} @ {fps_val} FPS"
         self.cfg["phone_cam_preset"] = preset
         self._save_settings()
-
-        w, h, fps = parse_preset(preset)
-        srv = get_phone_camera_server()
-        srv.configure_stream(width=w, height=h, fps=fps)
+        self.controller.devices.update_phone_cam_preset(preset)
 
     def _on_disconnect_phone_cam(self):
         if self.is_tracking_active and self.cfg.get("camera_mode") == "phone_cam":
-            self._tracking_stop_event.set()
-        srv = get_phone_camera_server()
-        srv.disconnect_client(rotate_token=True)
+            self.controller.session.stop_tracking()
+        self.controller.devices.disconnect_phone_cam(rotate_token=True)
         self._refresh_phone_cam_qr(rotate_token=False)
         self._update_phone_cam_status()
 
     def _update_phone_cam_status(self):
-        srv = get_phone_camera_server()
-        is_conn = bool(srv.is_client_connected)
+        st = self.controller.devices.get_phone_cam_status()
+        is_conn = st.get("is_connected", False)
         prev_conn = getattr(self, "_last_phone_cam_conn", None)
 
         if is_conn:
-            lens_lbl = "Rear Camera" if srv.client_lens == "environment" else "Front Camera"
-            if srv.streaming_active:
-                fps_disp = srv.measured_fps if srv.measured_fps > 0.5 else float(srv.target_fps)
-                stream_lbl = f"{srv.actual_w}x{srv.actual_h} @ {fps_disp:.0f} FPS"
+            lens_lbl = "Rear Camera" if st.get("client_lens") == "environment" else "Front Camera"
+            if st.get("streaming_active"):
+                fps_disp = st.get("fps", 0.0) if st.get("fps", 0.0) > 0.5 else float(st.get("target_fps", 30))
+                stream_lbl = f"{st.get('width', 640)}x{st.get('height', 480)} @ {fps_disp:.0f} FPS"
             else:
                 stream_lbl = "Standby (Cool Mode)"
             info_txt = (
-                f"{srv.client_device_name} connected ({srv.client_ip} • "
+                f"{st.get('device_name', 'Smartphone')} connected ({st.get('client_ip', '127.0.0.1')} • "
                 f"{stream_lbl} • {lens_lbl})"
             )
             if hasattr(self, "lbl_phone_cam_ready_info"):
@@ -1644,7 +1463,7 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
         if prev_conn != is_conn:
             self._last_phone_cam_conn = is_conn
             if not is_conn and self.is_tracking_active and self.cfg.get("camera_mode") == "phone_cam":
-                self._tracking_stop_event.set()
+                self.controller.session.stop_tracking()
             self._update_video_view_visibility()
 
     # =========================================================================
@@ -1658,14 +1477,13 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
         if hasattr(self, "vphone_details_frame"):
             self.vphone_details_frame.setVisible(enabled)
         self._apply_vphone_settings_to_controller()
-        self.vphone.set_enabled(enabled)
+        self.controller.devices.set_vphone_enabled(enabled)
         self._save_settings()
         self._update_vphone_ui_readout()
 
     def _on_vphone_sens_changed(self, val: int):
         sens = round(val / 100.0, 2)
-        self.cfg["virtual_phone_sensitivity"] = sens
-        self.vphone.configure(sensitivity=sens)
+        self.controller.devices.set_vphone_sensitivity(sens)
         self._save_settings()
 
     def _on_vphone_config_changed(self):
@@ -1681,18 +1499,7 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
             self.txt_vphone_port.setText("8080")
         hand = "left" if self.cb_vphone_hand.currentIndex() == 1 else "right"
         sens = float(self.cfg.get("virtual_phone_sensitivity", 1.0))
-
-        self.cfg["virtual_phone_host"] = host
-        self.cfg["virtual_phone_port"] = port
-        self.cfg["virtual_phone_hand"] = hand
-        self.cfg["virtual_phone_sensitivity"] = sens
-
-        self.vphone.configure(
-            host=host,
-            port=port,
-            hand=hand,
-            sensitivity=sens,
-        )
+        self.controller.devices.configure_vphone(host=host, port=port, hand=hand, sens=sens)
 
     def _on_vphone_reconnect_clicked(self):
         self._apply_vphone_settings_to_controller()
@@ -1700,7 +1507,7 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
         if not self.chk_vphone_enabled.isChecked():
             self.chk_vphone_enabled.setChecked(True)
         else:
-            self.vphone.request_reconnect()
+            self.controller.devices.request_vphone_reconnect()
         self._update_vphone_ui_readout()
 
     def _on_vphone_discover_clicked(self):
@@ -1708,12 +1515,7 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
             self.btn_vphone_discover.setEnabled(False)
             self.btn_vphone_discover.setText("Searching...")
 
-        def _discover_worker():
-            res = self.vphone.discover_server(timeout=1.2)
-            ip = res[0] if res else ""
-            port = res[1] if res else 0
-            code = res[2] if res else ""
-
+        def _done(ip, port, code):
             QtCore.QMetaObject.invokeMethod(
                 self,
                 "_on_vphone_discover_finished",
@@ -1723,7 +1525,7 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
                 QtCore.Q_ARG(str, code),
             )
 
-        threading.Thread(target=_discover_worker, daemon=True).start()
+        self.controller.devices.discover_vphone_server_async(callback=_done)
 
     @Slot(str, int, str)
     def _on_vphone_discover_finished(self, ip: str, port: int, code: str):
@@ -1738,7 +1540,7 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
             self._apply_vphone_settings_to_controller()
             self._save_settings()
             if self.vphone.enabled:
-                self.vphone.request_reconnect()
+                self.controller.devices.request_vphone_reconnect()
             info_code = f" (Pairing Code: {code})" if code else ""
             QMessageBox.information(
                 self,
@@ -1756,17 +1558,16 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
     def _on_skip_finish_clicked(self):
         """Sends the FTUE_FINISH shortcut packet for Just Dance 2022 phone tutorial."""
         if not self.vphone.enabled:
-            self.vphone.set_enabled(True)
+            self.controller.devices.set_vphone_enabled(True)
             if hasattr(self, "chk_vphone_enabled"):
                 self.chk_vphone_enabled.setChecked(True)
-        self.vphone.send_input("FTUE_FINISH")
-        self.vphone._ftue_until_ts = time.perf_counter() + 4.0
+        self.controller.devices.send_vphone_skip_finish()
 
     def _toggle_vphone_logging(self):
-        if not self.vphone.is_logging:
-            mode = self.cfg.get("camera_mode", "pscam")
-            src = "ds4" if mode == "ds4" else "camera"
-            path = self.vphone.set_logging(True, source=src)
+        mode = self.cfg.get("camera_mode", "pscam")
+        src = "ds4" if mode == "ds4" else "camera"
+        is_logging, path = self.controller.devices.toggle_vphone_logging(source=src)
+        if is_logging:
             self.btn_vphone_log.setText("Stop Log")
             self.btn_vphone_log.setStyleSheet(f"""
                 QPushButton {{
@@ -1781,35 +1582,26 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
                 }}
             """)
         else:
-            saved_path = self.vphone.log_path
-            self.vphone.set_logging(False)
             self.btn_vphone_log.setText("Record Log")
             self.btn_vphone_log.setStyleSheet(getattr(self, "_btn_vphone_outline_style", ""))
-            if saved_path and os.path.exists(saved_path):
+            if path and os.path.exists(path):
                 QMessageBox.information(
                     self,
                     "Telemetry Recording Finished",
-                    f"Accelerometer CSV log saved successfully to:\n{saved_path}\n\n"
+                    f"Accelerometer CSV log saved successfully to:\n{path}\n\n"
                     "File ready for analysis and comparison with real smartphone data."
                 )
 
     def _on_benchmark_toggle_changed(self, state):
         enabled = (state == Qt.CheckState.Checked.value or state == 2)
-        self.cfg["benchmark_auto_record"] = enabled
-        self.cfg["virtual_phone_auto_record"] = enabled
         if hasattr(self, "benchmark_details_frame"):
             self.benchmark_details_frame.setVisible(enabled)
-        self.vphone.set_auto_record(enabled)
-        if enabled and not self.vphone.enabled:
-            self.vphone.set_enabled(True)
-        self.cfg_mgr.save()
+        self.controller.devices.set_vphone_auto_record(enabled)
         self._update_vphone_ui_readout()
 
     def _on_benchmark_adaptive_changed(self, state):
         enabled = (state == Qt.CheckState.Checked.value or state == 2)
-        self.cfg["virtual_phone_adaptive"] = enabled
-        self.cfg_mgr.save()
-        self.vphone.set_adaptive_calibration(enabled)
+        self.controller.devices.set_vphone_adaptive(enabled)
 
     def _open_logs_folder(self):
         from sensor.config_manager import get_logs_dir
@@ -1841,29 +1633,24 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
 
     def _on_benchmark_sensitivity_applied(self, new_sens: float):
         sens_val = round(float(new_sens), 2)
-        self.vphone.configure(sensitivity=sens_val)
-        self.cfg["virtual_phone_sensitivity"] = sens_val
-        self.cfg_mgr.save()
+        self.controller.devices.set_vphone_sensitivity(sens_val)
 
     def _update_vphone_ui_readout(self):
         if not hasattr(self, "lbl_vphone_status") or not hasattr(self, "lbl_vphone_accel"):
             return
-        if getattr(self, "_vphone", None) is None:
-            if not (
-                self.cfg.get("virtual_phone_enabled", False)
-                or self.cfg.get("benchmark_auto_record", False)
-                or self.cfg.get("virtual_phone_auto_record", False)
-            ):
-                self.lbl_vphone_status.setText("Status: Disabled (Virtual Phone)")
-                self.lbl_vphone_status.setStyleSheet(
-                    f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['text_muted']}; background: transparent; border: none;"
-                )
-                return
-        status = self.vphone.status_text
+        st = self.controller.devices.get_vphone_readout()
+        if not st.get("initialized"):
+            self.lbl_vphone_status.setText("Status: Disabled (Virtual Phone)")
+            self.lbl_vphone_status.setStyleSheet(
+                f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['text_muted']}; background: transparent; border: none;"
+            )
+            return
+
+        status = st.get("status_text", "")
         self.lbl_vphone_status.setText(f"Status: {status}")
-        if self.vphone.connected:
+        if st.get("connected"):
             color = PALETTE["status_ok"]
-        elif self.vphone.enabled:
+        elif st.get("enabled"):
             color = PALETTE["status_warn"]
         else:
             color = PALETTE["text_muted"]
@@ -1871,15 +1658,14 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
             f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {color}; background: transparent; border: none;"
         )
 
-        # Update active song readout in dedicated benchmark section
         lbl_song = getattr(self, "lbl_benchmark_song", getattr(self, "lbl_vphone_song", None))
         if lbl_song is not None:
             is_watching = getattr(self, "chk_benchmark_enabled", None) and self.chk_benchmark_enabled.isChecked()
             if is_watching and not self.vphone.enabled:
-                self.vphone.set_enabled(True)
-            song_name = self.vphone.current_song
+                self.controller.devices.set_vphone_enabled(True)
+            song_name = st.get("song_name", "")
             if song_name:
-                if self.vphone.is_dancing:
+                if st.get("is_dancing"):
                     status_tag = " [Scoring Active - Capturing Telemetry]" if is_watching else " [Scoring Active]"
                     color = PALETTE["ps_blue"]
                 else:
@@ -1899,9 +1685,8 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
                     f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['text_muted']}; background: transparent; border: none;"
                 )
 
-        # Update Record button state if auto-recording or manually recording
         if hasattr(self, "btn_vphone_log"):
-            if self.vphone.is_logging:
+            if st.get("is_logging"):
                 self.btn_vphone_log.setText("Stop Log (REC)")
                 self.btn_vphone_log.setStyleSheet(f"""
                     QPushButton {{
@@ -1932,24 +1717,28 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
         if self.cfg.get("camera_mode") == "phone_cam":
             self._update_phone_cam_status()
 
+    # =========================================================================
+    # DUALSHOCK 4 HANDLERS
+    # =========================================================================
     def _update_ds4_ui_readout(self):
         if not hasattr(self, "lbl_ds4_status") or not hasattr(self, "lbl_ds4_accel"):
             return
-        if self.cfg.get("camera_mode") != "ds4" and getattr(self, "_ds4", None) is None:
+        if self.cfg.get("camera_mode") != "ds4" and self.controller.devices._ds4 is None:
             return
-        ds4 = get_ds4_controller()
-        if ds4.is_connected:
+        st = self.controller.devices.get_ds4_readout()
+        if st.get("is_connected"):
             if hasattr(self, "ds4_disconnected_box"):
                 self.ds4_disconnected_box.setVisible(False)
             if hasattr(self, "ds4_info_frame"):
                 self.ds4_info_frame.setVisible(True)
-            st = ds4.state
-            charging_str = " [Charging]" if st.is_charging else ""
-            conn_type = "Connected on USB" if ds4.is_usb else "Connected via Bluetooth"
-            ctrl_name = getattr(st, "controller_name", "DualShock 4")
 
-            # Check for imu_frozen condition (typical in clone DS4s over Bluetooth)
-            if getattr(st, "imu_frozen", False):
+            ctrl_name = st.get("controller_name", "DualShock 4")
+            conn_type = st.get("connection_type", "Connected")
+            charging_str = st.get("charging_str", "")
+            rate = st.get("sample_rate_hz", 0.0)
+            batt = st.get("battery_pct", 0)
+
+            if st.get("imu_frozen", False):
                 self.lbl_ds4_status.setText(
                     f"Status: {ctrl_name} ({conn_type}) — [!] IMU SENSOR FROZEN (0G): Connect via USB cable!"
                 )
@@ -1958,18 +1747,18 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
                 )
             else:
                 self.lbl_ds4_status.setText(
-                    f"Status: {ctrl_name} ({conn_type} • {st.sample_rate_hz:.0f} Hz • Battery: {st.battery_pct}%{charging_str})"
+                    f"Status: {ctrl_name} ({conn_type} • {rate:.0f} Hz • Battery: {batt}%{charging_str})"
                 )
                 self.lbl_ds4_status.setStyleSheet(
                     f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['ps_blue']}; background: transparent; border: none;"
                 )
 
-            ax, ay, az = st.accel_g
-            tot = math.sqrt(ax * ax + ay * ay + az * az)
-            act_btns = [b.upper() for b, pressed in st.buttons.items() if pressed]
+            ax, ay, az = st.get("accel_g", (0.0, 0.0, 0.0))
+            tot = st.get("total_g", 0.0)
+            act_btns = st.get("buttons", [])
             btn_str = f"  |  Buttons: {', '.join(act_btns)}" if act_btns else ""
 
-            if getattr(st, "imu_frozen", False):
+            if st.get("imu_frozen", False):
                 self.lbl_ds4_accel.setText(
                     f"3D Accelerometer: 0.00G (IMU Inactive/Zeroed over BT)  |  Buttons: {', '.join(act_btns) if act_btns else 'None'}"
                 )
@@ -1988,31 +1777,23 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
                 self.ds4_disconnected_box.setVisible(True)
             if hasattr(self, "ds4_info_frame"):
                 self.ds4_info_frame.setVisible(False)
-            perm = bool(self.cfg.get("ds4_permissive_mode", True))
-            paths = find_ds4_devices(permissive=perm)
-            if paths:
-                is_usb_path = any("bth" not in p.lower() and "bluetooth" not in p.lower() and "00001124" not in p.lower() for p in paths)
-                detected_str = "on USB" if is_usb_path else "via Bluetooth"
-                detected_name = detect_controller_name(paths[0])
+            if st.get("device_present"):
+                det_name = st.get("controller_name", "DualShock 4")
+                det_str = st.get("connection_type", "")
                 if hasattr(self, "lbl_ds4_conn_title"):
-                    self.lbl_ds4_conn_title.setText(f"{detected_name} detected {detected_str}")
+                    self.lbl_ds4_conn_title.setText(f"{det_name} detected {det_str}")
                 if hasattr(self, "lbl_ds4_conn_info"):
-                    self.lbl_ds4_conn_info.setText(f"Connecting to {detected_name} {detected_str}...")
-                self.lbl_ds4_status.setText(f"Status: {detected_name} detected {detected_str} (Connecting...)")
+                    self.lbl_ds4_conn_info.setText(f"Connecting to {det_name} {det_str}...")
+                self.lbl_ds4_status.setText(f"Status: {det_name} detected {det_str} (Connecting...)")
                 self.lbl_ds4_status.setStyleSheet(
                     f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['status_warn']}; background: transparent; border: none;"
                 )
                 if not getattr(self, "_is_connecting_ds4", False) and not getattr(self, "is_tracking_active", False):
                     self._is_connecting_ds4 = True
-                    def _auto_connect_ds4():
-                        try:
-                            ds4.connect(permissive=perm)
-                        except Exception:
-                            pass
-                        finally:
-                            self._is_connecting_ds4 = False
-                            QtCore.QMetaObject.invokeMethod(self, "_finish_ds4_reconnect", Qt.ConnectionType.QueuedConnection)
-                    threading.Thread(target=_auto_connect_ds4, daemon=True).start()
+                    def _done(_ok):
+                        self._is_connecting_ds4 = False
+                        QtCore.QMetaObject.invokeMethod(self, "_finish_ds4_reconnect", Qt.ConnectionType.QueuedConnection)
+                    self.controller.devices.connect_ds4_async(callback=_done)
             else:
                 if hasattr(self, "lbl_ds4_conn_title"):
                     self.lbl_ds4_conn_title.setText("DualShock® 4 not connected")
@@ -2028,13 +1809,8 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
             )
 
     def _test_ds4_rumble(self):
-        ds4 = get_ds4_controller()
-        perm = bool(self.cfg.get("ds4_permissive_mode", True))
-        if not ds4.is_connected:
-            ds4.connect(permissive=perm)
-        if ds4.is_connected:
-            ds4.trigger_rumble(small=180, large=120, duration_sec=0.35)
-        else:
+        ok = self.controller.devices.trigger_test_rumble()
+        if not ok:
             QMessageBox.information(
                 self,
                 "DualShock 4",
@@ -2044,17 +1820,9 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
     def _reconnect_ds4(self):
         if hasattr(self, "lbl_ds4_conn_info"):
             self.lbl_ds4_conn_info.setText("Connecting to controller (USB / Bluetooth HID)...")
-        perm = bool(self.cfg.get("ds4_permissive_mode", True))
-        def worker():
-            ds4 = get_ds4_controller()
-            if ds4.is_connected:
-                ds4.disconnect()
-                time.sleep(0.1)
-            ok = ds4.connect(permissive=perm)
-            if ok:
-                ds4.trigger_rumble(small=140, large=80, duration_sec=0.15)
+        def _done(_ok):
             QtCore.QMetaObject.invokeMethod(self, "_finish_ds4_reconnect", Qt.ConnectionType.QueuedConnection)
-        threading.Thread(target=worker, daemon=True).start()
+        self.controller.devices.connect_ds4_async(callback=_done)
 
     @Slot()
     def _finish_ds4_reconnect(self):
@@ -2062,26 +1830,17 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
 
     def _on_ds4_permissive_changed(self, state: int):
         val = (state == Qt.CheckState.Checked.value or state == 2)
-        self.cfg["ds4_permissive_mode"] = val
-        ds4 = get_ds4_controller()
-        ds4.permissive_mode = val
-        self._save_settings()
+        self.controller.devices.set_ds4_permissive(val)
         self._update_ds4_ui_readout()
 
     def _on_ds4_hand_changed(self, idx: int):
         hand = "right" if idx == 0 else "left"
-        self.cfg["ds4_hand"] = hand
-        ds4 = get_ds4_controller()
-        ds4.hand = hand
-        self._save_settings()
+        self.controller.devices.set_ds4_hand(hand)
 
     def _on_ds4_sens_changed(self, idx: int):
         sens_map = {0: 1.0, 1: 1.25, 2: 0.85}
         sens = sens_map.get(idx, 1.0)
-        self.cfg["ds4_sensitivity"] = sens
-        ds4 = get_ds4_controller()
-        ds4.sensitivity = sens
-        self._save_settings()
+        self.controller.devices.set_ds4_sensitivity(sens)
 
     def _select_calib_preset(self, preset_id: str):
         if preset_id not in CALIB_PRESETS:
@@ -2186,117 +1945,20 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
             return
 
         mode = self.cfg.get("camera_mode", "pscam")
-
-        if mode == "ds4":
-            ds4 = get_ds4_controller()
-            if not ds4.is_connected:
-                if not ds4.connect():
-                    QMessageBox.warning(
-                        self,
-                        "DualShock 4 Not Detected",
-                        "DualShock 4 controller was not detected on this computer!\n\n"
-                        "• Connect the DualShock 4 via USB cable, or\n"
-                        "• Ensure the DualShock 4 is paired wirelessly via Windows Bluetooth settings."
-                    )
-                    return
-
-            self._save_settings()
-            self.is_tracking_active = True
-            self._tracking_stop_event.clear()
-            self.btn_start.setText("TRACKING IN PROGRESS...")
-            self.btn_start.setEnabled(False)
-            self.showMinimized()
-
-            def tracking_worker():
-                success = False
-                err_msg = ""
-                try:
-                    success = tracking_session.run_tracking_session(
-                        self.cfg, stop_event=self._tracking_stop_event
-                    )
-                except Exception as e:
-                    err_msg = str(e)
-                finally:
-                    self.tracking_finished_signal.emit(success, err_msg)
-
-            threading.Thread(target=tracking_worker, daemon=True).start()
+        ok, title, msg = self.controller.validate_pre_tracking(mode)
+        if not ok:
+            QMessageBox.warning(self, title, msg)
             return
 
-        if mode == "pscam":
-            ps4_st = CameraManager.get_ps4_camera_state()
-            if ps4_st.get("bootloader") or ps4_st.get("state") in ("NOT_INSTALLED", "DRIVER_STOPPED"):
-                ok, msg = CameraManager.initialize_ps4_camera()
-                if not ok:
-                    QMessageBox.critical(self, "PlayStation Camera Initialization Error", msg)
-                    return
-                time.sleep(0.5)
-                self._refresh_cameras()
-
-            ps_cams = [c for c in getattr(self, "camera_list", []) if c.is_pscam]
-            cam_idx = self.cfg.get("camera_index", -1)
-            is_valid_pscam = any(c.index == cam_idx and c.is_pscam for c in getattr(self, "camera_list", []))
-            hw_connected = CameraManager.is_ps4_hardware_connected()
-
-            if (not ps_cams or not is_valid_pscam or cam_idx < 0) and not hw_connected:
-                QMessageBox.warning(
-                    self,
-                    "PlayStation®Camera Not Connected",
-                    "PlayStation®Camera was not detected on this computer!\n\n"
-                    "• Ensure the PS4 Camera USB 3.0 Adapter is connected to a USB 3.0 port.\n"
-                    "• Verify that the WinUSB driver association is active."
-                )
-                return
-            if cam_idx < 0 and ps_cams:
-                self.cfg["camera_index"] = ps_cams[0].index
-            elif cam_idx < 0 and hw_connected:
-                self.cfg["camera_index"] = 0
-        elif mode == "phone_cam":
-            srv = self._ensure_phone_cam_server_started()
-            if not srv.is_client_connected:
-                QMessageBox.warning(
-                    self,
-                    "Phone Camera Not Connected",
-                    "No smartphone is currently connected to the Wi-Fi WebApp!\n\n"
-                    "• Scan the QR Code on screen with your Android or iPhone camera.\n"
-                    "• Ensure your phone is connected to the same Wi-Fi network as this PC."
-                )
-                return
-        else:
-            cam_idx = self.cfg.get("camera_index", -1)
-            if cam_idx < 0 or not getattr(self, "camera_list", []):
-                QMessageBox.warning(
-                    self,
-                    "No Camera Connected",
-                    "No webcam was detected on this computer.\n\n"
-                    "Please connect a camera before starting tracking."
-                )
-                return
-
         self._save_settings()
-
         self.is_tracking_active = True
-        self._tracking_stop_event.clear()
         if hasattr(self, "lbl_vphone_accel"):
             self.lbl_vphone_accel.setVisible(True)
         self.btn_start.setText("TRACKING IN PROGRESS...")
         self.btn_start.setEnabled(False)
         self.showMinimized()
 
-        prewarmed = self._take_prewarmed_camera()
-
-        def tracking_worker():
-            success = False
-            err_msg = ""
-            try:
-                success = tracking_session.run_tracking_session(
-                    self.cfg, stop_event=self._tracking_stop_event, prewarmed_camera=prewarmed
-                )
-            except Exception as e:
-                err_msg = str(e)
-            finally:
-                self.tracking_finished_signal.emit(success, err_msg)
-
-        threading.Thread(target=tracking_worker, daemon=True).start()
+        self.controller.start_tracking(on_finished=self._on_tracking_finished)
 
     @Slot(bool, str)
     def _on_tracking_finished(self, success: bool, err_msg: str):
@@ -2315,8 +1977,6 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
             self._update_phone_cam_status()
             if not get_phone_camera_server().is_client_connected:
                 self._refresh_phone_cam_qr(rotate_token=False)
-        elif self.cfg.get("camera_mode") in ("pscam", "webcam"):
-            self._schedule_camera_warmup(500)
 
         if not success:
             detail = f"\n\nDetails: {err_msg}" if err_msg else ""
@@ -2330,45 +1990,15 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
             )
 
     def _save_settings(self):
-        try:
-            self.cfg_mgr.save()
-        except Exception:
-            pass
+        self.controller.save_settings()
 
     def closeEvent(self, event):
         self._is_closing = True
-        self._cancel_camera_warmup()
-        if hasattr(self, "_tracking_stop_event") and self._tracking_stop_event is not None:
-            self._tracking_stop_event.set()
         if hasattr(self, "timer_periodic") and self.timer_periodic is not None:
             self.timer_periodic.stop()
         if hasattr(self, "timer_vphone") and self.timer_vphone is not None:
             self.timer_vphone.stop()
-        if getattr(self, "_vphone", None) is not None:
-            try:
-                self._vphone.stop()
-            except Exception:
-                pass
-        if hasattr(self, "kinect_emulator") and self.kinect_emulator is not None:
-            self.kinect_emulator.stop()
-        if "sensor.phone_camera" in sys.modules:
-            try:
-                get_phone_camera_server().stop()
-            except Exception:
-                pass
-        if getattr(self, "_ds4", None) is not None:
-            try:
-                self._ds4.disconnect()
-            except Exception:
-                pass
-        try:
-            from sensor.session_logger import get_session_logger
-            get_session_logger().close()
-        except Exception:
-            pass
-        if hasattr(self, "bridge") and self.bridge is not None:
-            close_kinect_bridge()
-            self.bridge = None
+        self.controller.cleanup()
         event.accept()
 
 

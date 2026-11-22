@@ -45,12 +45,18 @@ LegacyPSCam_Sensor/
 │   └── config_manager.py       # Gerenciamento de configurações e resolução de caminhos (%APPDATA% / logs / portable)
 ├── ui/                         # Pacote da Interface Gráfica
 │   ├── __init__.py             # Exporta LegacySensorGUI, UIPagesMixin, widgets reutilizáveis e launch_app
-│   ├── gui_qt.py               # Janela principal e controlador de eventos em PySide6 / Qt 6
+│   ├── gui_qt.py               # Janela principal View em PySide6 / Qt 6 (desacoplada e delegada a controllers)
 │   ├── pages.py                # Construtores declarativos das 4 páginas Qt 6 (UIPagesMixin)
 │   ├── widgets.py              # Componentes Qt 6 reutilizáveis (SlidingStackedWidget, DeviceNavCard, CalibPresetCard)
 │   ├── benchmark_dialog.py     # Diálogo e gráfico 2D QPainter de benchmark comparativo (Câmera vs DS4)
 │   ├── theme.py                # Paleta de cores, tipografia e presets (Competitive Lite AI recomendado por padrão)
-│   └── icons.py                # Gerador e renderizador de ícones vetoriais e supersampled
+│   ├── icons.py                # Gerador e renderizador de ícones vetoriais e supersampled
+│   └── controllers/            # Camada de Controle Desacoplada (MVP / Controller Facade)
+│       ├── __init__.py         # Exports unificados da camada de controle
+│       ├── app_controller.py   # SensorAppController (fachada central QObject que coordena a aplicação)
+│       ├── camera_controller.py# CameraController (descoberta PnP, warm-up assíncrono, standby throttling)
+│       ├── device_controller.py# DeviceController (Phone Camera HTTPS/WSS, DS4 HID/Bluetooth, Celular Virtual)
+│       └── session_controller.py# SessionController (orquestrador do loop de rastreamento, Kinect daemon e IPC)
 ├── assets/                     # Recursos visuais e mídias
 │   ├── icons/                  # Ícones SVG e PNG da aplicação
 │   └── fonts/                  # Fontes TTF (Kanit, InterTight, NationalPark)
@@ -242,6 +248,13 @@ flowchart TD
   3. **Handoff Atômico e Ativação Instantânea (`activate_live()`):** Ao clicar em "START TRACKING", a instância pré-aquecida é adotada instantaneamente pelo `tracking_session.py` com latência de ~0.3s (redução de 84% frente aos ~2.3s de negociação DirectShow fria).
   4. **Verificação de Compatibilidade (`is_compatible()`):** Se o usuário alterar resolução, preset, orientação ou olho da PS4 Camera, a instância anterior é reciclada com debounce de 300ms.
   5. **Lazy Loading PEP 562:** Submódulos secundários (`phone_camera`, `virtual_phone`, `ds4_controller`, `telemetry_benchmark`) são carregados sob demanda apenas quando ativados pelo usuário, acelerando a inicialização da aplicação.
+
+### 16. `ui/controllers/` — Camada de Controle Desacoplada (MVP / Controller Facade)
+- **Responsabilidade:** Isola completamente a camada visual (`gui_qt.py`) da lógica de baixo nível, hardware, sockets e threads IPC:
+  1. **`app_controller.py` (`SensorAppController`):** Fachada central (`QObject`) que atua como ponto único de coordenação entre os subcontroladores e a interface gráfica. Expõe sinais Qt thread-safe (`cameras_refreshed`, `pscam_state_changed`, `tracking_finished`), validação unificada pré-rastreamento (`validate_pre_tracking`) e limpeza determinística (`cleanup`).
+  2. **`camera_controller.py` (`CameraController`):** Gerencia a descoberta de hardware PnP em tempo real, monitoramento da máquina de estados da PS4 Camera, thread pool de warm-up em standby com throttling adaptativo, compatibilidade de presets e transição atômica de câmera.
+  3. **`device_controller.py` (`DeviceController`):** Orquestra o ciclo de vida do servidor Phone Camera (HTTPS/WSS e geração PIL de QR Code), DualShock 4 (descoberta HID/Bluetooth, rumble, verificação de IMU congelada e leitura contínua de acelerômetro) e Celular Virtual UbiArt (reconexão, auto-descoberta UDP, bypass FTUE e auto-gravação de telemetria). Opera inteiramente sob demanda via PEP 562.
+  4. **`session_controller.py` (`SessionController`):** Gerencia a thread de execução do rastreamento corporal em background (`tracking_session.py`), a instância do emulador de Kinect na memória (`KinectEmulatorDaemon`) e o fechamento seguro dos canais de memória compartilhada Windows (`KinectBridge`).
 
 ---
 
