@@ -169,20 +169,26 @@ class CameraController(QObject):
     def _warmup_timer_fired(self):
         self.start_warmup_async()
 
-    def cancel_warmup(self):
-        """Cancels any pending warm-up and releases pre-warmed camera asynchronously."""
+    def cancel_warmup(self, sync: bool = False):
+        """Cancels any pending warm-up and releases pre-warmed camera deterministically."""
         if self._warmup_timer.isActive():
             self._warmup_timer.stop()
         with self._warmup_lock:
             cam = self._prewarmed_camera
             self._prewarmed_camera = None
         if cam is not None:
-            def _close_cam():
+            if sync:
                 try:
                     cam.release()
                 except Exception:
                     pass
-            threading.Thread(target=_close_cam, daemon=True, name="CameraPrewarmCloser").start()
+            else:
+                def _close_cam():
+                    try:
+                        cam.release()
+                    except Exception:
+                        pass
+                threading.Thread(target=_close_cam, daemon=True, name="CameraPrewarmCloser").start()
 
     def start_warmup_async(self):
         """Asynchronously pre-negotiates camera in low-CPU standby mode (<0.4% CPU)."""
@@ -193,24 +199,27 @@ class CameraController(QObject):
             return
 
         def _warmup_worker():
+            if self._is_closing or self._is_tracking_active:
+                return
+
+            cam_idx = self.cfg.get("camera_index", 0)
+            if mode == "pscam":
+                ps_cams = [c for c in self.camera_list if c.is_pscam]
+                if ps_cams:
+                    cam_idx = ps_cams[0].index
+                preset_str = self.cfg.get("pscam_preset", "1280x800 @ 60 FPS")
+            else:
+                preset_str = self.cfg.get("webcam_preset", "640x480 @ 30 FPS")
+
+            w, h, target_fps = parse_preset(preset_str)
+            mirror = self.cfg.get("mirror_horizontal", True)
+            camera_orientation = int(self.cfg.get("camera_orientation", 0))
+            ps4_eye = str(self.cfg.get("ps4_eye", "right")).strip().lower()
+            ps4_backend_mode = str(self.cfg.get("ps4_camera_backend", "native")).strip().lower()
+
             with self._warmup_lock:
                 if self._is_closing or self._is_tracking_active:
                     return
-
-                cam_idx = self.cfg.get("camera_index", 0)
-                if mode == "pscam":
-                    ps_cams = [c for c in self.camera_list if c.is_pscam]
-                    if ps_cams:
-                        cam_idx = ps_cams[0].index
-                    preset_str = self.cfg.get("pscam_preset", "1280x800 @ 60 FPS")
-                else:
-                    preset_str = self.cfg.get("webcam_preset", "640x480 @ 30 FPS")
-
-                w, h, target_fps = parse_preset(preset_str)
-                mirror = self.cfg.get("mirror_horizontal", True)
-                camera_orientation = int(self.cfg.get("camera_orientation", 0))
-                ps4_eye = str(self.cfg.get("ps4_eye", "right")).strip().lower()
-                ps4_backend_mode = str(self.cfg.get("ps4_camera_backend", "native")).strip().lower()
 
                 # If already running and compatible, preserve it
                 if (
@@ -234,33 +243,42 @@ class CameraController(QObject):
                 # Release stale instance if settings changed
                 old_cam = self._prewarmed_camera
                 self._prewarmed_camera = None
-                if old_cam is not None:
-                    try:
-                        old_cam.release()
-                    except Exception:
-                        pass
 
-                # If PS4 Camera, ensure driver is ready before DirectShow/WinUSB connect
-                if mode == "pscam" and ps4_backend_mode != "pscam4win":
-                    CameraManager.initialize_ps4_camera()
-
+            if old_cam is not None:
                 try:
-                    cam = LatestFrameCamera(
-                        camera_index=cam_idx,
-                        target_w=w,
-                        target_h=h,
-                        target_fps=target_fps,
-                        mirror=mirror,
-                        is_pscam=(mode == "pscam"),
-                        orientation=camera_orientation,
-                        ps4_eye=ps4_eye,
-                        ps4_backend_mode=ps4_backend_mode,
-                        is_phone_cam=False,
-                        is_prewarming=True,
-                    )
-                    self._prewarmed_camera = cam
-                    print(f"[WARMUP] Câmera pré-aquecida pronta em standby: {w}x{h}@{target_fps}fps")
-                except Exception as e:
+                    old_cam.release()
+                except Exception:
+                    pass
+
+            if self._is_closing or self._is_tracking_active:
+                return
+
+            # If PS4 Camera, ensure driver is ready before DirectShow/WinUSB connect
+            if mode == "pscam" and ps4_backend_mode != "pscam4win":
+                CameraManager.initialize_ps4_camera()
+
+            try:
+                cam = LatestFrameCamera(
+                    camera_index=cam_idx,
+                    target_w=w,
+                    target_h=h,
+                    target_fps=target_fps,
+                    mirror=mirror,
+                    is_pscam=(mode == "pscam"),
+                    orientation=camera_orientation,
+                    ps4_eye=ps4_eye,
+                    ps4_backend_mode=ps4_backend_mode,
+                    is_phone_cam=False,
+                    is_prewarming=True,
+                )
+                with self._warmup_lock:
+                    if self._is_closing or self._is_tracking_active:
+                        cam.release()
+                    else:
+                        self._prewarmed_camera = cam
+                        print(f"[WARMUP] Câmera pré-aquecida pronta em standby: {w}x{h}@{target_fps}fps")
+            except Exception as e:
+                with self._warmup_lock:
                     self._prewarmed_camera = None
 
         threading.Thread(target=_warmup_worker, daemon=True, name="CameraWarmupThread").start()

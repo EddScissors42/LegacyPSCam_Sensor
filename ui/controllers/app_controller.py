@@ -203,7 +203,7 @@ class SensorAppController(QObject):
         """Deterministic, graceful teardown of all application subsystems."""
         self._is_closing = True
         self.camera.set_closing(True)
-        self.camera.cancel_warmup()
+        self.camera.cancel_warmup(sync=True)
         self.session.cleanup()
         self.devices.cleanup()
         try:

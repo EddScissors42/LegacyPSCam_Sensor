@@ -1055,10 +1055,9 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
                 self.btn_start.setText("START CONTROLLER (DS4)")
             self._cancel_camera_warmup()
             self._update_ds4_ui_readout()
-            threading.Thread(
-                target=lambda: (get_ds4_controller().connect(), QtCore.QMetaObject.invokeMethod(self, "_finish_ds4_reconnect", Qt.ConnectionType.QueuedConnection)),
-                daemon=True
-            ).start()
+            def _connect_done(_ok):
+                QtCore.QMetaObject.invokeMethod(self, "_finish_ds4_reconnect", Qt.ConnectionType.QueuedConnection)
+            self.controller.devices.connect_ds4_async(callback=_connect_done)
         else:
             if hasattr(self, "btn_tab_controller"):
                 self.btn_tab_controller.setVisible(False)
