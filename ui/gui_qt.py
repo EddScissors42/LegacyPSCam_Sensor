@@ -775,6 +775,7 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
         self.btn_start.setProperty("class", "btn_cta")
         self.btn_start.setFixedHeight(48)
         self.btn_start.setEnabled(False)
+        self.btn_start.setVisible(False)
         self.btn_start.setCursor(Qt.CursorShape.ForbiddenCursor)
         self.btn_start.clicked.connect(self._start_tracking)
         self.bottom_action_layout.addWidget(self.btn_start, stretch=1)
@@ -992,11 +993,11 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
         ready = self.is_device_ready_for_tracking(mode)
 
         if mode == "ds4":
-            self.btn_start.setVisible(True)
             if hasattr(self, "btn_bottom_disconnect_phone"):
                 self.btn_bottom_disconnect_phone.setVisible(False)
             self.btn_start.setText("START CONTROLLER (DS4)")
             self.btn_start.setEnabled(ready)
+            self.btn_start.setVisible(ready)
             if ready:
                 self.btn_start.setCursor(Qt.CursorShape.PointingHandCursor)
                 self.btn_start.setToolTip("Start motion tracking with DualShock 4 controller")
@@ -1004,11 +1005,11 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
                 self.btn_start.setCursor(Qt.CursorShape.ForbiddenCursor)
                 self.btn_start.setToolTip("DualShock 4 not connected. Connect via USB cable or pair via Bluetooth.")
         elif mode == "pscam":
-            self.btn_start.setVisible(True)
             if hasattr(self, "btn_bottom_disconnect_phone"):
                 self.btn_bottom_disconnect_phone.setVisible(False)
             self.btn_start.setText("START TRACKING")
             self.btn_start.setEnabled(ready)
+            self.btn_start.setVisible(ready)
             if ready:
                 self.btn_start.setCursor(Qt.CursorShape.PointingHandCursor)
                 self.btn_start.setToolTip("Start tracking with PlayStation Camera (60 FPS)")
@@ -1018,24 +1019,23 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin):
         elif mode == "phone_cam":
             self.btn_start.setText("START TRACKING")
             self.btn_start.setEnabled(ready)
+            self.btn_start.setVisible(ready)
             if ready:
-                self.btn_start.setVisible(True)
                 self.btn_start.setCursor(Qt.CursorShape.PointingHandCursor)
                 self.btn_start.setToolTip("Start tracking with connected Smartphone Camera")
                 if hasattr(self, "btn_bottom_disconnect_phone"):
                     self.btn_bottom_disconnect_phone.setVisible(True)
             else:
-                self.btn_start.setVisible(False)
                 self.btn_start.setCursor(Qt.CursorShape.ForbiddenCursor)
                 self.btn_start.setToolTip("Smartphone not connected. Scan the QR code to connect your phone.")
                 if hasattr(self, "btn_bottom_disconnect_phone"):
                     self.btn_bottom_disconnect_phone.setVisible(False)
         else:  # webcam
-            self.btn_start.setVisible(True)
             if hasattr(self, "btn_bottom_disconnect_phone"):
                 self.btn_bottom_disconnect_phone.setVisible(False)
             self.btn_start.setText("START TRACKING")
             self.btn_start.setEnabled(ready)
+            self.btn_start.setVisible(ready)
             if ready:
                 self.btn_start.setCursor(Qt.CursorShape.PointingHandCursor)
                 self.btn_start.setToolTip("Start tracking with selected Webcam")

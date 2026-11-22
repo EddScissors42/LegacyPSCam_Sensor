@@ -569,13 +569,7 @@ class UIPagesMixin:
         )
         ph_conn_layout.addWidget(lbl_ph_title)
 
-        self.lbl_phone_cam_ready_info = QLabel("Smartphone connected and ready (Wi-Fi WebApp)", self.phone_cam_card)
-        self.lbl_phone_cam_ready_info.setStyleSheet(
-            f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['status_ok']}; background: transparent; border: none;"
-        )
-        ph_conn_layout.addWidget(self.lbl_phone_cam_ready_info)
-
-        # Row 1: Connected Smartphone Info
+        # Row 1: Connected Smartphone Info (Pulled to the top)
         block_ph_dev = QFrame(self.phone_cam_card)
         block_ph_dev.setObjectName("settingBlockPhoneDev")
         block_ph_dev.setFixedHeight(64)
@@ -599,11 +593,12 @@ class UIPagesMixin:
         )
         ph_dev_layout.addWidget(lbl_ph_dev_title)
 
-        self.lbl_phone_device_meta = QLabel("Active Wireless Video Source • High-speed video stream ready.", block_ph_dev)
-        self.lbl_phone_device_meta.setStyleSheet(
-            f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
+        self.lbl_phone_cam_ready_info = QLabel("Smartphone connected and ready (Wi-Fi WebApp)", block_ph_dev)
+        self.lbl_phone_cam_ready_info.setStyleSheet(
+            f"font-family: '{self.font_body}'; font-size: 11px; font-weight: 600; color: {PALETTE['status_ok']}; background: transparent; border: none;"
         )
-        ph_dev_layout.addWidget(self.lbl_phone_device_meta)
+        ph_dev_layout.addWidget(self.lbl_phone_cam_ready_info)
+        self.lbl_phone_device_meta = self.lbl_phone_cam_ready_info
         ph_conn_layout.addWidget(block_ph_dev)
 
         # Row 2: Resolution & FPS side-by-side blocks
