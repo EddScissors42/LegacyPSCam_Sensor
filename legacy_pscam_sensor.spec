@@ -2,6 +2,54 @@
 import sys
 from pathlib import Path
 from PyInstaller.utils.hooks import collect_all
+from PyInstaller.utils.win32.versioninfo import (
+    VSVersionInfo,
+    FixedFileInfo,
+    StringFileInfo,
+    StringTable,
+    StringStruct,
+    VarFileInfo,
+    VarStruct,
+)
+
+sys.path.insert(0, str(Path.cwd()))
+from version import __version__, APP_NAME, VERSION_STRING
+
+_ver_parts = [int(p) if p.isdigit() else 0 for p in (__version__.split(".") + ["0", "0", "0"])[:4]]
+_ver_tuple = (_ver_parts[0], _ver_parts[1], _ver_parts[2], _ver_parts[3])
+
+pe_version_info = VSVersionInfo(
+    ffi=FixedFileInfo(
+        filevers=_ver_tuple,
+        prodvers=_ver_tuple,
+        mask=0x3F,
+        flags=0x0,
+        OS=0x40004,
+        fileType=0x1,
+        subtype=0x0,
+        date=(0, 0),
+    ),
+    kids=[
+        StringFileInfo(
+            [
+                StringTable(
+                    "040904B0",
+                    [
+                        StringStruct("CompanyName", "Legacy PSCam Sensor Project"),
+                        StringStruct("FileDescription", f"{APP_NAME} — Motion Sensor for Just Dance PC"),
+                        StringStruct("FileVersion", f"{__version__}.0"),
+                        StringStruct("InternalName", "LegacyPSCam_Sensor"),
+                        StringStruct("LegalCopyright", "Open Source — Legacy PSCam Sensor Contributors"),
+                        StringStruct("OriginalFilename", "LegacyPSCam_Sensor.exe"),
+                        StringStruct("ProductName", APP_NAME),
+                        StringStruct("ProductVersion", VERSION_STRING),
+                    ],
+                )
+            ]
+        ),
+        VarFileInfo([VarStruct("Translation", [1033, 1200])]),
+    ],
+)
 
 block_cipher = None
 
@@ -101,5 +149,6 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    version=pe_version_info,
     icon=None,
 )

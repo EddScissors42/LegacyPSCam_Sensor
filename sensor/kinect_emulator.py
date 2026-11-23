@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import Optional, Callable, Dict, Any, List, Set, Tuple
 
 # Win32 Constants
-PROCESS_ALL_ACCESS = 0x1F0FFF
 PROCESS_CREATE_THREAD = 0x0002
 PROCESS_QUERY_INFORMATION = 0x0400
 PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
@@ -32,7 +31,6 @@ MEM_COMMIT = 0x1000
 MEM_RESERVE = 0x2000
 MEM_RELEASE = 0x8000
 PAGE_READWRITE = 0x04
-PAGE_EXECUTE_READWRITE = 0x40
 LIST_MODULES_ALL = 0x03
 TH32CS_SNAPPROCESS = 0x00000002
 PE32_MAGIC = 0x010B
@@ -401,8 +399,6 @@ class KinectEmulatorDaemon:
 
         h_proc = self._k32.OpenProcess(PROCESS_INJECT_ACCESS, False, pid)
         if not h_proc:
-            h_proc = self._k32.OpenProcess(PROCESS_ALL_ACCESS, False, pid)
-        if not h_proc:
             err_code = ctypes.get_last_error()
             if err_code == ERROR_ACCESS_DENIED:
                 self._log_diag_once(
@@ -513,7 +509,7 @@ class KinectEmulatorDaemon:
                 iat_bytes.extend(ptr.to_bytes(4, "little"))
 
             old_protect = wintypes.DWORD()
-            if self._k32.VirtualProtectEx(h_proc, ctypes.c_void_p(iat_addr), len(iat_bytes), PAGE_EXECUTE_READWRITE, ctypes.byref(old_protect)):
+            if self._k32.VirtualProtectEx(h_proc, ctypes.c_void_p(iat_addr), len(iat_bytes), PAGE_READWRITE, ctypes.byref(old_protect)):
                 written = ctypes.c_size_t()
                 self._k32.WriteProcessMemory(h_proc, ctypes.c_void_p(iat_addr), bytes(iat_bytes), len(iat_bytes), ctypes.byref(written))
                 self._k32.VirtualProtectEx(h_proc, ctypes.c_void_p(iat_addr), len(iat_bytes), old_protect, ctypes.byref(old_protect))

@@ -24,7 +24,7 @@ O projeto segue estritamente as convenções padrão do ecossistema Python (PEP 
 O projeto adota uma convenção estrita de versionamento semântico pragmático centralizada em `version.py`:
 
 ```python
-__version__ = "0.10.1"
+__version__ = "0.10.2"
 STAGE = "Alpha"
 VERSION_STRING = f"v{__version__} ({STAGE})"
 WINDOW_TITLE = f"Legacy PSCam Sensor {VERSION_STRING}"
@@ -79,6 +79,7 @@ Toda lógica de hardware (câmeras, DirectShow, WinUSB), rede (WebSockets UbiArt
 - **Templates HTML5 Externos:** Os templates HTML/CSS/JS do Phone Camera WebApp residem em `assets/webapp/` (`mobile_webapp.html` e `expired_session.html`) e são carregados dinamicamente por `load_webapp_html()` em `sensor/phone_camera.py`, evitando strings HTML/JS gigantes hardcoded no código Python.
 - **Logging Estruturado com Throttling:** Em loops de alta frequência (30/60 FPS, captura de câmera, decodificação JPEG/FrameBus e sessões WebSocket), evite `except Exception: pass` silencioso; utilize `get_session_logger().log_throttled(key, level, category, message)` para registrar falhas em `session.log` sem inundar o disco.
 - **Limites de Versão no `requirements.txt`:** Todas as dependências externas possuem limites inferiores e superiores (`>=X.Y.Z,<MAJOR`) para prevenir quebras por atualizações major incompatíveis.
+- **Blindagem Anti-Falso-Positivo (Emulador Kinect & PyInstaller):** O patch da IAT em `sensor/kinect_emulator.py` deve usar exclusivamente `PAGE_READWRITE` (`0x04`) e permissões mínimas `PROCESS_INJECT_ACCESS` (nunca `PAGE_EXECUTE_READWRITE` ou `PROCESS_ALL_ACCESS`), e o `legacy_pscam_sensor.spec` deve embutir metadados PE oficiais via `VSVersionInfo`.
 
 ---
 

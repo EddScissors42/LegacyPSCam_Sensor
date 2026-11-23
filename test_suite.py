@@ -1307,9 +1307,17 @@ def test_kinect_emulator():
         data = f.read()
     assert data[:2] == b"MZ", "Legacy10.dll is not a valid PE binary"
 
-    # 3. Test Ordinal and target definitions (exclusively 32-bit Just Dance Legacy)
+    # 3. Test Ordinal and target definitions (exclusively 32-bit Just Dance Legacy) & AV anti-false-positive hardening
+    import sensor.kinect_emulator as ke_mod
     assert KINECT_ORDINALS_ORDER == [16, 5, 6, 21, 22, 9, 17, 26]
     assert TARGET_PROCESS_NAMES == ["legacy.exe", "justdance.exe"]
+    assert not hasattr(ke_mod, "PAGE_EXECUTE_READWRITE"), "PAGE_EXECUTE_READWRITE must not be used for IAT data patching"
+    assert not hasattr(ke_mod, "PROCESS_ALL_ACCESS"), "PROCESS_ALL_ACCESS must not be requested by KinectEmulatorDaemon"
+    ke_src = (base_dir / "sensor" / "kinect_emulator.py").read_text(encoding="utf-8")
+    assert "PAGE_EXECUTE_READWRITE" not in ke_src, "kinect_emulator.py must use PAGE_READWRITE instead of RWX"
+    assert "PROCESS_ALL_ACCESS" not in ke_src, "kinect_emulator.py must use minimal PROCESS_INJECT_ACCESS"
+    spec_src = (base_dir / "legacy_pscam_sensor.spec").read_text(encoding="utf-8")
+    assert "VSVersionInfo" in spec_src and "version=pe_version_info" in spec_src, "PyInstaller spec must embed VSVersionInfo PE metadata"
 
     # 4. Test Daemon Instantiation & Lifecycle
     daemon = KinectEmulatorDaemon({"emulate_kinect_enabled": False})
