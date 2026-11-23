@@ -824,38 +824,15 @@ class PlayerSlotState:
         pixel_joints = self.hand_filter.apply_pixel(pixel_joints)
         pixel_joints = self.smoother.apply_pixel(pixel_joints, frame_w=w, frame_h=h, dt=dt_infer)
 
-        # 6. Build 320x240 player silhouette mask (Neural + Anatomical)
+        # 6. Build 320x240 player silhouette mask (Exact Neural Cutout; Anatomical fallback only if neural missing)
         mw, mh = self.MASK_INTERNAL_W, self.MASK_INTERNAL_H
-        neural_mask = None
-        if seg_mask_obj is not None:
-            try:
-                seg_view = seg_mask_obj.numpy_view()
-                if seg_view.shape[0] != mh or seg_view.shape[1] != mw:
-                    prob_small = cv2.resize(seg_view, (mw, mh), interpolation=cv2.INTER_LINEAR)
-                else:
-                    prob_small = seg_view.astype(np.float32, copy=False)
-
-                if self._seg_prob_ema is None or self._seg_prob_ema.shape != prob_small.shape:
-                    self._seg_prob_ema = prob_small.astype(np.float32, copy=True)
-                else:
-                    cv2.addWeighted(prob_small, 0.65, self._seg_prob_ema, 0.35, 0.0, dst=self._seg_prob_ema)
-
-                neural_mask = (self._seg_prob_ema > 0.24).astype(np.uint8) * 255
-            except Exception as exc:
-                if not self._warned_seg_err:
-                    print(f"[WARN] Neural segmentation mask fallback to anatomical mask: {exc}")
-                    self._warned_seg_err = True
-                neural_mask = None
-
-        anatomical_mask = build_body_mask_fn(norm_lm, mw, mh)
-        if neural_mask is not None:
-            # Constrain neural segmentation mask to the vicinity of this dancer's anatomical mask
-            # so a multi-person neural mask tensor never bleeds the other dancer's silhouette into this slot
-            dilated_anat = cv2.dilate(anatomical_mask, np.ones((15, 15), np.uint8), iterations=1)
-            scoped_neural = cv2.bitwise_and(neural_mask, dilated_anat)
-            body_mask = cv2.bitwise_or(scoped_neural, anatomical_mask)
-        else:
-            body_mask = anatomical_mask
+        body_mask = self._build_exact_player_mask(
+            seg_mask_obj=seg_mask_obj,
+            norm_lm=norm_lm,
+            mw=mw,
+            mh=mh,
+            build_body_mask_fn=build_body_mask_fn,
+        )
 
         snapped, pixel_joints, body_mask = self.person_lock.record_valid_frame(
             snapped, pixel_joints, body_mask, norm_landmarks=norm_lm, dt=dt_infer
@@ -874,6 +851,95 @@ class PlayerSlotState:
             is_calibrated=self.calibrator.is_calibrated,
             center_z=cz,
         )
+
+    _ELLIPSE_3X3 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+
+    def _build_exact_player_mask(
+        self,
+        seg_mask_obj: Any,
+        norm_lm: Any,
+        mw: int,
+        mh: int,
+        build_body_mask_fn: Callable,
+    ) -> np.ndarray:
+        """
+        Produces a tight, true-to-life 320x240 player silhouette directly from MediaPipe's
+        neural segmentation tensor:
+          1. Squeezes (H, W, 1) -> (H, W) float32 and resizes linearly to 320x240.
+          2. Applies fast light temporal EMA (0.80 new / 0.20 prev) to suppress single-frame grain
+             without creating motion ghost trails behind fast-moving arms.
+          3. Applies a light 3x3 Gaussian blur on the probability map and thresholds at 0.48
+             (true semantic human boundary) instead of bloated low thresholds.
+          4. Keeps only connected components anchored to this dancer's visible landmarks so stray
+             background objects are removed without clipping hair, clothes, or outstretched hands.
+          5. Never overlays the geometric `anatomical_mask` on top of a valid neural silhouette;
+             only falls back to `build_body_mask_fn` when neural segmentation is unavailable/empty.
+        """
+        neural_mask = None
+        if seg_mask_obj is not None:
+            try:
+                seg_view = seg_mask_obj.numpy_view()
+                if seg_view.ndim == 3:
+                    seg_view = seg_view[:, :, 0]
+                if seg_view.shape[0] != mh or seg_view.shape[1] != mw:
+                    prob_small = cv2.resize(seg_view, (mw, mh), interpolation=cv2.INTER_LINEAR)
+                else:
+                    prob_small = seg_view.astype(np.float32, copy=False)
+
+                if self._seg_prob_ema is None or self._seg_prob_ema.shape != prob_small.shape:
+                    self._seg_prob_ema = prob_small.astype(np.float32, copy=True)
+                else:
+                    cv2.addWeighted(prob_small, 0.80, self._seg_prob_ema, 0.20, 0.0, dst=self._seg_prob_ema)
+
+                smooth_prob = cv2.GaussianBlur(self._seg_prob_ema, (3, 3), 0)
+                raw_bin = (smooth_prob >= 0.48).astype(np.uint8) * 255
+
+                # Remove tiny isolated background specks and fill 1px clothing pinholes
+                raw_bin = cv2.morphologyEx(raw_bin, cv2.MORPH_OPEN, self._ELLIPSE_3X3)
+                raw_bin = cv2.morphologyEx(raw_bin, cv2.MORPH_CLOSE, self._ELLIPSE_3X3)
+
+                # Filter connected components to keep only components belonging to this dancer
+                num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(raw_bin, connectivity=8)
+                if num_labels > 1:
+                    anchor_labels = set()
+                    if norm_lm is not None:
+                        for lm in norm_lm:
+                            vis = float(getattr(lm, "visibility", 1.0))
+                            pres = float(getattr(lm, "presence", 1.0))
+                            if min(vis, pres) < 0.25:
+                                continue
+                            lx = int(round(float(lm.x) * (mw - 1)))
+                            ly = int(round(float(lm.y) * (mh - 1)))
+                            if 0 <= lx < mw and 0 <= ly < mh:
+                                # Sample a small neighborhood around each landmark to catch hands/feet
+                                y0, y1 = max(0, ly - 4), min(mh, ly + 5)
+                                x0, x1 = max(0, lx - 4), min(mw, lx + 5)
+                                patch = labels[y0:y1, x0:x1]
+                                for lbl in np.unique(patch):
+                                    if lbl > 0 and stats[lbl, cv2.CC_STAT_AREA] >= 12:
+                                        anchor_labels.add(int(lbl))
+
+                    if anchor_labels:
+                        filtered = np.zeros((mh, mw), dtype=np.uint8)
+                        for lbl in anchor_labels:
+                            filtered[labels == lbl] = 255
+                        neural_mask = filtered
+                    else:
+                        # Fallback to largest foreground blob if landmarks fell slightly off-mask
+                        areas = stats[1:, cv2.CC_STAT_AREA]
+                        best_lbl = int(np.argmax(areas)) + 1
+                        if int(areas[best_lbl - 1]) >= 60:
+                            neural_mask = np.where(labels == best_lbl, np.uint8(255), np.uint8(0))
+            except Exception as exc:
+                if not self._warned_seg_err:
+                    print(f"[WARN] Neural segmentation mask fallback to anatomical mask: {exc}")
+                    self._warned_seg_err = True
+                neural_mask = None
+
+        if neural_mask is not None and int(np.count_nonzero(neural_mask)) >= 60:
+            return neural_mask
+
+        return build_body_mask_fn(norm_lm, mw, mh)
 
 
 class MultiPlayerAssociator:

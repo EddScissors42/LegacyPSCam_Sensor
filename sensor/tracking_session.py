@@ -3,12 +3,15 @@ Tracking Session Runner for Legacy PSCam Sensor.
 Coordinates camera stream, MediaPipe pose processing (1P & 2P),
 shared memory output, and OpenCV HUD preview window.
 """
+import os
 import time
 import math
 import cv2
 import ctypes
+from ctypes import wintypes
 import threading
 import numpy as np
+from typing import Tuple
 from sensor.camera_manager import LatestFrameCamera, CameraManager
 from sensor.kinect_shared_memory import get_kinect_bridge
 from sensor.config_manager import parse_preset
@@ -19,6 +22,63 @@ from sensor.gesture_detector import (
 )
 
 _send_enter_keystroke = dispatch_enter_keystroke
+
+
+def apply_pip_window_state(
+    window_name: str,
+    pip_active: bool,
+    frame_w: int,
+    frame_h: int,
+    normal_size: Tuple[int, int],
+) -> None:
+    """
+    Switches the OpenCV tracking window between compact Always-On-Top Picture-in-Picture (PiP)
+    mode (320px wide, proportional height, HWND_TOPMOST) and standard window mode.
+    """
+    if pip_active:
+        pip_w = 320
+        pip_h = max(180, int(round(320 * (frame_h / float(max(1, frame_w))))))
+        target_w, target_h = pip_w, pip_h
+    else:
+        target_w, target_h = normal_size
+
+    try:
+        cv2.resizeWindow(window_name, target_w, target_h)
+    except Exception:
+        pass
+
+    try:
+        if hasattr(cv2, "WND_PROP_TOPMOST"):
+            cv2.setWindowProperty(window_name, cv2.WND_PROP_TOPMOST, 1.0 if pip_active else 0.0)
+    except Exception:
+        pass
+
+    if os.name == "nt":
+        try:
+            user32 = ctypes.windll.user32
+            user32.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+            user32.FindWindowW.restype = wintypes.HWND
+            user32.SetWindowPos.argtypes = [
+                wintypes.HWND,
+                wintypes.HWND,
+                ctypes.c_int,
+                ctypes.c_int,
+                ctypes.c_int,
+                ctypes.c_int,
+                wintypes.UINT,
+            ]
+            user32.SetWindowPos.restype = wintypes.BOOL
+
+            hwnd = user32.FindWindowW(None, window_name)
+            if hwnd:
+                # HWND_TOPMOST = -1, HWND_NOTOPMOST = -2
+                z_order = wintypes.HWND(-1 if pip_active else -2)
+                SWP_NOMOVE = 0x0002
+                SWP_NOSIZE = 0x0001
+                SWP_SHOWWINDOW = 0x0040
+                user32.SetWindowPos(hwnd, z_order, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW)
+        except Exception:
+            pass
 
 
 def set_high_resolution_timer(enable=True):
@@ -219,8 +279,9 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None, prewar
     )
 
     window_name = "Legacy PSCam Sensor"
+    normal_win_size = (min(w, 1280), min(h, 800))
     cv2.namedWindow(window_name, cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_EXPANDED)
-    cv2.resizeWindow(window_name, min(w, 1280), min(h, 800))
+    cv2.resizeWindow(window_name, normal_win_size[0], normal_win_size[1])
 
     track_fps_counter = 0
     track_fps_last_time = time.time()
@@ -273,6 +334,10 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None, prewar
                     print(f"[INFO] Mirroring toggled to: {mirror}")
                 elif key in (ord('h'), ord('H')):
                     overlay.toggle_hud()
+                elif key in (ord('p'), ord('P')):
+                    pip_on = overlay.toggle_pip()
+                    apply_pip_window_state(window_name, pip_on, camera.actual_w or w, camera.actual_h or h, normal_win_size)
+                    print(f"[INFO] Picture-in-Picture (PiP) mode toggled to: {pip_on}")
                 elif key in (ord('o'), ord('O')):
                     camera_orientation = (camera_orientation + 90) % 360
                     camera.set_orientation(camera_orientation)
@@ -447,32 +512,33 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None, prewar
                         display_frame,
                         p_px,
                         player_idx=s_idx,
-                        show_badge=(max_players >= 2),
+                        show_badge=(max_players >= 2 and not overlay.pip_mode),
                         scoring_hand=scoring_hand_side,
                         hand_speed=current_hand_speed,
                     )
 
-            primary_calib = primary_p.is_calibrated if primary_p else tracker.calibrator.is_calibrated
-            primary_tier = primary_p.calibration_tier if primary_p else tracker.calibrator.calibration_tier
-            display_frame = overlay.draw_hud(
-                display_frame,
-                camera_info_str=mode_label,
-                is_tracked=is_tracked,
-                cam_fps=cam_fps,
-                track_fps=measured_track_fps,
-                is_calibrated=primary_calib,
-                is_mirrored=mirror,
-                calibration_tier=primary_tier,
-                max_players=max_players,
-                tracked_mask=multi_res.tracked_mask,
-            )
+            if not overlay.pip_mode:
+                primary_calib = primary_p.is_calibrated if primary_p else tracker.calibrator.is_calibrated
+                primary_tier = primary_p.calibration_tier if primary_p else tracker.calibrator.calibration_tier
+                display_frame = overlay.draw_hud(
+                    display_frame,
+                    camera_info_str=mode_label,
+                    is_tracked=is_tracked,
+                    cam_fps=cam_fps,
+                    track_fps=measured_track_fps,
+                    is_calibrated=primary_calib,
+                    is_mirrored=mirror,
+                    calibration_tier=primary_tier,
+                    max_players=max_players,
+                    tracked_mask=multi_res.tracked_mask,
+                )
 
-            # Render modern gesture radial progress ring & success pulse
-            display_frame = overlay.draw_gesture_feedback(
-                display_frame,
-                gesture_info,
-                max_players=max_players,
-            )
+                # Render modern gesture radial progress ring & success pulse
+                display_frame = overlay.draw_gesture_feedback(
+                    display_frame,
+                    gesture_info,
+                    max_players=max_players,
+                )
 
             cv2.imshow(window_name, display_frame)
 
@@ -489,6 +555,10 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None, prewar
                 print(f"[INFO] Mirroring toggled to: {mirror}")
             elif key in (ord('h'), ord('H')):
                 overlay.toggle_hud()
+            elif key in (ord('p'), ord('P')):
+                pip_on = overlay.toggle_pip()
+                apply_pip_window_state(window_name, pip_on, fw, fh, normal_win_size)
+                print(f"[INFO] Picture-in-Picture (PiP) mode toggled to: {pip_on}")
             elif key in (ord('o'), ord('O')):
                 camera_orientation = (camera_orientation + 90) % 360
                 camera.set_orientation(camera_orientation)

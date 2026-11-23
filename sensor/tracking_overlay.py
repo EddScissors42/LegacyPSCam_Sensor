@@ -121,9 +121,15 @@ class TrackingOverlay:
     def __init__(self, show_hud: bool = True):
         self.show_hud = show_hud
         self.hud_mode = 0 if show_hud else 2  # 0: Full HUD, 1: Minimalist, 2: Off
+        self.pip_mode = False
         self._warned_silhouette_err = False
         self._last_mode_switch_time = 0.0
         self._mode_switch_text = ""
+
+    def toggle_pip(self) -> bool:
+        """Toggles Picture-in-Picture (PiP) mode (compact always-on-top window without HUD pills)."""
+        self.pip_mode = not self.pip_mode
+        return self.pip_mode
 
     def toggle_hud(self) -> bool:
         """Cycles between Full HUD -> Minimalist Clean -> Off -> Full HUD."""
@@ -152,7 +158,9 @@ class TrackingOverlay:
         alpha: float = 0.28,
     ) -> np.ndarray:
         """
-        Renders the player silhouette shadow and modern dual-layer neon glow contour.
+        Renders a smooth, true-to-life player silhouette shadow ("sombrinha") and crisp
+        anti-aliased contour directly from the segmentation mask, preserving interior gaps
+        (e.g., between arms and waist or between legs) without stair-stepping artifacts.
         frame: BGR image (mirrored if preview is mirrored).
         mask: binary uint8 mask (native 320x240 or full frame).
         """
@@ -163,51 +171,50 @@ class TrackingOverlay:
             fh, fw = frame.shape[:2]
             mh, mw = mask.shape[:2]
 
-            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            if not contours:
+            # Find tight bounding box in mask space to restrict upscaling/blending to the player ROI
+            ys, xs = np.nonzero(mask)
+            if ys.size == 0:
+                return frame
+            pad_m = 4
+            mx0 = max(0, int(xs.min()) - pad_m)
+            my0 = max(0, int(ys.min()) - pad_m)
+            mx1 = min(mw, int(xs.max()) + 1 + pad_m)
+            my1 = min(mh, int(ys.max()) + 1 + pad_m)
+
+            # Map tight ROI to frame coordinates
+            sx = fw / float(mw)
+            sy = fh / float(mh)
+            x0 = max(0, int(math.floor(mx0 * sx)))
+            y0 = max(0, int(math.floor(my0 * sy)))
+            x1 = min(fw, int(math.ceil(mx1 * sx)))
+            y1 = min(fh, int(math.ceil(my1 * sy)))
+            rw, rh = x1 - x0, y1 - y0
+            if rw <= 0 or rh <= 0:
                 return frame
 
-            # Rescale contours to frame if mask is at 320x240 native resolution
-            if mh != fh or mw != fw:
-                sx = fw / float(mw)
-                sy = fh / float(mh)
-                scaled_contours = []
-                for c in contours:
-                    sc = np.empty_like(c, dtype=np.int32)
-                    sc[:, 0, 0] = np.clip(np.rint(c[:, 0, 0] * sx), 0, fw - 1).astype(np.int32)
-                    sc[:, 0, 1] = np.clip(np.rint(c[:, 0, 1] * sy), 0, fh - 1).astype(np.int32)
-                    scaled_contours.append(sc)
-                contours = scaled_contours
+            mask_roi = mask[my0:my1, mx0:mx1]
+            if mask_roi.shape[0] != rh or mask_roi.shape[1] != rw:
+                # Linear upscale + mild Gaussian anti-alias eliminates 320x240 blocky stair-stepping
+                up_mask = cv2.resize(mask_roi, (rw, rh), interpolation=cv2.INTER_LINEAR)
+                up_mask = cv2.GaussianBlur(up_mask, (5, 5), 0)
+                bin_roi = (up_mask >= 127).astype(np.uint8) * 255
+            else:
+                bin_roi = (mask_roi >= 127).astype(np.uint8) * 255
 
-            # Compute tight bounding box across player contours to blend only active ROI
-            x0, y0, x1, y1 = fw, fh, 0, 0
-            for c in contours:
-                bx, by, bw, bh = cv2.boundingRect(c)
-                if bx < x0:
-                    x0 = bx
-                if by < y0:
-                    y0 = by
-                if bx + bw > x1:
-                    x1 = bx + bw
-                if by + bh > y1:
-                    y1 = by + bh
+            if not np.any(bin_roi):
+                return frame
 
-            x0 = max(0, x0)
-            y0 = max(0, y0)
-            x1 = min(fw, x1)
-            y1 = min(fh, y1)
+            # 1. Exact pixel-accurate translucent tint ("sombrinha") preserving interior gaps (arms/legs)
+            roi = frame[y0:y1, x0:x1]
+            tinted = np.empty_like(roi)
+            tinted[:, :] = color
+            blended = cv2.addWeighted(tinted, alpha, roi, 1.0 - alpha, 0)
+            np.copyto(roi, blended, where=(bin_roi[:, :, None] > 0))
 
-            if x1 > x0 and y1 > y0:
-                roi = frame[y0:y1, x0:x1]
-                shadow_roi = roi.copy()
-                offset_contours = [c - np.array([[[x0, y0]]], dtype=np.int32) for c in contours]
-                cv2.drawContours(shadow_roi, offset_contours, -1, color, thickness=cv2.FILLED)
-                cv2.addWeighted(shadow_roi, alpha, roi, 1.0 - alpha, 0, roi)
-
-            # Dual-layer neon stroke: inner softer glow (3px) + outer sharp contour (1px)
-            glow_color = tuple(min(255, int(ch * 0.75 + 60)) for ch in color)
-            cv2.drawContours(frame, contours, -1, glow_color, 3, cv2.LINE_AA)
-            cv2.drawContours(frame, contours, -1, (255, 255, 255), 1, cv2.LINE_AA)
+            # 2. Smooth anti-aliased contour (RETR_CCOMP preserves both outer & inner body outlines)
+            contours, _ = cv2.findContours(bin_roi, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE)
+            if contours:
+                cv2.drawContours(roi, contours, -1, color, 2, cv2.LINE_AA)
         except Exception as exc:
             if not self._warned_silhouette_err:
                 print(f"[WARN] Silhouette overlay rendering error: {exc}")
@@ -532,15 +539,15 @@ class TrackingOverlay:
         # =====================================================================
         # BOTTOM CENTER PILL: CONSOLE SHORTCUT BADGES
         # =====================================================================
-        bot_w, bot_h = min(fw - 32, 460), 32
+        bot_w, bot_h = min(fw - 24, 520), 32
         bot_x = (fw - bot_w) // 2
         bot_y = max(60, fh - bot_h - 12)
         draw_rounded_glass_pill(frame, bot_x, bot_y, bot_w, bot_h, radius=10, bg_color=COLOR_GLASS_BG, alpha=0.78, border_color=COLOR_GLASS_BORDER)
 
-        controls_text = "[C] Calibrate  •  [M] Mirror  •  [H] Cycle HUD  •  [Q/ESC] Exit"
-        t_sz = cv2.getTextSize(controls_text, cv2.FONT_HERSHEY_SIMPLEX, 0.38, 1)[0]
+        controls_text = "[C] Calibrate  •  [M] Mirror  •  [H] HUD  •  [P] PiP  •  [Q/ESC] Exit"
+        t_sz = cv2.getTextSize(controls_text, cv2.FONT_HERSHEY_SIMPLEX, 0.36, 1)[0]
         tx = bot_x + (bot_w - t_sz[0]) // 2
-        cv2.putText(frame, controls_text, (tx, bot_y + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (225, 230, 240), 1, cv2.LINE_AA)
+        cv2.putText(frame, controls_text, (tx, bot_y + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (225, 230, 240), 1, cv2.LINE_AA)
 
         return frame
 

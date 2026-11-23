@@ -467,12 +467,45 @@ def test_overlay():
     px_joints = [(50 + i*15, 50 + i*15, 0.9) for i in range(20)]
     # Test with 320x240 native Kinect mask rendered onto a 1280x800 PS4 Camera frame
     dummy_mask = np.zeros((240, 320), dtype=np.uint8)
-    dummy_mask[30:120, 40:140] = 255
+    dummy_mask[30:150, 40:160] = 255
+    # Carve an interior hollow gap (e.g., gap between bent arm and waist)
+    dummy_mask[65:115, 75:125] = 0
     frame = overlay.draw_player_silhouette(frame, dummy_mask)
+    # Center of hollow gap (x=100*4=400, y=90*(800/240)=300) must remain un-tinted (0)
+    assert np.all(frame[300, 400] == 0), "Interior silhouette gaps must stay hollow (not filled solid)"
+    # Solid ring pixel (x=55*4=220, y=90*(800/240)=300) must be tinted
+    assert np.any(frame[300, 220] > 0), "Active silhouette body region must be tinted"
+
+    # Verify PlayerSlotState._build_exact_player_mask preserves real neural silhouette without anatomical bloat
+    from sensor.player_slot import PlayerSlotState
+    slot = PlayerSlotState(slot_index=0)
+    # Synthetic 3D (480, 640, 1) neural mask: person ring + detached background blob far away
+    seg_arr = np.zeros((480, 640, 1), dtype=np.float32)
+    seg_arr[100:380, 220:420, 0] = 0.92
+    seg_arr[180:260, 280:360, 0] = 0.05  # Hollow gap inside silhouette (e.g. hand on hip)
+    seg_arr[10:60, 10:60, 0] = 0.95      # Unrelated background lamp/chair blob
+    mock_seg = type("MockSeg", (), {"numpy_view": lambda self: seg_arr})()
+    mock_lm = [type("MockLM", (), {"x": 0.5, "y": 0.30, "visibility": 0.95, "presence": 0.95})() for _ in range(33)]
+    fallback_called = []
+    exact_mask = slot._build_exact_player_mask(
+        mock_seg, mock_lm, 320, 240, lambda *a, **kw: fallback_called.append(True) or np.full((240, 320), 255, dtype=np.uint8)
+    )
+    assert not fallback_called, "Anatomical fallback must not overwrite a valid neural silhouette"
+    assert exact_mask[110, 160] == 0, "Hollow interior gap must be preserved in neural body mask"
+    assert exact_mask[15, 15] == 0, "Detached background blob must be filtered out"
+    assert exact_mask[70, 160] == 255, "Real dancer body pixels must be preserved"
+
     frame = overlay.draw_skeleton(frame, px_joints)
     frame = overlay.draw_hud(frame, "PS Camera 60 FPS", True, 60.0, 59.8, True, True)
     assert frame.shape == (800, 1280, 3)
     assert np.any(frame > 0)
+
+    # Verify Picture-in-Picture (PiP) mode toggle ([P] shortcut)
+    assert overlay.pip_mode is False
+    assert overlay.toggle_pip() is True
+    assert overlay.pip_mode is True
+    assert overlay.toggle_pip() is False
+    assert overlay.pip_mode is False
 
     # Test Controller Tracking HUD (PlayStation Floating Glass Pills & Motion Aura)
     ds4_canvas = np.zeros((480, 640, 3), dtype=np.uint8)

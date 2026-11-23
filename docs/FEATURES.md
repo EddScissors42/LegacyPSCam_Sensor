@@ -522,7 +522,10 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
     - **Pílula Superior Esquerda:** Branding da aplicação ("LEGACY PSCAM") e modelo/resolução da câmera.
     - **Pílula Superior Direita:** Métricas em tempo real de FPS da câmera, FPS do pipeline de tracking e integridade da ponte IPC (`Kinect JDP1/JMI1`).
     - **Pílula Lateral Direita (Abaixo de FPS):** Status do dançarino (`DANCER ACTIVE` / `SEARCHING DANCER...`), nível de calibração (`FULL BODY` / `HALF BODY`) e indicador de slots ativos (`P1` em Azul e `P2` em Laranja Claro), empilhado verticalmente logo abaixo do bloco de FPS para eliminar qualquer compressão horizontal em resoluções 4:3 (como 640x480) e manter o centro superior 100% livre.
-    - **Pílula Inferior Central:** Badges compactos dos atalhos de teclado (`[C] Calibrar • [M] Espelho • [H] Ciclar HUD • [Q/ESC] Sair`), liberando completamente os cantos inferiores da tela para que os pés dos dançarinos fiquem 100% visíveis em corpo inteiro.
+    - **Pílula Inferior Central:** Badges compactos dos atalhos de teclado (`[C] Calibrar • [M] Espelho • [H] HUD • [P] PiP • [Q/ESC] Sair`), liberando completamente os cantos inferiores da tela para que os pés dos dançarinos fiquem 100% visíveis em corpo inteiro.
+- **Modo Picture-in-Picture Always-On-Top (`[P]`):**
+  - Ao pressionar `P` na janela de tracking, a janela redimensiona automaticamente para uma minijanela compacta (`320x240` em 4:3 ou `320x200` em 16:10) que permanece sempre no topo (`HWND_TOPMOST`) acima do Just Dance PC.
+  - Exibe apenas a imagem normal da câmera junto com a silhueta neural fiel do jogador e as linhas do esqueleto, ocultando todas as pílulas e textos informativos do HUD. Pressionar `P` novamente restaura o tamanho normal e desativa o `Always-On-Top`.
 - **Ciclo de Modos de HUD (`[H]`):**
   - **Modo 0 (Full HUD):** Exibe todas as métricas detalhadas (câmera, FPS, IPC, status e atalhos).
   - **Modo 1 (Minimalist / Clean Dance):** Exibe apenas a pílula de status no canto superior direito, reduzindo distrações na tela.
