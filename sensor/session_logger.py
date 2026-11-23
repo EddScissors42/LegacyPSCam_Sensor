@@ -111,6 +111,7 @@ class SessionLogger:
         # Installed exception hooks
         self._orig_excepthook = sys.excepthook
         self._orig_threading_excepthook = getattr(threading, "excepthook", None)
+        self._throttle_timestamps: Dict[str, float] = {}
 
     @classmethod
     def get_instance(cls, logs_dir: Optional[str | Path] = None) -> "SessionLogger":
@@ -219,6 +220,30 @@ class SessionLogger:
                     self._session_file.flush()
                 except OSError:
                     pass
+
+    def log(self, category: str, message: str, level: str = "INFO") -> None:
+        """Convenience alias for log_event(level, category, message)."""
+        self.log_event(level, category, message)
+
+    def log_throttled(
+        self,
+        key: str,
+        level: str,
+        category: str,
+        message: str,
+        interval_s: float = 5.0,
+    ) -> None:
+        """
+        Writes a diagnostic log entry at most once every `interval_s` seconds per `key`.
+        Safe to call inside high-frequency 60 FPS capture/decode/network loops without log flooding.
+        """
+        now_perf = time.perf_counter()
+        with self._lock:
+            last_ts = self._throttle_timestamps.get(key, 0.0)
+            if (now_perf - last_ts) < interval_s:
+                return
+            self._throttle_timestamps[key] = now_perf
+        self.log_event(level, category, message)
 
     def log_system_environment(self) -> None:
         """Gathers and logs comprehensive OS, hardware, and runtime diagnostic metadata."""

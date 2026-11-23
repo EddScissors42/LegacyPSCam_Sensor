@@ -587,6 +587,8 @@ def test_project_structure():
     assert (BASE_DIR / "assets" / "icons" / "mode_competitive.svg").exists(), "Asset mode_competitive.svg must exist in assets/icons/"
     assert (BASE_DIR / "assets" / "icons" / "lab.svg").exists(), "Asset lab.svg must exist in assets/icons/"
     assert (BASE_DIR / "assets" / "icons" / "arrow_down.png").exists() or (BASE_DIR / "assets" / "icons" / "arrow_down.svg").exists(), "Asset arrow_down must exist in assets/icons/"
+    assert (BASE_DIR / "assets" / "webapp" / "mobile_webapp.html").exists(), "Asset mobile_webapp.html must exist in assets/webapp/"
+    assert (BASE_DIR / "assets" / "webapp" / "expired_session.html").exists(), "Asset expired_session.html must exist in assets/webapp/"
     assert (BASE_DIR / "models" / "pose_landmarker_lite.task").exists(), "models/pose_landmarker_lite.task must exist"
     assert (BASE_DIR / "models" / "pose_landmarker_full.task").exists(), "models/pose_landmarker_full.task must exist"
     assert not (BASE_DIR / "models" / "pose_landmarker_heavy.task").exists(), "models/pose_landmarker_heavy.task must be removed"
@@ -1653,8 +1655,10 @@ def test_arm_raise_gesture():
     left_up[7] = (260, 40, 0.9)
     assert check_arm_raised(left_up) is True, "Left arm up should be True"
 
-    # Test State Machine with simulated time progression
-    detector = ArmRaiseGestureDetector(enabled=True, hold_seconds=2.0, cooldown_seconds=2.5)
+    # Test State Machine with simulated time progression (dry-run keystroke to avoid injecting OS keys during tests)
+    detector = ArmRaiseGestureDetector(
+        enabled=True, hold_seconds=2.0, cooldown_seconds=2.5, dispatch_keystroke=False
+    )
 
     # Inactive frame
     st = detector.update(neutral, is_tracked=False, now=100.0)
@@ -1698,8 +1702,20 @@ def test_phone_camera_webapp():
     import ssl
     import json
     import struct
-    from sensor.phone_camera import QRCodeGenerator, SelfSignedTLSManager, PhoneCameraServer
+    from sensor.phone_camera import (
+        QRCodeGenerator,
+        SelfSignedTLSManager,
+        PhoneCameraServer,
+        load_webapp_html,
+        MOBILE_WEBAPP_HTML,
+        EXPIRED_SESSION_HTML,
+    )
     from sensor.camera_manager import LatestFrameCamera
+
+    # 0. Verify external HTML templates in assets/webapp/
+    assert "Legacy PSCam Sensor" in MOBILE_WEBAPP_HTML and "computeScaledDimensions" in MOBILE_WEBAPP_HTML
+    assert "Pairing Session Expired" in EXPIRED_SESSION_HTML
+    assert load_webapp_html("nonexistent_file.html", "FALLBACK_OK") == "FALLBACK_OK"
 
     # 1. Verify Pure-Python ISO/IEC 18004 QR Code generation and OpenCV QR decoding
     test_url = "https://192.168.1.42:8443"
@@ -2069,7 +2085,9 @@ def test_multi_player_tracking():
     assert ok_chair is False, "Horizontal/flat non-human object must be rejected as implausible dancer"
 
     # 4. Verify ArmRaiseGestureDetector.update_multi accepts arm raise from Player 2
-    g_det = ArmRaiseGestureDetector(enabled=True, hold_seconds=1.5, cooldown_seconds=2.0)
+    g_det = ArmRaiseGestureDetector(
+        enabled=True, hold_seconds=1.5, cooldown_seconds=2.0, dispatch_keystroke=False
+    )
     p1_down = [(200, 200, 0.9)] * 20
     p1_down[3] = (200, 120, 0.9)   # Head
     p1_down[7] = (170, 260, 0.9)   # Hand L down

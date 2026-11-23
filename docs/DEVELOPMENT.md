@@ -24,7 +24,7 @@ O projeto segue estritamente as convenções padrão do ecossistema Python (PEP 
 O projeto adota uma convenção estrita de versionamento semântico pragmático centralizada em `version.py`:
 
 ```python
-__version__ = "0.10.0"
+__version__ = "0.10.1"
 STAGE = "Alpha"
 VERSION_STRING = f"v{__version__} ({STAGE})"
 WINDOW_TITLE = f"Legacy PSCam Sensor {VERSION_STRING}"
@@ -74,6 +74,11 @@ O arquivo mapeado `Local\LegacyWebcamKinectPose` deve ter exatamente **344 bytes
 
 ### 5. Desacoplamento Estrito entre UI e Backend (Padrão MVP / Controllers)
 Toda lógica de hardware (câmeras, DirectShow, WinUSB), rede (WebSockets UbiArt, servidores HTTPS Phone Camera), dispositivos (DualShock 4 HID) e ciclo de vida de sessões de tracking DEVE residir exclusivamente nos controladores em `ui/controllers/` (`CameraController`, `DeviceController`, `SessionController`, unificados por `SensorAppController`). A classe `LegacySensorQtGUI` em `ui/gui_qt.py` deve atuar puramente como camada View de apresentação visual, delegando operações para `self.controller` e reagindo a sinais Qt thread-safe.
+
+### 6. Templates Estáticos WebApp, Rastreabilidade de Exceções e Dependências Limitadas
+- **Templates HTML5 Externos:** Os templates HTML/CSS/JS do Phone Camera WebApp residem em `assets/webapp/` (`mobile_webapp.html` e `expired_session.html`) e são carregados dinamicamente por `load_webapp_html()` em `sensor/phone_camera.py`, evitando strings HTML/JS gigantes hardcoded no código Python.
+- **Logging Estruturado com Throttling:** Em loops de alta frequência (30/60 FPS, captura de câmera, decodificação JPEG/FrameBus e sessões WebSocket), evite `except Exception: pass` silencioso; utilize `get_session_logger().log_throttled(key, level, category, message)` para registrar falhas em `session.log` sem inundar o disco.
+- **Limites de Versão no `requirements.txt`:** Todas as dependências externas possuem limites inferiores e superiores (`>=X.Y.Z,<MAJOR`) para prevenir quebras por atualizações major incompatíveis.
 
 ---
 

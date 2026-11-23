@@ -1515,7 +1515,14 @@ class VirtualPhoneController:
     def _handle_incoming_message(self, ws: _MinimalWebSocketClient, raw_msg: str) -> None:
         try:
             parsed = json.loads(raw_msg)
-        except Exception:
+        except Exception as e:
+            try:
+                from sensor.session_logger import get_session_logger
+                get_session_logger().log_throttled(
+                    "vphone_json_err", "WARN", "VPHONE", f"Malformed JSON packet from game: {e}"
+                )
+            except Exception:
+                pass
             return
 
         if not isinstance(parsed, dict):

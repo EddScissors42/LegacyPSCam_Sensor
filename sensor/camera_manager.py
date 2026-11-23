@@ -675,8 +675,14 @@ class FrameBusReader:
                 self.last_frame_id = frame_id
                 self.last_frame_time = time.perf_counter()
                 return bgr
-        except Exception:
-            pass
+        except Exception as e:
+            try:
+                from sensor.session_logger import get_session_logger
+                get_session_logger().log_throttled(
+                    "framebus_decode_err", "WARN", "CAMERA", f"FrameBus YUY2 decode error: {e}"
+                )
+            except Exception:
+                pass
         return None
 
     def close(self):

@@ -586,668 +586,50 @@ class SelfSignedTLSManager:
 
 
 # =============================================================================
-# 3. EMBEDDED HTML5 / JS MOBILE WEBAPP (ENGLISH UI, BACKPRESSURE + EDGE HOOKS)
+# 3. EXTERNAL HTML5 / JS MOBILE WEBAPP TEMPLATES (assets/webapp/*.html)
 # =============================================================================
 
-EXPIRED_SESSION_HTML = r"""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>Legacy PSCam Sensor — Session Expired</title>
-<style>
-  body {
-    background: #070B14; color: #F8FAFC;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px;
-  }
-  .card {
-    max-width: 380px; width: 100%; background: #111827; border: 1px solid #1E293B;
-    border-radius: 14px; padding: 22px; text-align: center;
-  }
-  h1 { font-size: 18px; margin-bottom: 10px; color: #38BDF8; }
-  p { font-size: 13px; color: #94A3B8; line-height: 1.5; }
-</style>
-</head>
-<body>
-  <div class="card">
-    <h1>Pairing Session Expired</h1>
-    <p>This link is no longer active. Please scan the current QR Code on your PC to connect your phone camera.</p>
-  </div>
-</body>
-</html>
-"""
+_FALLBACK_EXPIRED_HTML = (
+    "<!DOCTYPE html><html lang='en'><head><meta charset='UTF-8'>"
+    "<title>Legacy PSCam Sensor — Session Expired</title></head>"
+    "<body><h1>Pairing Session Expired</h1>"
+    "<p>Please scan the current QR Code on your PC to connect your phone camera.</p></body></html>"
+)
 
-MOBILE_WEBAPP_HTML = r"""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>Legacy PSCam Sensor — Phone Camera</title>
-<style>
-  :root {
-    --ps-blue: #00439C;
-    --ps-accent: #38BDF8;
-    --bg-dark: #070B14;
-    --card-bg: #111827;
-    --border: #1E293B;
-    --text-main: #F8FAFC;
-    --text-muted: #94A3B8;
-    --ok: #22C55E;
-    --warn: #F59E0B;
-    --err: #EF4444;
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; }
-  body {
-    background: var(--bg-dark);
-    color: var(--text-main);
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    padding: 14px;
-  }
-  .header {
-    width: 100%; max-width: 460px;
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 12px 16px; background: var(--card-bg);
-    border: 1px solid var(--border); border-radius: 12px;
-    margin-bottom: 12px;
-  }
-  .brand { font-size: 16px; font-weight: 700; color: #FFFFFF; letter-spacing: 0.3px; }
-  .sub { font-size: 11px; color: var(--text-muted); }
-  .badge {
-    display: inline-flex; align-items: center; gap: 6px;
-    padding: 5px 10px; border-radius: 999px;
-    font-size: 11px; font-weight: 700;
-    background: rgba(245, 158, 11, 0.15); color: var(--warn);
-  }
-  .badge.connected { background: rgba(34, 197, 94, 0.16); color: var(--ok); }
-  .badge.error { background: rgba(239, 68, 68, 0.16); color: var(--err); }
-  .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+_FALLBACK_MOBILE_HTML = (
+    "<!DOCTYPE html><html lang='en'><head><meta charset='UTF-8'>"
+    "<title>Legacy PSCam Sensor — Phone Camera</title></head>"
+    "<body><h1>Legacy PSCam Sensor</h1><div>Standby • Waiting for PC</div>"
+    "<button>Front Camera</button><button>Rear Camera</button><button>Dim Screen</button>"
+    "<script>function computeScaledDimensions(w,h){return [w,h];}</script></body></html>"
+)
 
-  .preview-wrap {
-    position: relative; width: 100%; max-width: 460px;
-    background: #000; border: 1px solid var(--border);
-    border-radius: 14px; overflow: hidden;
-    aspect-ratio: 4 / 3; display: flex; align-items: center; justify-content: center;
-    margin-bottom: 12px;
-  }
-  video { width: 100%; height: 100%; object-fit: cover; }
-  video.mirrored { transform: scaleX(-1); }
-  .hud-pill {
-    position: absolute; top: 10px; left: 10px;
-    background: rgba(7, 11, 20, 0.78); backdrop-filter: blur(6px);
-    padding: 5px 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.12);
-    font-size: 11px; font-weight: 600; color: #E2E8F0;
-  }
-  .controls {
-    width: 100%; max-width: 460px;
-    display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
-    margin-bottom: 12px;
-  }
-  button {
-    background: var(--card-bg); color: var(--text-main);
-    border: 1px solid var(--border); border-radius: 10px;
-    padding: 13px 12px; font-size: 13px; font-weight: 600;
-    cursor: pointer; transition: 0.15s ease;
-  }
-  button:active { transform: scale(0.98); background: var(--ps-blue); }
-  button.primary { background: var(--ps-blue); border-color: #1D4ED8; }
-  .btn-dim {
-    grid-column: span 2;
-    background: var(--card-bg);
-    color: var(--text-muted);
-    border: 1px solid var(--border);
-  }
-  .btn-dim:active { transform: scale(0.98); background: #1E293B; color: var(--text-main); }
-  .info-card {
-    width: 100%; max-width: 460px;
-    background: var(--card-bg); border: 1px solid var(--border);
-    border-radius: 12px; padding: 12px 14px;
-    font-size: 12px; color: var(--text-muted); line-height: 1.5;
-  }
-  #oledOverlay {
-    display: none; position: fixed; inset: 0; background: #000000;
-    z-index: 9999; flex-direction: column; align-items: center; justify-content: center;
-    color: #334155; font-size: 13px; text-align: center; padding: 24px;
-  }
-</style>
-</head>
-<body>
-  <div class="header">
-    <div>
-      <div class="brand">Legacy PSCam Sensor</div>
-      <div class="sub" id="deviceLabel">Phone Camera Stream</div>
-    </div>
-    <div class="badge" id="statusBadge"><span class="dot"></span><span id="statusText">Connecting...</span></div>
-  </div>
 
-  <div class="preview-wrap" id="previewWrap">
-    <video id="camVideo" autoplay playsinline webkit-playsinline muted class="mirrored"></video>
-    <div class="hud-pill" id="statsPill">Standby • Waiting for PC</div>
-  </div>
+def load_webapp_html(filename: str, fallback: str = "") -> str:
+    """Loads an HTML template from assets/webapp/ (supports source tree and PyInstaller _MEIPASS)."""
+    try:
+        from assets import WEBAPP_DIR
+        target_path = WEBAPP_DIR / filename
+    except Exception:
+        from pathlib import Path
+        target_path = Path(__file__).resolve().parent.parent / "assets" / "webapp" / filename
 
-  <div class="controls">
-    <button id="btnLensFront" class="primary" onclick="setCameraLens('user')">Front Camera</button>
-    <button id="btnLensRear" onclick="setCameraLens('environment')">Rear Camera</button>
-    <button id="btnDim" class="btn-dim" onclick="enableOledSaver()">Dim Screen</button>
-  </div>
+    try:
+        if target_path.exists():
+            return target_path.read_text(encoding="utf-8")
+    except Exception as e:
+        try:
+            from sensor.session_logger import get_session_logger
+            get_session_logger().log_throttled(
+                f"webapp_load_{filename}", "WARN", "PHONE_CAM", f"Failed to read {target_path}: {e}"
+            )
+        except Exception:
+            pass
+    return fallback
 
-  <div class="info-card" id="infoBox">
-    Place your smartphone on a stable stand facing your dance area. Keep this browser tab open while dancing in Just Dance PC.
-  </div>
 
-  <div id="oledOverlay" onclick="disableOledSaver()">
-    <div style="font-weight:700; color:#475569; margin-bottom:6px;">SCREEN DIMMED</div>
-    <div>Tap anywhere on screen to restore preview</div>
-    <div style="margin-top:8px; font-size:11px; color:#334155;">Tip: Lower phone brightness for cooler operation</div>
-  </div>
-
-  <canvas id="captureCanvas" style="display:none;"></canvas>
-
-<script>
-const sessionToken = new URLSearchParams(location.search).get("t") || "";
-let ws = null;
-let stream = null;
-let facingMode = "user"; // "user" (Front) or "environment" (Rear)
-let targetW = 640;
-let targetH = 480;
-let targetFps = 30;
-let jpegQuality = 0.55; // Thermal-friendly quality (ideal for MediaPipe pose without overheating)
-let processingMode = "pc_video"; // "pc_video" or "phone_edge" (future edge offload)
-let streamingActive = false; // Standby until PC starts tracking (saves battery & prevents overheating)
-let manualDisconnect = false;
-let reconnectAttempts = 0;
-let sentFrames = 0;
-let displayFps = 0;
-let lastFpsTick = performance.now();
-let captureTimer = null;
-let heartbeatTimer = null;
-let hiddenShutdownTimer = null;
-let wakeLock = null;
-
-const previewWrap = document.getElementById("previewWrap");
-const videoEl = document.getElementById("camVideo");
-const canvasEl = document.getElementById("captureCanvas");
-const ctx = canvasEl.getContext("2d", { alpha: false, desynchronized: true });
-const statusBadge = document.getElementById("statusBadge");
-const statusText = document.getElementById("statusText");
-const statsPill = document.getElementById("statsPill");
-const btnLensFront = document.getElementById("btnLensFront");
-const btnLensRear = document.getElementById("btnLensRear");
-
-function detectDeviceName() {
-  const ua = navigator.userAgent || "";
-  if (/iPhone/i.test(ua)) return "iPhone (iOS Safari)";
-  if (/iPad/i.test(ua)) return "iPad (iPadOS)";
-  if (/Android/i.test(ua)) {
-    const m = ua.match(/Android\s+[\d.]+;\s*([^;)]+)/i);
-    return m && m[1] ? `Android (${m[1].trim()})` : "Android Smartphone";
-  }
-  return "Smartphone WebApp";
-}
-
-function setStatus(state, text) {
-  statusBadge.className = "badge " + (state === "ok" ? "connected" : (state === "err" ? "error" : ""));
-  statusText.textContent = text;
-}
-
-async function requestWakeLock() {
-  try {
-    if ("wakeLock" in navigator) {
-      wakeLock = await navigator.wakeLock.request("screen");
-    }
-  } catch (e) {}
-}
-
-async function startCamera() {
-  if (manualDisconnect) return;
-  if (stream) {
-    try {
-      stream.getTracks().forEach(t => t.stop());
-    } catch (e) {}
-    stream = null;
-    videoEl.srcObject = null;
-    // Give mobile camera HAL driver 160ms to cleanly release hardware
-    await new Promise(r => setTimeout(r, 160));
-  }
-  if (manualDisconnect) return;
-
-  // 1. Attempt device enumeration if available to pinpoint matching lens deviceId
-  let targetDeviceId = null;
-  if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
-    try {
-      const allDevs = await navigator.mediaDevices.enumerateDevices();
-      const vDevs = allDevs.filter(d => d.kind === "videoinput");
-      const wantFront = (facingMode === "user");
-      const matched = vDevs.find(d => {
-        const lbl = (d.label || "").toLowerCase();
-        return wantFront
-          ? (lbl.includes("front") || lbl.includes("user") || lbl.includes("selfie") || lbl.includes("face") || lbl.includes("anterior") || lbl.includes("frontal"))
-          : (lbl.includes("back") || lbl.includes("rear") || lbl.includes("environment") || lbl.includes("traseir") || lbl.includes("posterior"));
-      });
-      if (matched && matched.deviceId) {
-        targetDeviceId = matched.deviceId;
-      }
-    } catch (e) {}
-  }
-
-  // 2. Build progressive fallback constraints (from ideal quality down to permissive fallback)
-  const candidateConstraints = [];
-
-  if (targetDeviceId) {
-    candidateConstraints.push({
-      audio: false,
-      video: {
-        deviceId: { exact: targetDeviceId },
-        width: { ideal: targetW },
-        height: { ideal: targetH },
-        frameRate: { ideal: targetFps }
-      }
-    });
-    candidateConstraints.push({
-      audio: false,
-      video: {
-        deviceId: { exact: targetDeviceId }
-      }
-    });
-  }
-
-  // Ideal facingMode + resolution + FPS (NO restrictive 'max' boundary!)
-  candidateConstraints.push({
-    audio: false,
-    video: {
-      facingMode: { ideal: facingMode },
-      width: { ideal: targetW },
-      height: { ideal: targetH },
-      frameRate: { ideal: targetFps }
-    }
-  });
-
-  // Direct string facingMode + resolution
-  candidateConstraints.push({
-    audio: false,
-    video: {
-      facingMode: facingMode,
-      width: { ideal: targetW },
-      height: { ideal: targetH }
-    }
-  });
-
-  // Ideal facingMode without resolution restrictions
-  candidateConstraints.push({
-    audio: false,
-    video: {
-      facingMode: { ideal: facingMode }
-    }
-  });
-
-  // Direct string facingMode alone
-  candidateConstraints.push({
-    audio: false,
-    video: {
-      facingMode: facingMode
-    }
-  });
-
-  // Last-resort generic video fallback
-  candidateConstraints.push({
-    audio: false,
-    video: true
-  });
-
-  let newStream = null;
-  let lastErr = null;
-
-  for (let i = 0; i < candidateConstraints.length; i++) {
-    try {
-      newStream = await navigator.mediaDevices.getUserMedia(candidateConstraints[i]);
-      if (newStream) break;
-    } catch (err) {
-      lastErr = err;
-    }
-  }
-
-  if (!newStream) {
-    const errName = (lastErr && lastErr.name) ? lastErr.name : "UnknownError";
-    const errMsg = (lastErr && lastErr.message) ? lastErr.message : "Camera not accessible";
-
-    if (errName === "NotAllowedError" || errName === "PermissionDeniedError") {
-      setStatus("err", "Camera Permission Denied");
-      document.getElementById("infoBox").textContent =
-        "Camera permission was denied in your browser. Please tap the lock/tune icon in the address bar to allow Camera access, then tap Front/Rear Camera to retry.";
-    } else if (errName === "NotReadableError" || errName === "TrackStartError") {
-      setStatus("err", "Camera Hardware Busy");
-      document.getElementById("infoBox").textContent =
-        "The camera hardware is locked or in use by another app (e.g. WhatsApp, Instagram, system camera). Please close other camera apps and tap Front/Rear Camera to retry.";
-    } else if (errName === "OverconstrainedError") {
-      setStatus("err", "Lens Unsupported");
-      document.getElementById("infoBox").textContent =
-        "Front camera hardware does not support the requested video constraints. Tap Rear Camera to continue dancing.";
-    } else if (errName === "NotFoundError" || errName === "DevicesNotFoundError") {
-      setStatus("err", "Camera Not Found");
-      document.getElementById("infoBox").textContent =
-        "No camera hardware was detected on this mobile device.";
-    } else {
-      setStatus("err", "Camera Error (" + errName + ")");
-      document.getElementById("infoBox").textContent =
-        "Could not start camera: " + errMsg + " (" + errName + "). Tap Front/Rear Camera to retry.";
-    }
-    return;
-  }
-
-  stream = newStream;
-  if (manualDisconnect) {
-    stream.getTracks().forEach(t => t.stop());
-    stream = null;
-    return;
-  }
-  videoEl.srcObject = stream;
-  try {
-    await videoEl.play();
-  } catch (e) {}
-
-  // Determine actual facingMode from track settings if available
-  try {
-    const track = stream.getVideoTracks()[0];
-    const s = track.getSettings ? track.getSettings() : {};
-    if (s.facingMode && (s.facingMode === "user" || s.facingMode === "environment")) {
-      facingMode = s.facingMode;
-    }
-  } catch (e) {}
-
-  videoEl.className = (facingMode === "user") ? "mirrored" : "";
-  updateLensButtons();
-  setStatus(streamingActive ? "ok" : "warn", streamingActive ? "Streaming to PC" : "Ready • Standby");
-  document.getElementById("infoBox").textContent =
-    `Connected to PC via Secure TLS (WSS). Active Lens: ${facingMode === "user" ? "Front Camera" : "Rear Camera"}.`;
-  requestWakeLock();
-  sendHello();
-}
-
-function updateLensButtons() {
-  const f = document.getElementById("btnLensFront");
-  const r = document.getElementById("btnLensRear");
-  if (f && r) {
-    if (facingMode === "user") {
-      f.className = "primary";
-      r.className = "";
-    } else {
-      f.className = "";
-      r.className = "primary";
-    }
-  }
-}
-
-async function setCameraLens(mode) {
-  if (facingMode === mode && stream) return;
-  facingMode = mode;
-  updateLensButtons();
-  await startCamera();
-}
-
-function toggleCameraLens() {
-  setCameraLens((facingMode === "user") ? "environment" : "user");
-}
-
-function enableOledSaver() {
-  document.getElementById("oledOverlay").style.display = "flex";
-  if (previewWrap) previewWrap.style.opacity = "0.001";
-}
-
-function disableOledSaver() {
-  document.getElementById("oledOverlay").style.display = "none";
-  if (previewWrap) previewWrap.style.opacity = "1";
-}
-
-function stopCaptureLoop() {
-  if (captureTimer) {
-    clearTimeout(captureTimer);
-    captureTimer = null;
-  }
-  encodingInProgress = false;
-}
-
-function shutdownSession(reasonText, isError) {
-  manualDisconnect = true;
-  streamingActive = false;
-  stopCaptureLoop();
-  if (heartbeatTimer) {
-    clearInterval(heartbeatTimer);
-    heartbeatTimer = null;
-  }
-  if (hiddenShutdownTimer) {
-    clearTimeout(hiddenShutdownTimer);
-    hiddenShutdownTimer = null;
-  }
-  if (stream) {
-    stream.getTracks().forEach(t => t.stop());
-    stream = null;
-  }
-  videoEl.srcObject = null;
-  if (wakeLock) {
-    try { wakeLock.release(); } catch (e) {}
-    wakeLock = null;
-  }
-  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
-    try { ws.close(1000, "Client shutdown"); } catch (e) {}
-  }
-  setStatus(isError ? "err" : "warn", "Disconnected");
-  statsPill.textContent = "Camera Off";
-  if (reasonText) {
-    document.getElementById("infoBox").textContent = reasonText;
-  }
-}
-
-function computeScaledDimensions(vw, vh) {
-  const maxTarget = Math.max(targetW, targetH);
-  const maxSrc = Math.max(vw, vh);
-  const scale = maxSrc > maxTarget ? (maxTarget / maxSrc) : 1.0;
-  const outW = Math.max(2, Math.round((vw * scale) / 2) * 2);
-  const outH = Math.max(2, Math.round((vh * scale) / 2) * 2);
-  return [outW, outH];
-}
-
-function sendHello() {
-  if (!ws || ws.readyState !== WebSocket.OPEN) return;
-  const vw = videoEl.videoWidth || targetW;
-  const vh = videoEl.videoHeight || targetH;
-  const [outW, outH] = computeScaledDimensions(vw, vh);
-  ws.send(JSON.stringify({
-    type: "hello",
-    device: detectDeviceName(),
-    lens: facingMode,
-    width: outW,
-    height: outH,
-    fps: targetFps,
-    processing_mode: processingMode,
-    capabilities: ["pc_video", "phone_edge"]
-  }));
-}
-
-// Future-ready hook: transmits pre-computed landmarks/joints/IMU when processingMode === "phone_edge"
-function sendEdgeMetricsPacket(metricsPayload) {
-  if (!ws || ws.readyState !== WebSocket.OPEN || ws.bufferedAmount > 65536) return;
-  ws.send(JSON.stringify({
-    type: "edge_metrics",
-    ts_ms: Date.now(),
-    ...metricsPayload
-  }));
-}
-
-let encodingInProgress = false;
-function scheduleNextCapture(delayMs) {
-  stopCaptureLoop();
-  if (!streamingActive || manualDisconnect || document.hidden) return;
-  captureTimer = setTimeout(captureTick, Math.max(10, delayMs));
-}
-
-function captureTick() {
-  captureTimer = null;
-  if (manualDisconnect || document.hidden || !streamingActive) return;
-  if (!ws || ws.readyState !== WebSocket.OPEN) return;
-  if (processingMode !== "pc_video") return;
-
-  const targetInterval = Math.max(16, Math.floor(1000 / Math.max(15, targetFps)));
-  if (encodingInProgress || ws.bufferedAmount > 0 || videoEl.readyState < 2 || !videoEl.videoWidth) {
-    scheduleNextCapture(targetInterval);
-    return;
-  }
-
-  const t0 = performance.now();
-  const [outW, outH] = computeScaledDimensions(videoEl.videoWidth, videoEl.videoHeight);
-  if (canvasEl.width !== outW || canvasEl.height !== outH) {
-    canvasEl.width = outW;
-    canvasEl.height = outH;
-  }
-
-  encodingInProgress = true;
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = "low";
-  ctx.drawImage(videoEl, 0, 0, outW, outH);
-  canvasEl.toBlob(blob => {
-    encodingInProgress = false;
-    if (blob && streamingActive && !manualDisconnect && !document.hidden && ws && ws.readyState === WebSocket.OPEN && ws.bufferedAmount === 0) {
-      ws.send(blob);
-      sentFrames++;
-      const now = performance.now();
-      if (now - lastFpsTick >= 1000) {
-        displayFps = Math.round((sentFrames * 1000) / (now - lastFpsTick));
-        sentFrames = 0;
-        lastFpsTick = now;
-        statsPill.textContent = `${outW}x${outH} • ${displayFps} FPS`;
-      }
-    }
-    const elapsed = performance.now() - t0;
-    scheduleNextCapture(Math.max(10, targetInterval - elapsed));
-  }, "image/jpeg", jpegQuality);
-}
-
-function updateStreamingState(active) {
-  streamingActive = !!active;
-  if (streamingActive) {
-    setStatus("ok", "Streaming to PC");
-    sentFrames = 0;
-    lastFpsTick = performance.now();
-    scheduleNextCapture(10);
-  } else {
-    stopCaptureLoop();
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      setStatus("ok", "Ready (Standby)");
-      statsPill.textContent = "Standby • Waiting for PC";
-    }
-  }
-}
-
-function startHeartbeat() {
-  if (heartbeatTimer) clearInterval(heartbeatTimer);
-  heartbeatTimer = setInterval(() => {
-    if (!manualDisconnect && !document.hidden && ws && ws.readyState === WebSocket.OPEN && !streamingActive) {
-      try { ws.send(JSON.stringify({ type: "ping", ts_ms: Date.now() })); } catch (e) {}
-    }
-  }, 2000);
-}
-
-function connectWebSocket() {
-  if (manualDisconnect || document.hidden) return;
-  const proto = (location.protocol === "https:") ? "wss:" : "ws:";
-  const tokenQuery = sessionToken ? `?t=${encodeURIComponent(sessionToken)}` : "";
-  ws = new WebSocket(`${proto}//${location.host}/ws${tokenQuery}`);
-  ws.binaryType = "arraybuffer";
-
-  ws.onopen = () => {
-    reconnectAttempts = 0;
-    sendHello();
-    startHeartbeat();
-    updateStreamingState(streamingActive);
-  };
-
-  ws.onmessage = (ev) => {
-    try {
-      const msg = JSON.parse(ev.data);
-      if (msg.type === "config") {
-        let needRestartCam = false;
-        if (msg.width && msg.height && (msg.width !== targetW || msg.height !== targetH)) {
-          targetW = msg.width;
-          targetH = msg.height;
-          needRestartCam = true;
-        }
-        if (msg.fps && msg.fps !== targetFps) {
-          targetFps = msg.fps;
-          needRestartCam = true;
-        }
-        if (msg.lens && msg.lens !== facingMode && (!stream || msg.force_lens)) {
-          facingMode = msg.lens;
-          needRestartCam = true;
-        }
-        if (msg.processing_mode) {
-          processingMode = msg.processing_mode;
-        }
-        if (typeof msg.active === "boolean") {
-          updateStreamingState(msg.active);
-        }
-        if (needRestartCam) startCamera();
-      } else if (msg.type === "disconnect") {
-        shutdownSession("Disconnected by PC. Scan the new QR Code to connect again.", false);
-      }
-    } catch (e) {}
-  };
-
-  ws.onclose = (ev) => {
-    stopCaptureLoop();
-    if (manualDisconnect || ev.code === 1000 || ev.code === 4001) {
-      shutdownSession("Session ended. Scan the current QR Code on PC to connect again.", false);
-      return;
-    }
-    if (document.hidden || reconnectAttempts >= 3) {
-      shutdownSession("Connection closed. Scan the QR Code on PC to reconnect.", true);
-      return;
-    }
-    reconnectAttempts++;
-    setStatus("warn", `Reconnecting (${reconnectAttempts}/3)...`);
-    setTimeout(connectWebSocket, 2000);
-  };
-
-  ws.onerror = () => {
-    if (!manualDisconnect) setStatus("err", "Connection Lost");
-  };
-}
-
-// Immediately release camera & socket when closing tab or switching apps on iOS/Android
-window.addEventListener("pagehide", () => {
-  shutdownSession("", false);
-});
-window.addEventListener("beforeunload", () => {
-  shutdownSession("", false);
-});
-document.addEventListener("visibilitychange", () => {
-  if (document.hidden) {
-    stopCaptureLoop();
-    if (hiddenShutdownTimer) clearTimeout(hiddenShutdownTimer);
-    hiddenShutdownTimer = setTimeout(() => {
-      if (document.hidden) {
-        shutdownSession("Paused in background. Scan the QR Code to reconnect.", false);
-      }
-    }, 3000);
-  } else {
-    if (hiddenShutdownTimer) {
-      clearTimeout(hiddenShutdownTimer);
-      hiddenShutdownTimer = null;
-    }
-    if (!manualDisconnect && streamingActive && ws && ws.readyState === WebSocket.OPEN) {
-      scheduleNextCapture(20);
-    }
-  }
-});
-
-document.getElementById("deviceLabel").textContent = detectDeviceName();
-startCamera().then(() => { if (!manualDisconnect) connectWebSocket(); });
-</script>
-</body>
-</html>
-"""
+EXPIRED_SESSION_HTML = load_webapp_html("expired_session.html", _FALLBACK_EXPIRED_HTML)
+MOBILE_WEBAPP_HTML = load_webapp_html("mobile_webapp.html", _FALLBACK_MOBILE_HTML)
 
 
 # =============================================================================
@@ -1686,8 +1068,17 @@ class PhoneCameraServer:
                     self._handle_json_message(payload.decode("utf-8", errors="replace"))
                 elif opcode == 0x02:  # Binary JPEG frame
                     self._handle_binary_frame(payload)
-        except Exception:
-            pass
+        except Exception as e:
+            try:
+                from sensor.session_logger import get_session_logger
+                get_session_logger().log_throttled(
+                    "phone_cam_ws_err",
+                    "DEBUG",
+                    "PHONE_CAM",
+                    f"WebSocket session closed or interrupted for {client_ip}: {e}",
+                )
+            except Exception:
+                pass
         finally:
             with self._lock:
                 if self._client_sock is sock:
@@ -1702,7 +1093,14 @@ class PhoneCameraServer:
     def _handle_json_message(self, raw_json: str) -> None:
         try:
             msg = json.loads(raw_json)
-        except Exception:
+        except Exception as e:
+            try:
+                from sensor.session_logger import get_session_logger
+                get_session_logger().log_throttled(
+                    "phone_cam_json_err", "WARN", "PHONE_CAM", f"Malformed JSON from smartphone client: {e}"
+                )
+            except Exception:
+                pass
             return
         msg_type = msg.get("type")
         if msg_type == "hello":

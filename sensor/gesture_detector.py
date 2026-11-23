@@ -10,11 +10,15 @@ import ctypes
 from typing import List, Tuple, Optional, Dict, Any
 
 
-def dispatch_enter_keystroke():
+def dispatch_enter_keystroke(dry_run: bool = False):
     """
     Simulates a physical Enter key press via Windows keybd_event in a non-blocking thread.
     VK_RETURN = 0x0D, SCAN_RETURN = 0x1C.
+    When dry_run=True (e.g. automated tests), skips injecting OS keystrokes into the active window.
     """
+    if dry_run:
+        return
+
     def _worker():
         try:
             VK_RETURN = 0x0D
@@ -85,10 +89,17 @@ class ArmRaiseGestureDetector:
     triggers keyboard/virtual phone events, and reports progress for HUD rendering.
     In 2-player mode, accepts an arm raise from either Player 1 or Player 2.
     """
-    def __init__(self, enabled: bool = True, hold_seconds: float = 2.0, cooldown_seconds: float = 2.5):
+    def __init__(
+        self,
+        enabled: bool = True,
+        hold_seconds: float = 2.0,
+        cooldown_seconds: float = 2.5,
+        dispatch_keystroke: bool = True,
+    ):
         self.enabled = bool(enabled)
         self.hold_seconds = max(0.5, float(hold_seconds))
         self.cooldown_seconds = max(1.0, float(cooldown_seconds))
+        self.dispatch_keystroke = bool(dispatch_keystroke)
 
         self.start_time: Optional[float] = None
         self.triggered: bool = False
@@ -179,7 +190,8 @@ class ArmRaiseGestureDetector:
                     just_triggered = True
                     self.last_trigger_time = now
 
-                    dispatch_enter_keystroke()
+                    if self.dispatch_keystroke:
+                        dispatch_enter_keystroke()
 
                     if vphone is not None and getattr(vphone, "enabled", False):
                         try:

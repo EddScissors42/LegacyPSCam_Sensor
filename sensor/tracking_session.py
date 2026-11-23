@@ -425,8 +425,14 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None, prewar
                     infer_fps=measured_track_fps,
                     game_feedback=getattr(vphone, "_last_feedback", ""),
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                try:
+                    from sensor.session_logger import get_session_logger
+                    get_session_logger().log_throttled(
+                        "telemetry_cam_err", "WARN", "TELEMETRY", f"Camera telemetry sample error: {e}"
+                    )
+                except Exception:
+                    pass
 
             # Render Player Silhouette Shadow & Contour ("sombrinha"): P1 Blue, P2 Light Orange
             if is_tracked and display_mask is not None:
@@ -627,8 +633,14 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
                     cam_fps=st.sample_rate_hz,
                     game_feedback=getattr(vphone, "_last_feedback", ""),
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                try:
+                    from sensor.session_logger import get_session_logger
+                    get_session_logger().log_throttled(
+                        "telemetry_ds4_err", "WARN", "TELEMETRY", f"DS4 telemetry sample error: {e}"
+                    )
+                except Exception:
+                    pass
 
             frame = dark_bg.copy()
 

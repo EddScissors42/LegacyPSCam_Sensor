@@ -14,6 +14,10 @@ else:
 
 ICONS_DIR = ASSETS_DIR / "icons"
 FONTS_DIR = ASSETS_DIR / "fonts"
+WEBAPP_DIR = ASSETS_DIR / "webapp"
+
+WEBAPP_MOBILE_HTML_PATH = WEBAPP_DIR / "mobile_webapp.html"
+WEBAPP_EXPIRED_HTML_PATH = WEBAPP_DIR / "expired_session.html"
 
 ICON_APP_ICO_PATH = ICONS_DIR / "app_icon.ico" if (ICONS_DIR / "app_icon.ico").exists() else None
 ICON_PSCAMERA_PATH = ICONS_DIR / "IconePSCAMERA.png"
@@ -41,6 +45,9 @@ __all__ = [
     "ASSETS_DIR",
     "ICONS_DIR",
     "FONTS_DIR",
+    "WEBAPP_DIR",
+    "WEBAPP_MOBILE_HTML_PATH",
+    "WEBAPP_EXPIRED_HTML_PATH",
     "ICON_APP_ICO_PATH",
     "ICON_PSCAMERA_PATH",
     "ICON_SETTINGS_PATH",

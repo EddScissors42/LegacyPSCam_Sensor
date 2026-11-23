@@ -59,7 +59,8 @@ LegacyPSCam_Sensor/
 │       └── session_controller.py# SessionController (orquestrador do loop de rastreamento, Kinect daemon e IPC)
 ├── assets/                     # Recursos visuais e mídias
 │   ├── icons/                  # Ícones SVG e PNG da aplicação
-│   └── fonts/                  # Fontes TTF (Kanit, InterTight, NationalPark)
+│   ├── fonts/                  # Fontes TTF (Kanit, InterTight, NationalPark)
+│   └── webapp/                 # Templates HTML5/CSS/JS estáticos do Phone Camera WebApp (mobile_webapp.html, expired_session.html)
 ├── models/
 │   ├── pose_landmarker_lite.task  # Modelo MediaPipe Pose Lite (Perfil Competitivo — Padrão Recomendado)
 │   └── pose_landmarker_full.task  # Modelo MediaPipe Pose Full (Perfil Equilibrado)
