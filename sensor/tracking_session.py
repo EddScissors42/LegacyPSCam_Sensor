@@ -450,7 +450,7 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None, prewar
             total_frames += 1
             try:
                 from sensor.session_logger import get_session_logger
-                accel = vphone.accelerometer.latest_accel
+                accel = vphone.latest_accel
                 speed = vphone.accelerometer.latest_speed
 
                 def _j_xyz(j):

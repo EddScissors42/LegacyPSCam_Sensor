@@ -208,7 +208,10 @@ class PoseTracker:
     def _init_detector(self):
         base_options = python.BaseOptions(model_asset_path=str(self.model_path))
         det_c = max(0.50, min(0.70, float(self.detection_confidence)))
-        pres_c = max(0.48, min(0.65, float(self.detection_confidence)))
+        # Keep detection strict (rejects empty background objects) while allowing lower presence/tracking
+        # confidence so already-tracked dancers never drop during deep crouches, floor moves, or spins.
+        pres_c = max(0.38, min(0.58, det_c * 0.80))
+        track_c = max(0.30, min(0.50, det_c * 0.65))
         detector_num_poses = 4 if self.max_players >= 2 else 1
         options = vision.PoseLandmarkerOptions(
             base_options=base_options,
@@ -216,13 +219,13 @@ class PoseTracker:
             num_poses=detector_num_poses,
             min_pose_detection_confidence=det_c,
             min_pose_presence_confidence=pres_c,
-            min_tracking_confidence=pres_c,
+            min_tracking_confidence=track_c,
             output_segmentation_masks=True,
         )
         self.detector = vision.PoseLandmarker.create_from_options(options)
         print(
             f"[TRACKER] MediaPipe Pose Landmarker ({self.model_variant}) initialized "
-            f"(model={self.model_path.name}, num_poses={detector_num_poses}, det={det_c:.2f}, pres={pres_c:.2f})."
+            f"(model={self.model_path.name}, num_poses={detector_num_poses}, det={det_c:.2f}, pres={pres_c:.2f}, track={track_c:.2f})."
         )
 
     def update_settings(

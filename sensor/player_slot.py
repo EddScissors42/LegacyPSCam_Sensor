@@ -123,7 +123,8 @@ def compute_signature_similarity(sig_a: Optional[AppearanceSignature], sig_b: Op
 def is_plausible_human_dancer(norm_landmarks: Any, w: Optional[int] = None, h: Optional[int] = None) -> Tuple[bool, float]:
     """
     Validates whether a detected MediaPipe pose corresponds to a plausible human dancer,
-    rejecting inanimate background objects (chairs, coats, cushions, reflections, radiators).
+    rejecting inanimate background objects (flat horizontal chairs, coats, cushions, reflections)
+    while fully supporting deep crouches, floor drops, forward bends, and wide arm extensions.
     Returns (is_valid: bool, score: float).
     """
     if not norm_landmarks or len(norm_landmarks) < 25:
@@ -132,24 +133,26 @@ def is_plausible_human_dancer(norm_landmarks: Any, w: Optional[int] = None, h: O
     sh_l = norm_landmarks[LEFT_SHOULDER]
     sh_r = norm_landmarks[RIGHT_SHOULDER]
     sh_vis = min(float(getattr(sh_l, "visibility", 1.0)), float(getattr(sh_r, "visibility", 1.0)))
-    if sh_vis < 0.30:
+    if sh_vis < 0.20:
         return False, 0.0
 
     sh_y = (float(sh_l.y) + float(sh_r.y)) * 0.5
     sh_w = math.hypot(float(sh_r.x) - float(sh_l.x), float(sh_r.y) - float(sh_l.y))
 
     # Reject absurdly narrow or wide shoulder artifacts
-    if sh_w < 0.04 or sh_w > 0.75:
+    if sh_w < 0.035 or sh_w > 0.80:
         return False, 0.0
 
     hip_l = norm_landmarks[LEFT_HIP]
     hip_r = norm_landmarks[RIGHT_HIP]
     hip_vis = max(float(getattr(hip_l, "visibility", 1.0)), float(getattr(hip_r, "visibility", 1.0)))
 
-    # If hips are visible, verify human upright geometry (head/shoulders ABOVE hips)
-    if hip_vis >= 0.25:
+    # Allow deep crouches & forward torso bends where shoulders approach hip level;
+    # only reject clearly inverted non-human artifacts where hips are far above shoulders AND head.
+    if hip_vis >= 0.30:
         hip_y = (float(hip_l.y) + float(hip_r.y)) * 0.5
-        if hip_y <= sh_y + 0.03:  # Hips must be below shoulders
+        nose_y = float(norm_landmarks[NOSE].y) if len(norm_landmarks) > NOSE else sh_y
+        if hip_y < sh_y - 0.14 and hip_y < nose_y - 0.10:
             return False, 0.0
 
     # Check bounding box
@@ -161,13 +164,17 @@ def is_plausible_human_dancer(norm_landmarks: Any, w: Optional[int] = None, h: O
     bbox_w = max(xs) - min(xs)
     bbox_h = max(ys) - min(ys)
 
-    # In Just Dance, a human player occupies at least 16% frame height and 5% frame width
-    if bbox_h < 0.16 or bbox_w < 0.05:
+    # A crouching dancer still occupies at least 12% frame height and 5% frame width
+    if bbox_h < 0.12 or bbox_w < 0.05:
         return False, 0.0
 
-    # Aspect ratio check: a dancing human standing upright is vertical, not horizontal
-    aspect = bbox_h / max(0.01, bbox_w)
-    if aspect < 0.70:
+    # Aspect ratio check in physical pixels (accounts for 16:10 PS4 Camera 1280x800).
+    # Deep crouches with outstretched arms can reach ~0.35..0.55 aspect ratio, while flat
+    # horizontal furniture/artifacts sit near 0.0..0.22.
+    px_w = bbox_w * float(w) if (w and h) else bbox_w
+    px_h = bbox_h * float(h) if (w and h) else bbox_h
+    aspect = px_h / max(1e-3, px_w)
+    if aspect < 0.28:
         return False, 0.0
 
     # Calculate anatomical completeness score across core joints
@@ -184,7 +191,7 @@ def is_plausible_human_dancer(norm_landmarks: Any, w: Optional[int] = None, h: O
             p = min(1.0, max(0.0, float(getattr(lm, "presence", 1.0))))
             score += 0.5 * (v + p)
 
-    if score < 4.5:
+    if score < 3.6:
         return False, score
 
     return True, score

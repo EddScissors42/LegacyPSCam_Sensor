@@ -78,6 +78,10 @@ class HandAccelerometer:
         self._latest_alpha: float = 0.35
 
     @property
+    def latest_accel(self) -> Tuple[float, float, float]:
+        return self._smoothed_accel
+
+    @property
     def latest_speed(self) -> float:
         return self._latest_speed
 

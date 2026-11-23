@@ -1603,6 +1603,12 @@ def test_person_lock_subsystem():
     assert test_rgb[200, 320, 0] == 200, "Active dancer center zone must remain unattenuated"
     assert test_rgb[200, 5, 0] < 100, "Far peripheral edge outside dancer reach must be attenuated"
 
+    # Rapid vertical crouch down in place (same horizontal X, big vertical drop + shirt occluded) must be ACCEPTED!
+    crouch_lms = make_person_lms(0.53, 0.84, sh_w=0.18)
+    assert lock.validate_candidate(scene_bgr, crouch_lms, dt=0.016) is True, (
+        "Rapid vertical crouch in place must NEVER be rejected as an impostor"
+    )
+
     # 3. Test Smart Body Framing PTZ (360° Spin Head Fallback & Adaptive Full-Body Zoom)
     ptz = FaceFollowPTZ(cfg={
         "face_follow_enabled": True,
@@ -2128,8 +2134,22 @@ def test_multi_player_tracking():
 
     # Chair / coat mock: horizontal, flat, or hips above shoulders
     chair_lms = [type("MockLM", (), {"x": 0.5 + 0.05 * i, "y": 0.8, "z": 0.0, "visibility": 0.35, "presence": 0.35})() for i in range(33)]
-    ok_chair, _ = is_plausible_human_dancer(chair_lms)
+    ok_chair, _ = is_plausible_human_dancer(chair_lms, w=1280, h=800)
     assert ok_chair is False, "Horizontal/flat non-human object must be rejected as implausible dancer"
+
+    # Deep crouch with outstretched arms on 1280x800 PS4 Camera (shoulders near hip level, wide arm span) MUST be accepted!
+    crouch_pose = [type("MockLM", (), {"x": 0.50, "y": 0.72, "z": 0.0, "visibility": 0.85, "presence": 0.85})() for _ in range(33)]
+    crouch_pose[0] = type("MockLM", (), {"x": 0.50, "y": 0.56, "z": 0.0, "visibility": 0.90, "presence": 0.90})()   # Nose
+    crouch_pose[11] = type("MockLM", (), {"x": 0.43, "y": 0.66, "z": 0.0, "visibility": 0.88, "presence": 0.88})()  # ShL
+    crouch_pose[12] = type("MockLM", (), {"x": 0.57, "y": 0.66, "z": 0.0, "visibility": 0.88, "presence": 0.88})()  # ShR
+    crouch_pose[15] = type("MockLM", (), {"x": 0.25, "y": 0.68, "z": 0.0, "visibility": 0.85, "presence": 0.85})()  # WristL wide
+    crouch_pose[16] = type("MockLM", (), {"x": 0.75, "y": 0.68, "z": 0.0, "visibility": 0.85, "presence": 0.85})()  # WristR wide
+    crouch_pose[23] = type("MockLM", (), {"x": 0.45, "y": 0.68, "z": 0.0, "visibility": 0.82, "presence": 0.82})()  # HipL (nearly level with shoulders!)
+    crouch_pose[24] = type("MockLM", (), {"x": 0.55, "y": 0.68, "z": 0.0, "visibility": 0.82, "presence": 0.82})()  # HipR
+    crouch_pose[27] = type("MockLM", (), {"x": 0.44, "y": 0.90, "z": 0.0, "visibility": 0.80, "presence": 0.80})()  # AnkleL
+    crouch_pose[28] = type("MockLM", (), {"x": 0.56, "y": 0.90, "z": 0.0, "visibility": 0.80, "presence": 0.80})()  # AnkleR
+    ok_crouch, crouch_score = is_plausible_human_dancer(crouch_pose, w=1280, h=800)
+    assert ok_crouch is True, f"Deep crouch pose on 1280x800 PS4 Camera must be accepted (score={crouch_score:.2f})"
 
     # 4. Verify ArmRaiseGestureDetector.update_multi accepts arm raise from Player 2
     g_det = ArmRaiseGestureDetector(
@@ -2184,9 +2204,12 @@ def test_multi_player_tracking():
             assert win.cfg["max_players"] == 1
             assert win.two_player_warn_box.isHidden(), "2P warning box must be hidden in 1-Player mode"
 
-            # 7. Verify Reactive Start Button (disabled when peripheral is disconnected)
+            # 7. Verify Reactive Start Button (matches actual hardware connection state)
             win._set_mode("pscam", animate=False)
-            assert win.btn_start.isEnabled() is False, "Start button must be disabled when PS Camera is not connected"
+            pscam_ready = win.is_camera_accessible()
+            assert win.btn_start.isEnabled() is pscam_ready, (
+                f"Start button enabled state ({win.btn_start.isEnabled()}) must match PS Camera accessibility ({pscam_ready})"
+            )
             assert win.btn_start.text() == "START TRACKING"
 
             win._set_mode("phone_cam", animate=False)

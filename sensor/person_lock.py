@@ -447,8 +447,13 @@ class DancerIdentityLock:
             self.stable_frames = 1
             return True
 
-        # Calculate spatial displacement and scale ratio
-        dist = math.hypot(cx - self.locked_cx, cy - self.locked_cy)
+        # Calculate anisotropic spatial displacement and scale ratio:
+        # Vertical drops/leaps (crouching to the floor or jumping in place) share the same horizontal X,
+        # whereas room bystanders/impostors appear offset horizontally. Weight dy at 0.38 so deep
+        # crouches are never misclassified as impostor jumps.
+        dx = abs(cx - self.locked_cx)
+        dy = abs(cy - self.locked_cy)
+        dist = math.hypot(dx, dy * 0.38)
         base_jump = float(self.cfg.get("dancer_lock_max_jump_norm", 0.28))
         # Expand search radius slightly during rejection streaks so fast leaps can re-lock
         max_jump = base_jump * (1.0 + 0.30 * min(10, self.rejected_streak))
