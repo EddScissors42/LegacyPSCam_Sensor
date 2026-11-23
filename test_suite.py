@@ -611,6 +611,11 @@ def test_project_structure():
     assert hasattr(sensor, "PersonLockController")
     assert (BASE_DIR / "sensor" / "person_lock.py").exists(), "sensor/person_lock.py must exist"
     assert (BASE_DIR / "sensor" / "gesture_detector.py").exists(), "sensor/gesture_detector.py must exist"
+    assert (BASE_DIR / "sensor" / "qr_encoder.py").exists(), "sensor/qr_encoder.py must exist"
+    assert (BASE_DIR / "sensor" / "tls_manager.py").exists(), "sensor/tls_manager.py must exist"
+    assert (BASE_DIR / "sensor" / "vphone_protocol.py").exists(), "sensor/vphone_protocol.py must exist"
+    assert (BASE_DIR / "ui" / "styles.py").exists(), "ui/styles.py must exist"
+    assert (BASE_DIR / "ui" / "device_readout_mixin.py").exists(), "ui/device_readout_mixin.py must exist"
     assert hasattr(sensor, "ArmRaiseGestureDetector")
     assert hasattr(sensor, "check_arm_raised")
 
@@ -768,6 +773,7 @@ def test_project_structure():
             win._switch_tab("exp")
             assert win.active_tab == "video", "Switching to exp must be prevented when camera is not accessible"
         win._switch_tab("video")
+        win.controller.cleanup()
         win.close()
         app.processEvents()
 
@@ -1737,9 +1743,9 @@ def test_phone_camera_webapp():
     tls_ctx = SelfSignedTLSManager.create_ssl_context("127.0.0.1")
     assert isinstance(tls_ctx, ssl.SSLContext)
 
-    # 3. Start PhoneCameraServer on an ephemeral port and test HTTPS GET / + WSS /ws
+    # 3. Start PhoneCameraServer on an ephemeral loopback port and test HTTPS GET / + WSS /ws
     srv = PhoneCameraServer(port=0)
-    assert srv.start(port=0) is True
+    assert srv.start(port=0, bind_host="127.0.0.1") is True
     port = srv.actual_port
     assert port > 0
 
@@ -2132,29 +2138,32 @@ def test_multi_player_tracking():
         from PySide6.QtWidgets import QApplication
         _ = QApplication.instance() or QApplication([])
         win = ui.LegacySensorQtGUI(auto_discover=False)
-        assert win.btn_tab_calib.text().strip() == "Tracking", f"Expected tab text 'Tracking', got '{win.btn_tab_calib.text()}'"
-        assert win.cb_players_mode.itemText(0) == "1 Player", f"Expected '1 Player', got '{win.cb_players_mode.itemText(0)}'"
-        assert win.cb_players_mode.itemText(1) == "2 Players", f"Expected '2 Players', got '{win.cb_players_mode.itemText(1)}'"
-        assert hasattr(win, "cb_players_mode"), "Players Mode selector must exist in Calibration/Tracking tab"
-        assert hasattr(win, "two_player_warn_box"), "2-Player Lite AI warning banner must exist in Calibration/Tracking tab"
-        win.cb_players_mode.setCurrentIndex(1)  # Switch to 2 Players (Duo)
-        assert win.cfg["max_players"] == 2
-        assert not win.two_player_warn_box.isHidden(), "2P warning box must be visible when 2 Players is active"
-        win.cb_players_mode.setCurrentIndex(0)  # Restore 1 Player (Solo)
-        assert win.cfg["max_players"] == 1
-        assert win.two_player_warn_box.isHidden(), "2P warning box must be hidden in 1-Player mode"
+        try:
+            assert win.btn_tab_calib.text().strip() == "Tracking", f"Expected tab text 'Tracking', got '{win.btn_tab_calib.text()}'"
+            assert win.cb_players_mode.itemText(0) == "1 Player", f"Expected '1 Player', got '{win.cb_players_mode.itemText(0)}'"
+            assert win.cb_players_mode.itemText(1) == "2 Players", f"Expected '2 Players', got '{win.cb_players_mode.itemText(1)}'"
+            assert hasattr(win, "cb_players_mode"), "Players Mode selector must exist in Calibration/Tracking tab"
+            assert hasattr(win, "two_player_warn_box"), "2-Player Lite AI warning banner must exist in Calibration/Tracking tab"
+            win.cb_players_mode.setCurrentIndex(1)  # Switch to 2 Players (Duo)
+            assert win.cfg["max_players"] == 2
+            assert not win.two_player_warn_box.isHidden(), "2P warning box must be visible when 2 Players is active"
+            win.cb_players_mode.setCurrentIndex(0)  # Restore 1 Player (Solo)
+            assert win.cfg["max_players"] == 1
+            assert win.two_player_warn_box.isHidden(), "2P warning box must be hidden in 1-Player mode"
 
-        # 7. Verify Reactive Start Button (disabled when peripheral is disconnected)
-        win._set_mode("pscam", animate=False)
-        assert win.btn_start.isEnabled() is False, "Start button must be disabled when PS Camera is not connected"
-        assert win.btn_start.text() == "START TRACKING"
+            # 7. Verify Reactive Start Button (disabled when peripheral is disconnected)
+            win._set_mode("pscam", animate=False)
+            assert win.btn_start.isEnabled() is False, "Start button must be disabled when PS Camera is not connected"
+            assert win.btn_start.text() == "START TRACKING"
 
-        win._set_mode("phone_cam", animate=False)
-        assert win.btn_start.isEnabled() is False, "Start button must be disabled when Phone Camera is not connected"
-        assert win.btn_start.isHidden() is True, "Start button must be hidden when Phone Camera is not connected"
-        assert win.btn_bottom_disconnect_phone.isHidden() is True, "Disconnect button must be hidden when Phone Camera is not connected"
-        assert win.btn_start.text() == "START TRACKING"
-        win.close()
+            win._set_mode("phone_cam", animate=False)
+            assert win.btn_start.isEnabled() is False, "Start button must be disabled when Phone Camera is not connected"
+            assert win.btn_start.isHidden() is True, "Start button must be hidden when Phone Camera is not connected"
+            assert win.btn_bottom_disconnect_phone.isHidden() is True, "Disconnect button must be hidden when Phone Camera is not connected"
+            assert win.btn_start.text() == "START TRACKING"
+        finally:
+            win.controller.cleanup()
+            win.close()
 
     print("  -> Multi-Player (2P Duo) Pose Engine, Anti-Swap Memory & JDP2/JMI2 IPC PASSED")
 

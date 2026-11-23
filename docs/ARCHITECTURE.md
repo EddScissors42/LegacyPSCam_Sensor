@@ -34,8 +34,11 @@ LegacyPSCam_Sensor/
 │   ├── pose_filters.py         # Filtros cinemáticos (HandAnchor, AdaptiveSmoother, SkeletonCalibrator, Smart Body PTZ)
 │   ├── person_lock.py          # Subsistema modular Person Lock-In (InertialCoastingFilter, DancerIdentityLock)
 │   ├── gesture_detector.py     # Reconhecimento de gesto de braço levantado (ENTER em 1P e 2P)
-│   ├── phone_camera.py         # Servidor WebApp HTTPS/WSS e gerador de QR Code para câmera de smartphone via Wi-Fi
-│   ├── virtual_phone.py        # Cliente WebSocket UbiArt (/smartphone), Calibrador Adaptativo e Acelerômetro 3D
+│   ├── phone_camera.py         # Servidor WebApp HTTPS/WSS para câmera de smartphone via Wi-Fi
+│   ├── qr_encoder.py           # Codificador QR Code ISO/IEC 18004 puro em Python (GF(256) + Pillow)
+│   ├── tls_manager.py          # Gerador de certificados TLS X.509v3 autoassinados em ASN.1 DER puro
+│   ├── virtual_phone.py        # Orquestrador VirtualPhoneController (UbiArt /smartphone)
+│   ├── vphone_protocol.py      # Primitivas UbiArt: HandAccelerometer, WebSocket RFC 6455, AdaptiveTuner e detector de música
 │   ├── telemetry_benchmark.py  # Benchmark comparativo de telemetria (Câmera vs DS4), alinhamento temporal e ganho
 │   ├── ds4_controller.py       # Driver Bluetooth/USB HID nativo DualShock 4 (500+ Hz, IMU, botões e vibração)
 │   ├── kinect_emulator.py      # Emulador de Kinect na memória para Just Dance Legacy 32-bit (hot-patching IAT)
@@ -47,6 +50,8 @@ LegacyPSCam_Sensor/
 │   ├── __init__.py             # Exporta LegacySensorGUI, UIPagesMixin, widgets reutilizáveis e launch_app
 │   ├── gui_qt.py               # Janela principal View em PySide6 / Qt 6 (desacoplada e delegada a controllers)
 │   ├── pages.py                # Construtores declarativos das 4 páginas Qt 6 (UIPagesMixin)
+│   ├── styles.py               # Construtor centralizado da folha de estilos QSS (PlayStation Blue / Crisp White)
+│   ├── device_readout_mixin.py # Mixin de apresentação de readouts ao vivo (DS4, Virtual Phone, Phone Camera)
 │   ├── widgets.py              # Componentes Qt 6 reutilizáveis (SlidingStackedWidget, DeviceNavCard, CalibPresetCard)
 │   ├── benchmark_dialog.py     # Diálogo e gráfico 2D QPainter de benchmark comparativo (Câmera vs DS4)
 │   ├── theme.py                # Paleta de cores, tipografia e presets (Competitive Lite AI recomendado por padrão)
