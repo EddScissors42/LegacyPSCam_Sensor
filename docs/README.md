@@ -64,7 +64,7 @@ All non-essential overhead has been removed while perfecting the core components
 ```
 LegacyPSCam_Sensor/
 ├── main.py                     # CLI launcher and entry point
-├── version.py                  # Official versioning & build metadata (v0.9.0 Alpha)
+├── version.py                  # Official versioning & build metadata (v0.10.0 Alpha)
 ├── test_suite.py               # 19 complete automated test suites (19/19 PASSED)
 ├── config.json                 # Saved user preferences
 ├── THIRD_PARTY_NOTICES.md      # Licensing & third-party attribution notices
@@ -88,14 +88,17 @@ LegacyPSCam_Sensor/
 │   └── config_manager.py       # config.json persistence
 ├── ui/                         # User Interface package
 │   ├── gui_qt.py               # Primary PlayStation-themed window controller (PySide6 / Qt 6)
-│   ├── pages.py                # Declarative Qt 6 page builders (Video, Calibration, Experimental, DS4)
+│   ├── pages.py                # Declarative Qt 6 page builders (Video, Tracking, Experimental, DS4)
+│   ├── styles.py               # Centralized QSS stylesheet builder
+│   ├── device_readout_mixin.py # Live device readout presentation mixin
 │   ├── widgets.py              # Reusable Qt 6 widgets (SlidingStackedWidget, DeviceNavCard, CalibPresetCard)
 │   ├── benchmark_dialog.py     # Telemetry Benchmark & Calibration Comparator dialog & 2D chart
 │   ├── theme.py                # Palette, fonts, and calibration presets
 │   └── icons.py                # Supersampled icons, SVGs, and status badges
 ├── assets/                     # Visual assets and media
 │   ├── icons/                  # Custom icons (IconePSCAMERA.png, officialdualshock.png, SVGs)
-│   └── fonts/                  # Bundled typography (Kanit, National Park, Inter Tight)
+│   ├── fonts/                  # Bundled typography (Kanit, National Park, Inter Tight)
+│   └── webapp/                 # Static HTML5/CSS/JS templates for Phone Camera WebApp
 ├── models/                     # Pre-trained neural network models
 │   ├── pose_landmarker_lite.task  # Google MediaPipe Pose Lite model (Competitive preset)
 │   └── pose_landmarker_full.task  # Google MediaPipe Pose Full model (Balanced preset)
@@ -110,7 +113,7 @@ LegacyPSCam_Sensor/
 
 1. Run the Sensor:
    Launch `LegacySensor.exe` or execute `python main.py`.
-2. Enable Emulate Kinect:
-   In **Experimental**, keep **Emulate Kinect** enabled so the sensor automatically hooks into Just Dance in memory and streams via the Shared Memory IPC Bridge.
-3. Select Camera & Start Tracking:
-   Choose PlayStation 4 Camera (if connected) or Standard Webcam, click START TRACKING, and launch Just Dance PC.
+2. Automatic In-Memory Kinect Emulation:
+   The built-in in-memory Kinect emulator starts automatically on boot and streams poses/silhouettes via the Shared Memory IPC Bridge (zero game file replacement).
+3. Select Device & Start Tracking:
+   Choose PlayStation 4 Camera (built-in Stereo Vision active by default), Standard Webcam, Phone Camera (QR Code), or DualShock 4, click **START TRACKING**, and launch Just Dance PC.

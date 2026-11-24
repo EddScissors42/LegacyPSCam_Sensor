@@ -20,6 +20,7 @@ WEBAPP_MOBILE_HTML_PATH = WEBAPP_DIR / "mobile_webapp.html"
 WEBAPP_EXPIRED_HTML_PATH = WEBAPP_DIR / "expired_session.html"
 
 ICON_APP_ICO_PATH = ICONS_DIR / "app_icon.ico" if (ICONS_DIR / "app_icon.ico").exists() else None
+SPLASH_IMAGE_PATH = ICONS_DIR / "splash.png" if (ICONS_DIR / "splash.png").exists() else None
 ICON_PSCAMERA_PATH = ICONS_DIR / "IconePSCAMERA.png"
 ICON_SETTINGS_PATH = ICONS_DIR / "settings.svg"
 ICON_TRACKING_PATH = ICONS_DIR / "trackingicon.svg"
@@ -49,6 +50,7 @@ __all__ = [
     "WEBAPP_MOBILE_HTML_PATH",
     "WEBAPP_EXPIRED_HTML_PATH",
     "ICON_APP_ICO_PATH",
+    "SPLASH_IMAGE_PATH",
     "ICON_PSCAMERA_PATH",
     "ICON_SETTINGS_PATH",
     "ICON_TRACKING_PATH",

@@ -46,7 +46,7 @@ from .kinect_shared_memory import (
 )
 from .config_manager import (
     ConfigManager, parse_preset, PRESETS_PSCAM, PRESETS_WEBCAM, PRESETS_PHONE_CAM,
-    get_app_data_dir, get_config_path, get_logs_dir, is_portable_mode
+    get_app_data_dir, get_config_path, get_logs_dir, get_models_dir, is_portable_mode
 )
 from .kinect_emulator import KinectEmulatorDaemon, get_kinect_emulator
 from .session_logger import SessionLogger, get_session_logger
@@ -57,6 +57,8 @@ import importlib
 _LAZY_SYMBOL_MAP = {
     # Heavy AI / Tracking
     "PoseTracker": (".pose_tracker", "PoseTracker"),
+    "ModelManager": (".model_manager", "ModelManager"),
+    "MODEL_SPECS": (".model_manager", "MODEL_SPECS"),
     "run_tracking_session": (".tracking_session", "run_tracking_session"),
     "TrackingOverlay": (".tracking_overlay", "TrackingOverlay"),
     "StereoCalibrator": (".stereo_matcher", "StereoCalibrator"),
@@ -190,9 +192,12 @@ __all__ = [
     "run_tracking_session",
     "TrackingOverlay",
     "ConfigManager",
+    "ModelManager",
+    "MODEL_SPECS",
     "get_app_data_dir",
     "get_config_path",
     "get_logs_dir",
+    "get_models_dir",
     "is_portable_mode",
     "parse_preset",
     "PRESETS_PSCAM",

@@ -72,7 +72,7 @@ DEFAULT_CONFIG = {
     "ds4_sensitivity": 1.0,
     "ds4_permissive_mode": True,
     "benchmark_auto_record": False,
-    "stereo_mode": "disabled",
+    "stereo_mode": "sparse_metric",
     "emulate_kinect_enabled": True
 }
 
@@ -184,6 +184,17 @@ def get_logs_dir(portable: Optional[bool] = None) -> Path:
     logs_dir = get_app_data_dir(portable=portable) / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
     return logs_dir
+
+
+def get_models_dir(portable: Optional[bool] = None) -> Path:
+    """
+    Returns the persistent directory for cached MediaPipe AI `.task` models.
+    Always located in <AppData>/models (or <PortableDir>/models).
+    Ensures the directory exists.
+    """
+    models_dir = get_app_data_dir(portable=portable) / "models"
+    models_dir.mkdir(parents=True, exist_ok=True)
+    return models_dir
 
 
 def get_config_path(portable: Optional[bool] = None) -> Path:

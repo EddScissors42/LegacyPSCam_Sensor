@@ -30,6 +30,7 @@ LegacyPSCam_Sensor/
 │   ├── camera_manager.py       # Descoberta, negociação DirectShow/WinUSB e captura assíncrona
 │   ├── stereo_matcher.py       # Motor de Visão Estéreo (Retificação, Triangulação Esparsa 3D e Máscara Densa)
 │   ├── pose_tracker.py         # Motor MediaPipe Pose (1P & 2P) e máscara anatômica 320x240
+│   ├── model_manager.py        # Gerenciador persistente de modelos .task em %APPDATA%\models (SHA-256 + download sob demanda)
 │   ├── player_slot.py          # Estado por jogador (PlayerSlotState), memória de identidade anti-swap e máscara indexada
 │   ├── pose_filters.py         # Filtros cinemáticos (HandAnchor, AdaptiveSmoother, SkeletonCalibrator, Smart Body PTZ)
 │   ├── person_lock.py          # Subsistema modular Person Lock-In (InertialCoastingFilter, DancerIdentityLock)
@@ -63,12 +64,12 @@ LegacyPSCam_Sensor/
 │       ├── device_controller.py# DeviceController (Phone Camera HTTPS/WSS, DS4 HID/Bluetooth, Celular Virtual)
 │       └── session_controller.py# SessionController (orquestrador do loop de rastreamento, Kinect daemon e IPC)
 ├── assets/                     # Recursos visuais e mídias
-│   ├── icons/                  # Ícones SVG e PNG da aplicação
+│   ├── icons/                  # Ícones SVG/PNG, app_icon.ico e splash.png ("Hold on... and warm up!")
 │   ├── fonts/                  # Fontes TTF (Kanit, InterTight, NationalPark)
 │   └── webapp/                 # Templates HTML5/CSS/JS estáticos do Phone Camera WebApp (mobile_webapp.html, expired_session.html)
 ├── models/
-│   ├── pose_landmarker_lite.task  # Modelo MediaPipe Pose Lite (Perfil Competitivo — Padrão Recomendado)
-│   └── pose_landmarker_full.task  # Modelo MediaPipe Pose Full (Perfil Equilibrado)
+│   ├── pose_landmarker_lite.task  # Modelo MediaPipe Pose Lite (Perfil Competitivo — embutido offline)
+│   └── pose_landmarker_full.task  # Modelo MediaPipe Pose Full (Perfil Equilibrado — cache sob demanda em %APPDATA%\models)
 └── tools/
     ├── Legacy10.dll               # DLL proxy de 32 bits injetada em memória pelo Emulate Kinect (Legacy.exe)
     └── get_cameras.ps1            # Script PowerShell auxiliar para enumeração de câmeras WinRT

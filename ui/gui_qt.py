@@ -75,6 +75,7 @@ from ui.icons import (
     generate_status_icons_pil
 )
 from assets import (
+    ICON_APP_ICO_PATH,
     ICON_PSCAMERA_PATH,
     ICON_ARROW_DOWN_PATH,
     ICON_DUALSHOCK4_PATH,
@@ -124,6 +125,7 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin, UIDeviceReadoutMixin):
     """Modern Crisp-White & PlayStation Blue primary window in Qt 6."""
     cameras_refreshed_signal = Signal(list)
     tracking_finished_signal = Signal(bool, str)
+    model_download_signal = Signal(str, int, str)
 
     def __init__(self, parent=None, *args, auto_discover=True, controller: Optional[SensorAppController] = None, **kwargs):
         if parent is not None and not isinstance(parent, QWidget):
@@ -132,8 +134,9 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin, UIDeviceReadoutMixin):
         self.setWindowTitle(WINDOW_TITLE)
         self.resize(960, 640)
         self.setMinimumSize(920, 500)
-        if ICON_PSCAMERA_PATH.exists():
-            self.setWindowIcon(QIcon(str(ICON_PSCAMERA_PATH)))
+        win_icon = ICON_APP_ICO_PATH if (ICON_APP_ICO_PATH and ICON_APP_ICO_PATH.exists()) else ICON_PSCAMERA_PATH
+        if win_icon and win_icon.exists():
+            self.setWindowIcon(QIcon(str(win_icon)))
 
         # Register bundled custom fonts (Kanit, National Park, Inter Tight)
         loaded_fonts = load_custom_fonts_qt()
@@ -144,6 +147,9 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin, UIDeviceReadoutMixin):
         # Configuration and decoupled application controller facade
         self.cfg_mgr = ConfigManager()
         self.cfg = self.cfg_mgr.config
+        # Stereo Vision is always enabled by default on PlayStation 4 Camera
+        if str(self.cfg.get("stereo_mode", "")).strip().lower() in ("", "disabled", "false", "0"):
+            self.cfg["stereo_mode"] = "sparse_metric"
         self.controller = controller or SensorAppController(self.cfg_mgr, parent=self)
 
         # Initialize shared memory bridges immediately on startup so Just Dance connects seamlessly
@@ -178,6 +184,7 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin, UIDeviceReadoutMixin):
         self.controller.tracking_finished.connect(self._on_tracking_finished)
         self.cameras_refreshed_signal.connect(self._on_cameras_refreshed)
         self.tracking_finished_signal.connect(self._on_tracking_finished)
+        self.model_download_signal.connect(self._on_model_download_progress)
 
         # Initial mode setup (already calls _update_pscam_status for camera modes)
         initial_mode = self.cfg.get("camera_mode", "pscam")
@@ -210,7 +217,15 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin, UIDeviceReadoutMixin):
 
     def _prewarm_pose_engine_async(self):
         """Pre-loads MediaPipe / PoseTracker in a background thread after the window is visible."""
-        if getattr(self, "_is_closing", False) or "mediapipe" in sys.modules:
+        if getattr(self, "_is_closing", False):
+            return
+
+        # Pre-fetch Full AI model into %APPDATA% cache if user already saved Balanced preset
+        active_model = str(self.cfg.get("pose_model", "lite")).strip().lower()
+        if active_model == "full":
+            self._ensure_pose_model_async("full")
+
+        if "mediapipe" in sys.modules:
             return
 
         def _warm_worker():
@@ -220,6 +235,80 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin, UIDeviceReadoutMixin):
                 pass
 
         threading.Thread(target=_warm_worker, daemon=True, name="MediaPipePrewarmThread").start()
+
+    def _ensure_pose_model_async(self, variant: str):
+        """
+        Ensures the requested AI model variant (`lite` or `full`) is available in the local or
+        persistent `%APPDATA%\\LegacyPSCam_Sensor\\models` cache without blocking the Qt UI thread.
+        """
+        if getattr(self, "_is_closing", False):
+            return
+        try:
+            from sensor.model_manager import ModelManager
+            norm = ModelManager.normalize_variant(variant)
+            if ModelManager.is_model_ready(norm):
+                return
+        except Exception:
+            return
+
+        if getattr(self, "_downloading_model_variant", None) == norm:
+            return
+        self._downloading_model_variant = norm
+        self.model_download_signal.emit(norm, 0, "downloading")
+
+        def _dl_worker():
+            try:
+                from sensor.model_manager import ModelManager
+                last_pct = [-1]
+
+                def _cb(done: int, total: int):
+                    pct = int(min(100, round((done * 100.0) / max(1, total))))
+                    if pct != last_pct[0]:
+                        last_pct[0] = pct
+                        self.model_download_signal.emit(norm, pct, "downloading")
+
+                res = ModelManager.download_model(norm, progress_cb=_cb)
+                if res is not None:
+                    self.model_download_signal.emit(norm, 100, "done")
+                else:
+                    self.model_download_signal.emit(norm, -1, "offline")
+            except Exception:
+                self.model_download_signal.emit(norm, -1, "offline")
+            finally:
+                self._downloading_model_variant = None
+
+        threading.Thread(target=_dl_worker, daemon=True, name=f"ModelDownload-{norm}").start()
+
+    @Slot(str, int, str)
+    def _on_model_download_progress(self, variant: str, pct: int, status: str):
+        if not hasattr(self, "model_dl_box") or not hasattr(self, "lbl_model_dl_status"):
+            return
+        label = "Balanced (Full AI)" if variant == "full" else "Competitive (Lite AI)"
+        if status == "downloading":
+            self.model_dl_box.setStyleSheet(
+                "QFrame#modelDownloadBox { background-color: #EFF6FF; border: 1px solid #93C5FD; border-radius: 8px; }"
+            )
+            self.lbl_model_dl_status.setText(
+                f"Downloading {label} model to persistent cache (%APPDATA%)... {max(0, pct)}%"
+            )
+            self.model_dl_box.setVisible(True)
+        elif status == "done":
+            self.model_dl_box.setStyleSheet(
+                "QFrame#modelDownloadBox { background-color: #ECFDF5; border: 1px solid #6EE7B7; border-radius: 8px; }"
+            )
+            self.lbl_model_dl_status.setText(
+                f"{label} model cached in %APPDATA% — Ready for instant launch!"
+            )
+            self.model_dl_box.setVisible(True)
+            QTimer.singleShot(3000, lambda: self.model_dl_box.setVisible(False) if hasattr(self, "model_dl_box") else None)
+        else:
+            self.model_dl_box.setStyleSheet(
+                "QFrame#modelDownloadBox { background-color: #FEF3C7; border: 1px solid #FCD34D; border-radius: 8px; }"
+            )
+            self.lbl_model_dl_status.setText(
+                f"Could not download {label} (offline). Lite AI will be used automatically until connected."
+            )
+            self.model_dl_box.setVisible(True)
 
     # =========================================================================
     # CONTROLLER DELEGATES & COMPATIBILITY PROPERTIES
@@ -604,7 +693,7 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin, UIDeviceReadoutMixin):
 
         footer_layout = QHBoxLayout()
         footer_layout.setContentsMargins(0, 2, 0, 0)
-        lbl_ver = QLabel(f"{APP_NAME} {VERSION_STRING}", self.content_widget)
+        lbl_ver = QLabel(VERSION_STRING, self.content_widget)
         lbl_ver.setStyleSheet(
             f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['text_dim']}; background: transparent;"
         )
@@ -620,25 +709,6 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin, UIDeviceReadoutMixin):
                 f"background-color: #FFFFFF; color: {PALETTE['text_main']}; "
                 f"selection-background-color: {PALETTE['ps_blue']}; selection-color: #FFFFFF;"
             )
-
-    def _on_stereo_toggled(self, state=None):
-        if hasattr(self, "chk_stereo"):
-            enabled = self.chk_stereo.isChecked()
-            self.cfg["stereo_mode"] = "sparse_metric" if enabled else "disabled"
-            self._save_settings()
-            self._update_eye_selector_state()
-
-    def _update_eye_selector_state(self):
-        is_stereo = False
-        if hasattr(self, "chk_stereo"):
-            is_stereo = self.chk_stereo.isChecked()
-        if hasattr(self, "block_ps_eye"):
-            self.block_ps_eye.setEnabled(not is_stereo)
-        if hasattr(self, "cb_ps4_eye"):
-            self.cb_ps4_eye.setEnabled(not is_stereo)
-
-    def _on_stereo_mode_changed(self):
-        self._on_stereo_toggled()
 
     # =========================================================================
     # UI STATE MANAGEMENT & VISIBILITY
@@ -1460,6 +1530,8 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin, UIDeviceReadoutMixin):
         self._update_calib_cards_ui()
         self._update_2p_warning_ui()
         self._save_settings()
+        if str(self.cfg.get("pose_model", "lite")).strip().lower() == "full":
+            self._ensure_pose_model_async("full")
 
     def _on_players_mode_changed(self, idx: int):
         max_p = 2 if idx == 1 else 1
@@ -1598,9 +1670,26 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin, UIDeviceReadoutMixin):
 
 
 def main():
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("LegacyPSCam")
+        except Exception:
+            pass
     app = QApplication.instance() or QApplication(sys.argv)
+    app.setApplicationName("LegacyPSCam")
+    app.setApplicationDisplayName("LegacyPSCam")
+    win_icon = ICON_APP_ICO_PATH if (ICON_APP_ICO_PATH and ICON_APP_ICO_PATH.exists()) else ICON_PSCAMERA_PATH
+    if win_icon and win_icon.exists():
+        app.setWindowIcon(QIcon(str(win_icon)))
     window = LegacySensorQtGUI()
     window.show()
+    try:
+        import pyi_splash  # type: ignore[import-not-found]
+        if pyi_splash.is_alive():
+            pyi_splash.close()
+    except Exception:
+        pass
     sys.exit(app.exec())
 
 

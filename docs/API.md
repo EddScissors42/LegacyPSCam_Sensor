@@ -169,14 +169,15 @@ O projeto opera através dos canais da Ponte de Memória Compartilhada do Window
 O arquivo `main.py` aceita os seguintes parâmetros de execução:
 
 ```powershell
-python main.py [--start] [--mode {pscam,webcam,ds4}] [--camera <int>]
+python main.py [--start] [--mode {pscam,webcam,phone_cam,ds4}] [--camera <int>]
 ```
 
 ### Argumentos:
 - `--start`: Pula a exibição da interface gráfica Qt 6 e inicia o rastreamento imediatamente com a última configuração salva.
-- `--mode {pscam,webcam,ds4}`: Força o modo de entrada:
-  - `pscam`: Seleciona as otimizações para a PlayStation 4 Camera (60 FPS, YUY2/NV12).
+- `--mode {pscam,webcam,phone_cam,ds4}`: Força o modo de entrada:
+  - `pscam`: Seleciona as otimizações para a PlayStation 4 Camera (60 FPS, YUY2/NV12, Stereo Vision padrão).
   - `webcam`: Seleciona as otimizações para webcams convencionais (30/60 FPS DirectShow).
+  - `phone_cam`: Seleciona o modo Smartphone Camera via Wi-Fi WebApp (QR Code + TLS/WSS).
   - `ds4`: Inicia o modo de controle sem fio/USB DualShock 4 (IMU 500+ Hz via Virtual Phone).
 - `--camera <int>`: Define o índice numérico do dispositivo de vídeo a ser aberto pelo OpenCV (`0`, `1`, etc.).
 
@@ -285,13 +286,13 @@ As preferências do usuário são persistidas em `config.json` via `ConfigManage
 O ponto de entrada `main.py` aceita argumentos de linha de comando para controle direto:
 
 ```powershell
-python main.py [-h] [--start] [--mode {pscam,webcam,ds4}] [--camera CAMERA]
+python main.py [-h] [--start] [--mode {pscam,webcam,phone_cam,ds4}] [--camera CAMERA]
 ```
 
 | Argumento | Opções | Padrão | Descrição |
 |---|---|---|---|
 | `--start` | Flag booleana | `False` | Inicia a sessão de rastreamento diretamente sem abrir a interface gráfica. |
-| `--mode` | `pscam`, `webcam`, `ds4` | Configurado em `config.json` | Força o modo de sensor/controle a ser utilizado. |
+| `--mode` | `pscam`, `webcam`, `phone_cam`, `ds4` | Configurado em `config.json` | Força o modo de sensor/controle a ser utilizado. |
 | `--camera` | Inteiro (`0`, `1`, ...) | Configurado em `config.json` | Força o índice da câmera de captura no OpenCV. |
 
 ---

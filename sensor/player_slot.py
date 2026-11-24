@@ -615,6 +615,7 @@ class PlayerSlotState:
         h: int,
         enforce_single_person_gate: bool = False,
         sample_bgr: Optional[np.ndarray] = None,
+        primary_eye: str = "right",
     ) -> Optional[PlayerFrame]:
         """Runs the full 20-joint kinematic, calibration, smoothing, and mask pipeline for this slot."""
         if enforce_single_person_gate:
@@ -729,15 +730,18 @@ class PlayerSlotState:
         if not self.calibrator.is_calibrated or (self.calibrator.calibration_tier != "full_body" and ankles_in_frame):
             self.calibrator.calibrate(anchored, legs_visible=ankles_in_frame, hips_visible=hips_visible)
 
-        # 3.1 Stereo Triangulation (optional)
+        # 3.1 Stereo Triangulation (automatic on PS4 Camera dual sensor)
         stereo_depths = None
         if stereo_mode != STEREO_MODE_DISABLED and frame_left is not None and stereo_engine is not None:
             try:
-                mono_r = frame_bgr[:, :, 1] if (frame_left.ndim == 2 and frame_bgr.ndim == 3) else frame_bgr
-                rect_left_frame, rect_right_frame = stereo_engine.calibrator.rectify(frame_left, mono_r)
+                mono_pri = frame_bgr[:, :, 1] if (frame_left.ndim == 2 and frame_bgr.ndim == 3) else frame_bgr
+                if str(primary_eye or "right").strip().lower() == "left":
+                    rect_left_frame, rect_right_frame = stereo_engine.calibrator.rectify(mono_pri, frame_left)
+                else:
+                    rect_left_frame, rect_right_frame = stereo_engine.calibrator.rectify(frame_left, mono_pri)
                 joints_2d = extract_joints_2d_fn(norm_lm, w, h)
                 stereo_depths = stereo_engine.triangulate_sparse_joints(
-                    rect_left_frame, rect_right_frame, joints_2d
+                    rect_left_frame, rect_right_frame, joints_2d, primary_eye=primary_eye
                 )
             except Exception as exc:
                 if not self._warned_stereo_err:

@@ -193,25 +193,30 @@ class StereoDepthEngine:
         search_radius_px: int = 48,
         patch_half_size: int = 6,
         vertical_tol_px: int = 4,
+        primary_eye: str = "right",
     ) -> Dict[int, Tuple[float, float, float, float]]:
         """
         Sub-Pixel Stereo Triangulator for MediaPipe Landmarks (Coarse 2D Epipolar Band + PyrLK Refinement).
-        Given 2D pixel coordinates (uR, vR) on the Right eye image:
-        1. Searches a 2D epipolar band around vL = vR + vertical_offset_px (±vertical_tol_px) to tolerate
+        Supports either Right Eye (default) or Left Eye as the primary tracking lens:
+        1. Searches a 2D epipolar band around the matched vertical offset (±vertical_tol_px) to tolerate
            physical lens tilt between Left and Right OV9713 sensors without a checkerboard.
         2. Refines the disparity to sub-pixel precision via parabolic interpolation + Pyramidal Lucas-Kanade
            (cv2.calcOpticalFlowPyrLK with OPTFLOW_USE_INITIAL_FLOW).
-        3. Updates `self.vertical_offset_px` dynamically from high-confidence matches.
+        3. Updates `self.vertical_offset_px` (vL - vR) dynamically from high-confidence matches.
 
         Returns:
             Dict[joint_id, (X_meters, Y_meters, Z_meters, confidence)]
         """
-        h, w = rect_right.shape[:2]
+        is_left_primary = str(primary_eye or "right").strip().lower() == "left"
+        primary_img = rect_left if is_left_primary else rect_right
+        h, w = primary_img.shape[:2]
         self.calibrator.update_resolution(w, h)
 
         # Use Green channel (channel index 1) view directly from BGR without copying full frames
         mono_r = rect_right[:, :, 1] if rect_right.ndim == 3 else rect_right
         mono_l = rect_left[:, :, 1] if rect_left.ndim == 3 else rect_left
+        mono_pri = mono_l if is_left_primary else mono_r
+        mono_sec = mono_r if is_left_primary else mono_l
 
         fx = self.calibrator.fx
         fy = self.calibrator.fy
@@ -227,30 +232,38 @@ class StereoDepthEngine:
         results = {}
         vertical_residuals = []
 
-        for j_id, (u_r_f, v_r_f, conf) in joints_2d.items():
+        for j_id, (u_p_f, v_p_f, conf) in joints_2d.items():
             if conf < 0.25:
                 continue
 
-            u_r = int(round(u_r_f))
-            v_r = int(round(v_r_f))
+            u_p = int(round(u_p_f))
+            v_p = int(round(v_p_f))
 
             # Boundary safety check for patch
-            if u_r < p_sz or u_r >= w - p_sz or v_r < p_sz or v_r >= h - p_sz:
+            if u_p < p_sz or u_p >= w - p_sz or v_p < p_sz or v_p >= h - p_sz:
                 continue
 
-            patch = mono_r[v_r - p_sz : v_r + p_sz + 1, u_r - p_sz : u_r + p_sz + 1]
+            patch = mono_pri[v_p - p_sz : v_p + p_sz + 1, u_p - p_sz : u_p + p_sz + 1]
 
-            # 2D Epipolar Search Band: horizontal [u_r, u_r + max_d] and vertical [v_r + v_off ± v_tol]
-            u_l_start = max(0, u_r)
-            u_l_end = min(w, u_r + max_d + p_sz * 2 + 1)
-            v_l_center = v_r + v_off_int
-            v_l_start = max(0, v_l_center - p_sz - v_tol)
-            v_l_end = min(h, v_l_center + p_sz + v_tol + 1)
+            # 2D Epipolar Search Band:
+            # Right primary -> match in Left eye at u_l >= u_r, v_l = v_r + v_off
+            # Left primary  -> match in Right eye at u_r <= u_l, v_r = v_l - v_off
+            if is_left_primary:
+                u_s_start = max(0, u_p - max_d - p_sz)
+                u_s_end = min(w, u_p + p_sz + 1)
+                v_s_center = v_p - v_off_int
+            else:
+                u_s_start = max(0, u_p)
+                u_s_end = min(w, u_p + max_d + p_sz * 2 + 1)
+                v_s_center = v_p + v_off_int
 
-            if (u_l_end - u_l_start) < patch.shape[1] or (v_l_end - v_l_start) < patch.shape[0]:
+            v_s_start = max(0, v_s_center - p_sz - v_tol)
+            v_s_end = min(h, v_s_center + p_sz + v_tol + 1)
+
+            if (u_s_end - u_s_start) < patch.shape[1] or (v_s_end - v_s_start) < patch.shape[0]:
                 continue
 
-            search_strip = mono_l[v_l_start:v_l_end, u_l_start:u_l_end]
+            search_strip = mono_sec[v_s_start:v_s_end, u_s_start:u_s_end]
 
             # Normalized Cross-Correlation matching across the 2D epipolar band
             corr = cv2.matchTemplate(search_strip, patch, cv2.TM_CCOEFF_NORMED)
@@ -280,24 +293,24 @@ class StereoDepthEngine:
                 if abs(denom_y) > 1e-5:
                     sub_dy = max(-0.5, min(0.5, (c_up - c_down) / denom_y))
 
-            u_l_final = float(u_l_start + mx + p_sz) + sub_dx
-            v_l_final = float(v_l_start + my + p_sz) + sub_dy
+            u_s_final = float(u_s_start + mx + p_sz) + sub_dx
+            v_s_final = float(v_s_start + my + p_sz) + sub_dy
 
             # Local ROI Pyramidal Lucas-Kanade sub-pixel refinement (avoids full-frame pyramid cost)
-            u_l_int = int(round(u_l_final))
-            v_l_int = int(round(v_l_final))
+            u_s_int = int(round(u_s_final))
+            v_s_int = int(round(v_s_final))
             lk_r = p_sz + 2
             if (
-                u_r >= lk_r and u_r < w - lk_r and v_r >= lk_r and v_r < h - lk_r
-                and u_l_int >= lk_r and u_l_int < w - lk_r and v_l_int >= lk_r and v_l_int < h - lk_r
+                u_p >= lk_r and u_p < w - lk_r and v_p >= lk_r and v_p < h - lk_r
+                and u_s_int >= lk_r and u_s_int < w - lk_r and v_s_int >= lk_r and v_s_int < h - lk_r
             ):
-                roi_r = np.ascontiguousarray(mono_r[v_r - lk_r : v_r + lk_r + 1, u_r - lk_r : u_r + lk_r + 1])
-                roi_l = np.ascontiguousarray(mono_l[v_l_int - lk_r : v_l_int + lk_r + 1, u_l_int - lk_r : u_l_int + lk_r + 1])
+                roi_p = np.ascontiguousarray(mono_pri[v_p - lk_r : v_p + lk_r + 1, u_p - lk_r : u_p + lk_r + 1])
+                roi_s = np.ascontiguousarray(mono_sec[v_s_int - lk_r : v_s_int + lk_r + 1, u_s_int - lk_r : u_s_int + lk_r + 1])
                 pt_center = np.array([[[float(lk_r), float(lk_r)]]], dtype=np.float32)
-                pt_init = np.array([[[float(lk_r) + (u_l_final - u_l_int), float(lk_r) + (v_l_final - v_l_int)]]], dtype=np.float32)
+                pt_init = np.array([[[float(lk_r) + (u_s_final - u_s_int), float(lk_r) + (v_s_final - v_s_int)]]], dtype=np.float32)
                 try:
                     pt_lk, st, _ = cv2.calcOpticalFlowPyrLK(
-                        roi_r, roi_l, pt_center, pt_init,
+                        roi_p, roi_s, pt_center, pt_init,
                         winSize=(p_sz * 2 + 1, p_sz * 2 + 1),
                         maxLevel=1,
                         criteria=self._lk_criteria,
@@ -307,12 +320,12 @@ class StereoDepthEngine:
                         dlk_x = float(pt_lk[0, 0, 0]) - float(lk_r)
                         dlk_y = float(pt_lk[0, 0, 1]) - float(lk_r)
                         if abs(dlk_x) <= 1.5 and abs(dlk_y) <= 1.5:
-                            u_l_final = float(u_l_int) + dlk_x
-                            v_l_final = float(v_l_int) + dlk_y
+                            u_s_final = float(u_s_int) + dlk_x
+                            v_s_final = float(v_s_int) + dlk_y
                 except Exception:
                     pass
 
-            disparity = u_l_final - float(u_r_f)
+            disparity = (float(u_p_f) - u_s_final) if is_left_primary else (u_s_final - float(u_p_f))
             if disparity < 2.0:
                 continue
 
@@ -321,10 +334,11 @@ class StereoDepthEngine:
                 continue
 
             if max_val >= 0.55:
-                vertical_residuals.append(v_l_final - float(v_r_f))
+                v_res = (float(v_p_f) - v_s_final) if is_left_primary else (v_s_final - float(v_p_f))
+                vertical_residuals.append(v_res)
 
-            x_m = ((float(u_r_f) - cx) * z_m) / fx
-            y_m = -((float(v_r_f) - cy) * z_m) / fy
+            x_m = ((float(u_p_f) - cx) * z_m) / fx
+            y_m = -((float(v_p_f) - cy) * z_m) / fy
 
             results[j_id] = (x_m, y_m, z_m, float(conf) * float(max_val))
 

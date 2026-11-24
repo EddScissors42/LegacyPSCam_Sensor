@@ -107,7 +107,7 @@ class UIPagesMixin:
         spec_layout = QVBoxLayout(spec_badge)
         spec_layout.setContentsMargins(12, 8, 12, 8)
         spec_layout.setSpacing(0)
-        lbl_spec_title = QLabel("Optimized Auto Mode: 1280x800 @ 60 FPS (OV580 Stereo)", spec_badge)
+        lbl_spec_title = QLabel("Optimized Auto Mode: 1280x800 @ 60 FPS (OV580 Stereo Vision)", spec_badge)
         lbl_spec_title.setStyleSheet(
             f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent; border: none;"
         )
@@ -158,51 +158,6 @@ class UIPagesMixin:
         ps_eye_layout.addWidget(self.cb_ps4_eye)
 
         ps_conn_layout.addWidget(self.block_ps_eye)
-
-        # Stereo Vision Feature Box (PlayStation 4 Camera Dual Sensor)
-        self.stereo_box = QFrame(self.pscam_card)
-        self.stereo_box.setObjectName("settingBlockStereo")
-        self.stereo_box.setStyleSheet(f"""
-            QFrame#settingBlockStereo {{
-                background-color: #FFFFFF;
-                border: 1px solid {PALETTE["border_subtle"]};
-                border-radius: 10px;
-            }}
-            QFrame#settingBlockStereo:hover {{
-                border-color: {PALETTE["input_border"]};
-            }}
-        """)
-        st_layout = QVBoxLayout(self.stereo_box)
-        st_layout.setContentsMargins(14, 12, 14, 12)
-        st_layout.setSpacing(6)
-
-        self.chk_stereo = QCheckBox("Stereo Vision", self.stereo_box)
-        is_stereo_on = str(self.cfg.get("stereo_mode", "disabled")).strip().lower() in (
-            "sparse_metric", "full_depth", "true", "enabled", "1"
-        )
-        self.chk_stereo.setChecked(is_stereo_on)
-        self.chk_stereo.stateChanged.connect(self._on_stereo_toggled)
-        st_layout.addWidget(self.chk_stereo)
-
-        # Compatibility alias
-        self.cb_stereo_mode = self.chk_stereo
-
-        lbl_stereo_desc = QLabel(
-            "Leverages both synchronized PlayStation 4 Camera sensors (85.2mm baseline) with Pyramidal "
-            "Lucas-Kanade (PyrLK) optical flow and dynamic lens auto-alignment to triangulate real metric 3D depth "
-            "for skeletal joints (< 0.5 ms, locked 60 FPS).",
-            self.stereo_box
-        )
-        lbl_stereo_desc.setWordWrap(True)
-        lbl_stereo_desc.setStyleSheet(
-            f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['text_muted']}; line-height: 1.4; background: transparent; border: none;"
-        )
-        st_layout.addWidget(lbl_stereo_desc)
-
-        ps_conn_layout.addWidget(self.stereo_box)
-
-        # Synchronize eye selector disabled state based on initial Stereo Vision setting
-        self._update_eye_selector_state()
 
         layout.addWidget(self.pscam_card)
 
@@ -794,6 +749,28 @@ class UIPagesMixin:
 
         card_layout.addLayout(cards_row)
 
+        # On-demand AI Model Download Status Banner (hidden unless downloading Full AI to %APPDATA%)
+        self.model_dl_box = QFrame(main_card)
+        self.model_dl_box.setObjectName("modelDownloadBox")
+        self.model_dl_box.setStyleSheet(f"""
+            QFrame#modelDownloadBox {{
+                background-color: #EFF6FF;
+                border: 1px solid #93C5FD;
+                border-radius: 8px;
+            }}
+        """)
+        mdl_layout = QHBoxLayout(self.model_dl_box)
+        mdl_layout.setContentsMargins(12, 8, 12, 8)
+        mdl_layout.setSpacing(10)
+        self.lbl_model_dl_status = QLabel("", self.model_dl_box)
+        self.lbl_model_dl_status.setWordWrap(True)
+        self.lbl_model_dl_status.setStyleSheet(
+            f"font-family: '{self.font_body}'; font-size: 10.5px; font-weight: 600; color: {PALETTE['blue_dark']}; background: transparent; border: none;"
+        )
+        mdl_layout.addWidget(self.lbl_model_dl_status, stretch=1)
+        self.model_dl_box.setVisible(False)
+        card_layout.addWidget(self.model_dl_box)
+
         # 2-Player Lite AI Warning Banner (displayed right below model selection when 2 Players is active)
         self.two_player_warn_box = QFrame(main_card)
         self.two_player_warn_box.setObjectName("twoPlayerWarnBox")
@@ -864,7 +841,7 @@ class UIPagesMixin:
         self.cb_players_mode.setFixedHeight(32)
         self.cb_players_mode.addItems([
             "1 Player",
-            "2 Players",
+            "2 Players [Experimental]",
         ])
         curr_mp = max(1, min(2, int(self.cfg.get("max_players", 1))))
         self.cb_players_mode.setCurrentIndex(1 if curr_mp >= 2 else 0)

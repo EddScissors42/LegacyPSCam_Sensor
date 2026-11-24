@@ -242,6 +242,17 @@ class PS4CameraBackend:
                 return None
             return np.ascontiguousarray(self._left_yuy2[:, :, 0])
 
+    def read_right_mono(self) -> Optional[np.ndarray]:
+        """
+        Returns the latest synchronized Right Eye single-channel 8-bit luminance plane (H, W)
+        directly from the raw YUY2 buffer without converting to 3-channel BGR.
+        Used by Stereo Vision when the Left Eye is selected as the primary tracking lens.
+        """
+        with self.lock:
+            if self._right_yuy2 is None:
+                return None
+            return np.ascontiguousarray(self._right_yuy2[:, :, 0])
+
     def read_left_frame(self, mono: bool = False) -> Optional[np.ndarray]:
         """
         Returns the latest synchronized Left Eye BGR (or 8-bit luminance if mono=True) frame

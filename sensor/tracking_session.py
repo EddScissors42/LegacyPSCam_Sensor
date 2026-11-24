@@ -81,6 +81,51 @@ def apply_pip_window_state(
             pass
 
 
+def apply_window_icon(window_name: str) -> None:
+    """
+    Applies the bundled multi-resolution `app_icon.ico` directly to an OpenCV Win32 window
+    (title bar, Alt+Tab, and Windows Taskbar) via LoadImageW + WM_SETICON.
+    """
+    if os.name != "nt":
+        return
+    try:
+        from assets import ICON_APP_ICO_PATH
+        if not ICON_APP_ICO_PATH or not ICON_APP_ICO_PATH.exists():
+            return
+        user32 = ctypes.windll.user32
+        user32.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+        user32.FindWindowW.restype = wintypes.HWND
+        user32.LoadImageW.argtypes = [
+            wintypes.HINSTANCE,
+            wintypes.LPCWSTR,
+            wintypes.UINT,
+            ctypes.c_int,
+            ctypes.c_int,
+            wintypes.UINT,
+        ]
+        user32.LoadImageW.restype = wintypes.HANDLE
+        user32.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+        user32.SendMessageW.restype = ctypes.c_ssize_t
+
+        hwnd = user32.FindWindowW(None, window_name)
+        if not hwnd:
+            return
+        IMAGE_ICON = 1
+        LR_LOADFROMFILE = 0x0010
+        WM_SETICON = 0x0080
+        ICON_SMALL = 0
+        ICON_BIG = 1
+        ico_str = str(ICON_APP_ICO_PATH)
+        h_small = user32.LoadImageW(None, ico_str, IMAGE_ICON, 16, 16, LR_LOADFROMFILE)
+        h_big = user32.LoadImageW(None, ico_str, IMAGE_ICON, 32, 32, LR_LOADFROMFILE)
+        if h_small:
+            user32.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, h_small)
+        if h_big:
+            user32.SendMessageW(hwnd, WM_SETICON, ICON_BIG, h_big)
+    except Exception:
+        pass
+
+
 def set_high_resolution_timer(enable=True):
     """
     Enables/disables Windows 1ms high-resolution timer via winmm and ntdll
@@ -241,6 +286,9 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None, prewar
             model_variant=pose_model,
             max_players=max_players,
         )
+        # Stereo Vision is always active by default on PlayStation 4 Camera
+        if mode == "pscam" and getattr(tracker, "stereo_mode", "disabled") == "disabled":
+            tracker.stereo_mode = "sparse_metric"
     except Exception as e:
         print(f"[ERROR] Failed to start MediaPipe Pose Tracker: {e}")
         camera.release()
@@ -282,6 +330,7 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None, prewar
     normal_win_size = (min(w, 1280), min(h, 800))
     cv2.namedWindow(window_name, cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_EXPANDED)
     cv2.resizeWindow(window_name, normal_win_size[0], normal_win_size[1])
+    apply_window_icon(window_name)
 
     track_fps_counter = 0
     track_fps_last_time = time.time()
@@ -298,7 +347,7 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None, prewar
         cfg_summary = f"{w}x{h}@{target_fps}FPS, mode={mode}, players={max_players}P, model={pose_model}"
         get_session_logger().map_active_controller(
             controller_type="camera",
-            name="PlayStation 4 Camera" if mode == "pscam" else "Standard Webcam",
+            name="PlayStation 4 Camera" if mode == "pscam" else ("Phone Camera (Wi-Fi)" if mode == "phone_cam" else "Standard Webcam"),
             details=cfg_summary,
         )
         get_session_logger().start_telemetry_tracking(
@@ -350,19 +399,27 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None, prewar
                 time.sleep(0.0015)
                 continue
 
-            frame_left = None
+            frame_secondary = None
             if getattr(tracker, "stereo_mode", "disabled") != "disabled":
-                if hasattr(camera, "read_left_mono"):
-                    frame_left = camera.read_left_mono()
-                if frame_left is None and hasattr(camera, "read_left_eye"):
-                    frame_left = camera.read_left_eye(mono=True)
-                if frame_left is None:
-                    st_data = camera.read_stereo(only_new=False)
-                    if st_data:
-                        frame_left = st_data.get("left_bgr")
+                if ps4_eye == "left":
+                    if hasattr(camera, "read_right_mono"):
+                        frame_secondary = camera.read_right_mono()
+                    if frame_secondary is None:
+                        st_data = camera.read_stereo(only_new=False)
+                        if st_data:
+                            frame_secondary = st_data.get("right_bgr")
+                else:
+                    if hasattr(camera, "read_left_mono"):
+                        frame_secondary = camera.read_left_mono()
+                    if frame_secondary is None and hasattr(camera, "read_left_eye"):
+                        frame_secondary = camera.read_left_eye(mono=True)
+                    if frame_secondary is None:
+                        st_data = camera.read_stereo(only_new=False)
+                        if st_data:
+                            frame_secondary = st_data.get("left_bgr")
 
             # Process 1 or 2 poses on pristine RAW frame with MediaPipe (guarantees correct anatomical limbs)
-            multi_res = tracker.process_frame_multi(frame, frame_left=frame_left)
+            multi_res = tracker.process_frame_multi(frame, frame_left=frame_secondary, primary_eye=ps4_eye)
             is_tracked = multi_res.any_tracked
             primary_p = multi_res.primary_player
             kinect_joints = primary_p.kinect_joints if primary_p else None
@@ -639,6 +696,7 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
     window_name = "Legacy PSCam Sensor — DualShock 4 Tracking"
     cv2.namedWindow(window_name, cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_EXPANDED)
     cv2.resizeWindow(window_name, 720, 480)
+    apply_window_icon(window_name)
 
     print(f"\n==========================================")
     print(f"  STARTING DUALSHOCK 4 TRACKING SESSION")

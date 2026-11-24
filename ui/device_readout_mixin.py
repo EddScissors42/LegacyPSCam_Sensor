@@ -101,15 +101,6 @@ class UIDeviceReadoutMixin:
             if hasattr(self, "vphone_details_frame"):
                 self.vphone_details_frame.setVisible(saved_state)
 
-        if hasattr(self, "chk_stereo"):
-            is_on = str(self.cfg.get("stereo_mode", "disabled")).strip().lower() in (
-                "sparse_metric", "full_depth", "true", "enabled", "1"
-            )
-            self.chk_stereo.blockSignals(True)
-            self.chk_stereo.setChecked(is_on)
-            self.chk_stereo.blockSignals(False)
-            self._update_eye_selector_state()
-
     def _update_phone_cam_status(self):
         st = self.controller.devices.get_phone_cam_status()
         is_conn = st.get("is_connected", False)

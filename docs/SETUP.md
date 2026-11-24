@@ -64,11 +64,14 @@ Para que o jogo Just Dance PC leia os movimentos gerados pelo sensor através da
 
 ## 4. Executando a Aplicação
 
-Dê um duplo-clique no launcher local (`LegacySensor.exe`) ou no executável standalone compilado (`LegacyPSCam_Sensor.exe`):
+Escolha o formato que preferir na página de Releases:
+- **Executável Único (`LegacyPSCam.exe` — `--onefile`):** Arquivo único portátil com Splash Screen instantâneo (`"Hold on... and warm up!"`), modelo Lite embutido offline e download sob demanda do modelo Full para `%APPDATA%\LegacyPSCam_Sensor\models\`.
+- **Pasta Portátil Rápida (`LegacyPSCam-Portable-Windows.zip` — `--onedir`):** Extraia uma única vez em qualquer pasta e abra `LegacyPSCam.exe` em menos de 1 segundo (sem re-extração em `%TEMP%`).
+
+Você também pode usar o launcher local (`LegacySensor.exe`) ou executar diretamente via Python com `python main.py`:
 ```cmd
-LegacySensor.exe
+LegacyPSCam.exe
 ```
-*(ou execute diretamente via Python com `python main.py`)*
 
 - Abre o menu visual escuro instantaneamente, sem nenhuma janela de console/terminal.
 - Permite alternar entre **PlayStation Camera** e **Webcam Padrão**.

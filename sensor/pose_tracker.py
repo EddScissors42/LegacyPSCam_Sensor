@@ -61,45 +61,19 @@ from sensor.player_slot import (
 )
 
 
-MODEL_FILENAMES = {
-    "lite": "pose_landmarker_lite.task",
-    "full": "pose_landmarker_full.task",
-}
+from sensor.model_manager import ModelManager, MODEL_FILENAMES
 
 
-def _resolve_model_path(model_variant: str = "lite") -> Path:
-    variant = str(model_variant or "lite").strip().lower()
-    if variant == "heavy":
-        variant = "full"
-    if variant not in MODEL_FILENAMES:
-        variant = "lite"
-    filename = MODEL_FILENAMES[variant]
-
-    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
-        meipass_model = Path(sys._MEIPASS) / "models" / filename
-        if meipass_model.exists():
-            return meipass_model
-
-    base = Path(__file__).resolve().parent
-    candidates = [
-        base / "models" / filename,
-        base.parent / "models" / filename,
-        base.parent / "assets" / "models" / filename,
-    ]
-    for c in candidates:
-        if c.exists():
-            return c
-
-    if variant != "lite":
-        fallback = _resolve_model_path("lite")
-        if fallback.exists():
-            print(f"[WARN] Model '{filename}' not found, falling back to '{fallback.name}'.")
-            return fallback
-
-    return base.parent / "models" / filename
+def _resolve_model_path(model_variant: str = "lite", auto_download: bool = True) -> Path:
+    """
+    Resolves a MediaPipe Pose Landmarker `.task` file using ModelManager:
+    checks `%APPDATA%\\LegacyPSCam_Sensor\\models`, bundled `_MEIPASS/models` (Lite),
+    and local `models/`, downloading Full AI on demand when needed.
+    """
+    return ModelManager.ensure_model(model_variant, auto_download=auto_download)
 
 
-DEFAULT_MODEL_PATH = _resolve_model_path("lite")
+DEFAULT_MODEL_PATH = ModelManager.locate_model("lite") or ModelManager.get_cached_model_path("lite")
 
 
 class PoseTracker:
@@ -158,7 +132,7 @@ class PoseTracker:
         ]
         self.associator = MultiPlayerAssociator(max_players=self.max_players)
         self.face_ptz = FaceFollowPTZ(cfg=self.cfg)
-        self.stereo_mode = str(self.cfg.get("stereo_mode", STEREO_MODE_DISABLED)).strip().lower()
+        self.stereo_mode = str(self.cfg.get("stereo_mode", STEREO_MODE_SPARSE_METRIC)).strip().lower()
         self.stereo_engine = StereoDepthEngine(baseline_m=PS4_STEREO_BASELINE_M)
 
         self.start_time = time.time()
@@ -241,7 +215,7 @@ class PoseTracker:
             self.cfg.update(cfg)
             self.face_ptz.cfg = self.cfg
             if "stereo_mode" in self.cfg:
-                self.stereo_mode = str(self.cfg.get("stereo_mode", STEREO_MODE_DISABLED)).strip().lower()
+                self.stereo_mode = str(self.cfg.get("stereo_mode", STEREO_MODE_SPARSE_METRIC)).strip().lower()
             if max_players is None and "max_players" in cfg:
                 max_players = cfg["max_players"]
 
@@ -501,7 +475,7 @@ class PoseTracker:
         mask = cv2.dilate(mask, kernel, iterations=1)
         return mask
 
-    def process_frame_multi(self, frame_bgr, frame_left=None) -> MultiPoseFrame:
+    def process_frame_multi(self, frame_bgr, frame_left=None, primary_eye: str = "right") -> MultiPoseFrame:
         """
         Processes a BGR camera frame (or stereo pair) for 1 or 2 simultaneous players.
         Returns a MultiPoseFrame containing per-slot PlayerFrames, tracked_mask bitmask (bit 0 = P1, bit 1 = P2),
@@ -601,6 +575,7 @@ class PoseTracker:
                 h=h,
                 enforce_single_person_gate=True,
                 sample_bgr=sample_bgr,
+                primary_eye=primary_eye,
             )
         else:
             # 2-Player mode: associate detections to persistent slots with Long-Term Identity Memory
@@ -630,6 +605,7 @@ class PoseTracker:
                         h=h,
                         enforce_single_person_gate=False,
                         sample_bgr=sample_bgr,
+                        primary_eye=primary_eye,
                     )
                 else:
                     players_out[s_idx] = slot.handle_missing(dt=dt_infer, frame_w=w, frame_h=h)
@@ -655,7 +631,7 @@ class PoseTracker:
             active_count=active_count,
         )
 
-    def process_frame(self, frame_bgr, frame_left=None):
+    def process_frame(self, frame_bgr, frame_left=None, primary_eye: str = "right"):
         """
         Backwards-compatible single-player API.
         Returns:
@@ -664,7 +640,7 @@ class PoseTracker:
             pixel_joints (list): 20 joints in pixel coordinates (px, py, conf) for HUD drawing.
             body_mask (np.ndarray): Binary silhouette mask (320x240) with 255 for player.
         """
-        multi = self.process_frame_multi(frame_bgr, frame_left=frame_left)
+        multi = self.process_frame_multi(frame_bgr, frame_left=frame_left, primary_eye=primary_eye)
         p0 = multi.primary_player
         if p0 is None or not p0.tracked or p0.kinect_joints is None:
             return False, None, None, None

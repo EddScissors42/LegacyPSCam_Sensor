@@ -65,9 +65,8 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
   - **Triangulação 3D Sub-Pixel (`PyrLK` + Banda Epipolar 2D):** Realiza busca em banda 2D com interpolação parabólica seguida de refinamento por Fluxo Óptico Piramidal Lucas-Kanade (`cv2.calcOpticalFlowPyrLK`) nas 20 articulações corporais (< 0.5 ms). Substitui a profundidade estática $Z \approx 2.0\text{m}$ por medição métrica física real ($Z = \frac{f \cdot B}{d}$).
   - **Auto-Calibração Epipolar Vertical Dinâmica (`vertical_offset_px`):** Mede e compensa automaticamente em background pequenas diferenças de inclinação vertical ($\Delta y$) entre a lente esquerda e a direita da unidade física da câmera, dispensando calibração com tabuleiro de xadrez.
   - **Suavização Temporal EMA na Silhueta (`_seg_prob_ema`):** Suaviza temporalmente o tensor de probabilidade da máscara de segmentação do MediaPipe antes da binarização, eliminando tremulações de ruído ISO em 60 FPS sem usar `StereoSGBM` denso.
-- **Modos Disponíveis (Aba Experimental da UI):**
-  - **`Desativado` (Padrão):** Opera em modo monocular clássico com custo zero de CPU adicional.
-  - **`Ativado (Sub-Pixel PyrLK 3D)`:** Ativa a triangulação 3D sub-pixel com auto-alinhamento das lentes, mantendo 60 FPS estáveis.
+- **Ativação Automática por Padrão:**
+  - O modo **`Sub-Pixel PyrLK 3D` (`sparse_metric`)** é ativado automaticamente por padrão na PlayStation 4 Camera (removido da interface gráfica como opção manual), funcionando de forma transparente tanto com o **Olho Direito** quanto com o **Olho Esquerdo** selecionado como lente principal e mantendo 60 FPS cravados.
 
 ### 3.1 Sistema Modular "Person Lock-In" (`sensor/person_lock.py` & `sensor/pose_filters.py`)
 - **Objetivo:** Fazer o rastreador "grudar" no dançarino ativo e jamais perder o esqueleto ou a silhueta em giros rápidos de 360°, oclusões momentâneas, passos largos ou quando outra pessoa passa pelo ambiente, mantendo **60 FPS cravados** (< 0.25 ms de custo combinado).
@@ -513,7 +512,7 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
   - Qualquer um dos jogadores (P1 ou P2) pode erguer o braço por 2 segundos para disparar `[ENTER]`.
 - **Lite AI como Padrão na Interface & Aviso Automático em 2P:**
   - O perfil **Competitive (Lite AI)** passa a ser o padrão recomendado (`RECOMMENDED`) da interface para garantir máxima fluidez em 1P e 2P.
-  - Quando **2 Players (Duo)** é selecionado na aba **Calibration**, um banner de aviso logo abaixo da seleção de modelo orienta que o **Lite AI** é o modelo ideal para sustentar FPS estável na CPU com 2 jogadores.
+  - Quando **2 Players [Experimental]** é selecionado na aba **Tracking**, um banner de aviso logo abaixo da seleção de modelo orienta que o **Lite AI** é o modelo ideal para sustentar FPS estável na CPU com 2 jogadores.
 
 ### 35. Modernização Visual do HUD & Efeitos Gamificados de Rastreamento (v0.9.1 Alpha)
 - **Cápsulas Flutuantes Estilo Glass Pills (`draw_rounded_glass_pill`):**
@@ -589,6 +588,24 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
   - O antigo subtítulo estático genérico foi substituído pelo indicador dinâmico de status em verde (ex: `iPhone (iOS Safari) connected (192.168.1.42 • 640x480 @ 30 FPS • Rear Camera)`), unificando os dados do aparelho em um único componente coeso.
 - **Limpeza do Cabeçalho Superior:**
   - O antigo botão secundário de desconexão localizado no quadro de metadados superior foi removido, tornando o card de status do dispositivo conectado mais enxuto e organizado.
+
+### 40. Silhueta Neural Fiel, Resiliência a Agachamentos, PiP (`[P]`) & Stereo Vision Padrão (v0.10.0 Alpha)
+- **Silhueta Neural Fiel ao Jogador:**
+  - Restaurada a máscara de segmentação neural com contorno nítido e preservação de vazios internos naturais (entre braços, pernas e tronco), oferecendo visual idêntico ao corpo real do dançarino tanto na prévia quanto no HUD do Just Dance.
+- **Modo Picture-in-Picture Always-On-Top (`[P]`):**
+  - Pressionar `P` na janela de rastreamento alterna para uma janela compacta sempre no topo (`HWND_TOPMOST`) para acompanhar sobre o Just Dance exibindo apenas vídeo, silhueta e esqueleto (sem HUD textual).
+- **Resiliência Total a Agachamentos Profundos (`is_plausible_human_dancer` & `DancerIdentityLock`):**
+  - Ajustados os critérios anatômicos de proporção (`aspect >= 0.28`, checagem em pixels reais) e amortecimento anisotrópico vertical (`dy * 0.38`) na trava de identidade, impedindo perda de tracking durante agachamentos rápidos em coreografias intensas.
+- **Stereo Vision Ativado por Padrão na PS4 Camera:**
+  - O motor estéreo sub-pixel (`PyrLK`, < 0.5 ms) foi promovido a comportamento padrão automático da PlayStation 4 Camera e removido como checkbox manual da UI, agora com suporte simétrico tanto ao **Olho Direito** quanto ao **Olho Esquerdo** selecionado como lente principal.
+- **Refinamentos de UI:**
+  - Rodapé inferior direito simplificado para exibir exclusivamente a versão e o estágio (`v0.10.0 (Alpha)`).
+  - Opção de 2 jogadores claramente identificada como **`2 Players [Experimental]`** na aba **Tracking**.
+- **Inicialização Acelerada, Cache de Modelos em `%APPDATA%` & Builds Duplos (`--onefile` / `--onedir`):**
+  - **Gerenciador Persistente de Modelos (`sensor/model_manager.py`):** Mantém o modelo `Lite` (`5.5 MB`) embutido para uso 100% offline e baixa o modelo `Full` (`9.0 MB`) sob demanda apenas quando o usuário escolhe o perfil **Balanced**, salvando atomicamente (`.part → .task` com validação SHA-256) em `%APPDATA%\LegacyPSCam_Sensor\models\` sem travar a interface Qt 6.
+  - **Poda Cirúrgica de Binários Mortos (`legacy_pscam_sensor.spec`):** Remove `~92 MB` de DLLs/módulos não utilizados (`opencv_videoio_ffmpeg`, `opengl32sw.dll`, `Qt6Quick`/`Qt6Qml`/`Qt6Pdf`/`Qt6OpenGL`/`Qt6Network`, `PIL._avif`, `_sounddevice_data`), somando `~101 MB` a menos extraídos na abertura.
+  - **Splash Screen Instantâneo (`assets/icons/splash.png`):** Exibe tela minimalista Crisp White + PlayStation Blue (`"Hold on... and warm up!"` em DM Sans) em `< 0.3s` no `--onefile`, encerrada automaticamente via `pyi_splash.close()` ao pintar a janela principal.
+  - **Identidade Nativa & Release Duplo:** Processo e executável unificados como `LegacyPSCam.exe` com ícone próprio multi-resolução (`app_icon.ico`, barra de tarefas e janelas OpenCV), além de publicação paralela da versão `--onedir` (`LegacyPSCam-Portable-Windows.zip`, abertura `< 1s`) no GitHub Releases.
 
 ---
 

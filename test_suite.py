@@ -458,7 +458,73 @@ def test_pose_tracker():
     assert tracker._infer_rgb is not None and tracker._infer_rgb.shape == (400, 640, 3)
 
     tracker.close()
-    print("  -> PoseTracker PASSED (Monotonic timestamp & FaceFollowPTZ validated)")
+
+    # Test ModelManager (AppData persistent cache, SHA-256 verification & atomic loopback download)
+    from sensor.model_manager import ModelManager
+    from http.server import HTTPServer, BaseHTTPRequestHandler
+    import tempfile
+    import threading as _th
+
+    lite_local = ModelManager.locate_model("lite")
+    full_local = ModelManager.locate_model("full")
+    assert lite_local is not None and ModelManager.validate_model_file(lite_local, "lite", strict_hash=True), (
+        "Local pose_landmarker_lite.task must pass strict SHA-256 verification"
+    )
+    assert full_local is not None and ModelManager.validate_model_file(full_local, "full", strict_hash=True), (
+        "Local pose_landmarker_full.task must pass strict SHA-256 verification"
+    )
+
+    with tempfile.TemporaryDirectory() as tmp_models_dir:
+        tmp_mpath = Path(tmp_models_dir)
+        # 1. Staging local model into isolated cache dir
+        staged = ModelManager.locate_model("lite", cache_dir=tmp_mpath, stage_to_cache=True)
+        assert staged is not None and staged.parent.resolve() == tmp_mpath.resolve()
+        assert ModelManager.is_model_ready("lite", cache_dir=tmp_mpath, include_bundled=False)
+
+        # 2. Atomic loopback HTTP download test (valid payload + corrupt rejection)
+        real_lite_bytes = lite_local.read_bytes()
+
+        class _ModelHandler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                if self.path == "/corrupt":
+                    body = b"NOT_A_VALID_TASK_FILE"
+                else:
+                    body = real_lite_bytes
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, format, *args):
+                pass
+
+        httpd = HTTPServer(("127.0.0.1", 0), _ModelHandler)
+        port = httpd.server_address[1]
+        srv_t = _th.Thread(target=httpd.serve_forever, daemon=True)
+        srv_t.start()
+        try:
+            dl_dir = tmp_mpath / "dl_test"
+            bad_res = ModelManager.download_model(
+                "lite", cache_dir=dl_dir, urls=(f"http://127.0.0.1:{port}/corrupt",), strict_hash=True
+            )
+            assert bad_res is None, "Corrupt model payload must be rejected and discarded"
+
+            prog_events = []
+            ok_res = ModelManager.download_model(
+                "lite",
+                cache_dir=dl_dir,
+                urls=(f"http://127.0.0.1:{port}/lite",),
+                progress_cb=lambda done, tot: prog_events.append((done, tot)),
+                strict_hash=True,
+            )
+            assert ok_res is not None and ok_res.is_file(), "Loopback model download must succeed atomically"
+            assert not ok_res.with_suffix(".task.part").exists(), "Temp .part file must be cleaned up"
+            assert len(prog_events) >= 1 and prog_events[-1][0] == len(real_lite_bytes)
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+
+    print("  -> PoseTracker & ModelManager PASSED (Monotonic timestamp, FaceFollowPTZ & %APPDATA% cache validated)")
 
 def test_overlay():
     print("[TEST] TrackingOverlay (ROI silhouette, 320x240 upscaling & skeleton)...")
@@ -708,19 +774,17 @@ def test_project_structure():
         assert hasattr(win, "btn_vphone_benchmark"), "Benchmark button alias must exist"
         assert hasattr(win, "chk_vphone_auto_record"), "Auto record checkbox alias must exist"
         assert hasattr(win, "chk_vphone_adaptive"), "Adaptive calibration checkbox alias must exist"
-        assert hasattr(win, "stereo_box"), "Stereo feature box must exist in Video Settings card"
-        assert hasattr(win, "chk_stereo"), "Stereo toggle checkbox must exist"
-        assert win.chk_stereo.text() == "Stereo Vision", f"Expected 'Stereo Vision', got {win.chk_stereo.text()}"
+        assert not hasattr(win, "stereo_box"), "Stereo Vision feature box must be removed from UI"
+        assert not hasattr(win, "chk_stereo"), "Stereo Vision toggle checkbox must be removed from UI"
+        assert win.cfg.get("stereo_mode") == "sparse_metric", "Stereo Vision must be enabled by default (sparse_metric)"
         assert hasattr(win, "btn_logs_folder"), "Open Logs Folder button must exist in sidebar"
         assert win.btn_logs_folder.text() == "Open Logs Folder"
-        assert hasattr(win, "cb_stereo_mode"), "Stereo mode alias must exist"
         assert hasattr(win, "block_ps_eye"), "Camera eye sensor block must exist"
-
-        # Verify eye selector disables when Stereo Vision is toggled ON, and enables when OFF
-        win.chk_stereo.setChecked(True)
-        assert not win.block_ps_eye.isEnabled(), "Camera eye block must be disabled when Stereo Vision is active"
-        win.chk_stereo.setChecked(False)
-        assert win.block_ps_eye.isEnabled(), "Camera eye block must be re-enabled when Stereo Vision is inactive"
+        assert win.block_ps_eye.isEnabled(), "Camera eye block must remain enabled with always-on Stereo Vision"
+        assert hasattr(win, "model_dl_box") and not win.model_dl_box.isVisible(), "Model download banner must exist and start hidden"
+        import assets as _assets_mod
+        assert _assets_mod.ICON_APP_ICO_PATH is not None and _assets_mod.ICON_APP_ICO_PATH.exists(), "Bundled app_icon.ico must exist"
+        assert _assets_mod.SPLASH_IMAGE_PATH is not None and _assets_mod.SPLASH_IMAGE_PATH.exists(), "Bundled splash.png must exist"
         assert hasattr(win, "cb_res") and hasattr(win, "cb_fps"), "Split resolution and FPS combos must exist in webcam card"
         assert hasattr(win, "btn_refresh"), "Refresh button in device card must exist"
         if win.is_camera_accessible():
@@ -1177,6 +1241,12 @@ def test_stereo_vision_engine():
     assert abs(z_m - expected_z) < 0.15, f"Expected Z around {expected_z:.2f}m, got {z_m:.2f}m"
     assert dt_ms < 5.0, f"Sparse triangulation must execute in <5ms, took {dt_ms:.2f}ms"
     print(f"  -> Sub-Pixel PyrLK Triangulation PASSED (Z={z_m:.2f}m, error={abs(z_m - expected_z)*100:.1f}cm, time={dt_ms:.2f}ms)")
+
+    # 3.0b Symmetric Left-Eye Primary Triangulation (ensures Stereo Vision works with either eye selected)
+    joints_2d_left = {0: (float(target_u_l), float(target_v_r), 0.95)}
+    res_left = engine.triangulate_sparse_joints(test_l, test_r, joints_2d_left, search_radius_px=60, primary_eye="left")
+    assert 0 in res_left, "Left-eye primary target joint must be triangulated"
+    assert abs(res_left[0][2] - expected_z) < 0.15, f"Expected Left-primary Z around {expected_z:.2f}m, got {res_left[0][2]:.2f}m"
 
     # 3.1 Dynamic Vertical Epipolar Auto-Calibration (Simulated +3px vertical lens tilt)
     engine.reset_calibration()
@@ -2194,7 +2264,7 @@ def test_multi_player_tracking():
         try:
             assert win.btn_tab_calib.text().strip() == "Tracking", f"Expected tab text 'Tracking', got '{win.btn_tab_calib.text()}'"
             assert win.cb_players_mode.itemText(0) == "1 Player", f"Expected '1 Player', got '{win.cb_players_mode.itemText(0)}'"
-            assert win.cb_players_mode.itemText(1) == "2 Players", f"Expected '2 Players', got '{win.cb_players_mode.itemText(1)}'"
+            assert win.cb_players_mode.itemText(1) == "2 Players [Experimental]", f"Expected '2 Players [Experimental]', got '{win.cb_players_mode.itemText(1)}'"
             assert hasattr(win, "cb_players_mode"), "Players Mode selector must exist in Calibration/Tracking tab"
             assert hasattr(win, "two_player_warn_box"), "2-Player Lite AI warning banner must exist in Calibration/Tracking tab"
             win.cb_players_mode.setCurrentIndex(1)  # Switch to 2 Players (Duo)

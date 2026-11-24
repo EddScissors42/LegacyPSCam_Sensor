@@ -1,4 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
+import os
 import sys
 from pathlib import Path
 from PyInstaller.utils.hooks import collect_all
@@ -14,6 +15,9 @@ from PyInstaller.utils.win32.versioninfo import (
 
 sys.path.insert(0, str(Path.cwd()))
 from version import __version__, APP_NAME, VERSION_STRING
+
+BUILD_MODE = os.environ.get("LEGACY_BUILD_MODE", "onefile").strip().lower()
+IS_ONEDIR = BUILD_MODE == "onedir"
 
 _ver_parts = [int(p) if p.isdigit() else 0 for p in (__version__.split(".") + ["0", "0", "0"])[:4]]
 _ver_tuple = (_ver_parts[0], _ver_parts[1], _ver_parts[2], _ver_parts[3])
@@ -35,13 +39,13 @@ pe_version_info = VSVersionInfo(
                 StringTable(
                     "040904B0",
                     [
-                        StringStruct("CompanyName", "Legacy PSCam Sensor Project"),
-                        StringStruct("FileDescription", f"{APP_NAME} — Motion Sensor for Just Dance PC"),
+                        StringStruct("CompanyName", "LegacyPSCam"),
+                        StringStruct("FileDescription", "LegacyPSCam"),
                         StringStruct("FileVersion", f"{__version__}.0"),
-                        StringStruct("InternalName", "LegacyPSCam_Sensor"),
+                        StringStruct("InternalName", "LegacyPSCam"),
                         StringStruct("LegalCopyright", "Open Source — Legacy PSCam Sensor Contributors"),
-                        StringStruct("OriginalFilename", "LegacyPSCam_Sensor.exe"),
-                        StringStruct("ProductName", APP_NAME),
+                        StringStruct("OriginalFilename", "LegacyPSCam.exe"),
+                        StringStruct("ProductName", "LegacyPSCam"),
                         StringStruct("ProductVersion", VERSION_STRING),
                     ],
                 )
@@ -56,9 +60,9 @@ block_cipher = None
 # Collect all required binaries, data and hidden imports for mediapipe
 mp_datas, mp_binaries, mp_hiddenimports = collect_all('mediapipe')
 
+# Option 1B: Bundle Lite AI offline (5.5 MB); Full AI (9.0 MB) downloads on-demand into %APPDATA%\LegacyPSCam_Sensor\models\
 added_datas = [
     ('models/pose_landmarker_lite.task', 'models'),
-    ('models/pose_landmarker_full.task', 'models'),
     ('assets', 'assets'),
     ('tools/Legacy10.dll', 'tools'),
     ('tools/get_cameras.ps1', 'tools'),
@@ -87,6 +91,7 @@ a = Analysis(
         'sensor.gesture_detector',
         'sensor.kinect_emulator',
         'sensor.kinect_shared_memory',
+        'sensor.model_manager',
         'sensor.person_lock',
         'sensor.phone_camera',
         'sensor.qr_encoder',
@@ -95,6 +100,12 @@ a = Analysis(
         'sensor.pose_filters',
         'sensor.pose_tracker',
         'sensor.ps4_backend',
+        'sensor.ps4_backend.constants',
+        'sensor.ps4_backend.driver_installer',
+        'sensor.ps4_backend.firmware_manager',
+        'sensor.ps4_backend.frame_streamer',
+        'sensor.ps4_backend.usb_device',
+        'sensor.ps4_backend.winusb_bindings',
         'sensor.session_logger',
         'sensor.stereo_matcher',
         'sensor.telemetry_benchmark',
@@ -112,6 +123,7 @@ a = Analysis(
         'ui.widgets',
         'ui.benchmark_dialog',
         'ui.controllers',
+        'ui.controllers.app_controller',
         'ui.controllers.camera_controller',
         'ui.controllers.device_controller',
         'ui.controllers.session_controller',
@@ -125,35 +137,131 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=['rthook_mediapipe.py'],
-    excludes=['tkinter', 'matplotlib', 'scipy', 'unittest'],
+    excludes=[
+        'tkinter',
+        'matplotlib',
+        'scipy',
+        'unittest',
+        'sounddevice',
+        '_sounddevice_data',
+        'websockets',
+        'PySide6.QtQml',
+        'PySide6.QtQuick',
+        'PySide6.QtPdf',
+        'PySide6.QtNetwork',
+        'PySide6.QtOpenGL',
+        'PySide6.QtSql',
+        'PySide6.QtTest',
+        'PySide6.QtWebEngine',
+        'PySide6.QtMultimedia',
+        'PySide6.Qt3DCore',
+        'PIL.AvifImagePlugin',
+    ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
     noarchive=False,
 )
 
-pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
-
-exe = EXE(
-    pyz,
-    a.scripts,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
-    [],
-    name='LegacyPSCam_Sensor',
-    debug=False,
-    bootloader_ignore_signals=False,
-    strip=False,
-    upx=False,
-    upx_exclude=[],
-    runtime_tmpdir=None,
-    console=False,
-    disable_windowed_traceback=False,
-    argv_emulation=False,
-    target_arch=None,
-    codesign_identity=None,
-    entitlements_file=None,
-    version=pe_version_info,
-    icon=None,
+# Surgical pruning of unused heavy DLLs/plugins (~92 MB uncompressed saved on every launch)
+_PRUNE_SUBSTRINGS = (
+    'opencv_videoio_ffmpeg',
+    'opengl32sw.dll',
+    'qt6quick',
+    'qt6qml',
+    'qt6pdf',
+    'qt6opengl',
+    'qt6network',
+    'qtnetwork.pyd',
+    'qdirect2d.dll',
+    'qtiff.dll',
+    'qwebp.dll',
+    'pil/_avif',
+    'pil\\_avif',
+    '_sounddevice_data',
+    'websockets',
 )
+
+
+def _should_keep(entry) -> bool:
+    dest = str(entry[0]).replace('\\', '/').lower()
+    return not any(tok in dest for tok in _PRUNE_SUBSTRINGS)
+
+
+a.binaries = [b for b in a.binaries if _should_keep(b)]
+a.datas = [d for d in a.datas if _should_keep(d)]
+
+pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
+icon_path = 'assets/icons/app_icon.ico' if Path('assets/icons/app_icon.ico').exists() else None
+splash_path = 'assets/icons/splash.png'
+
+if IS_ONEDIR:
+    # Fast-launch Portable Folder build (< 1s startup, zero %TEMP% re-extraction)
+    exe = EXE(
+        pyz,
+        a.scripts,
+        [],
+        exclude_binaries=True,
+        name='LegacyPSCam',
+        debug=False,
+        bootloader_ignore_signals=False,
+        strip=False,
+        upx=False,
+        console=False,
+        disable_windowed_traceback=False,
+        argv_emulation=False,
+        target_arch=None,
+        codesign_identity=None,
+        entitlements_file=None,
+        version=pe_version_info,
+        icon=icon_path,
+    )
+    coll = COLLECT(
+        exe,
+        a.binaries,
+        a.zipfiles,
+        a.datas,
+        strip=False,
+        upx=False,
+        upx_exclude=[],
+        name='LegacyPSCam',
+    )
+else:
+    # Slim Single-File Executable with instant PlayStation Blue boot Splash Screen
+    splash_args = []
+    if Path(splash_path).exists():
+        splash = Splash(
+            splash_path,
+            binaries=a.binaries,
+            datas=a.datas,
+            text_pos=None,
+            text_size=12,
+            minify_script=True,
+            always_on_top=True,
+        )
+        splash_args = [splash, splash.binaries]
+
+    exe = EXE(
+        pyz,
+        a.scripts,
+        *splash_args,
+        a.binaries,
+        a.zipfiles,
+        a.datas,
+        [],
+        name='LegacyPSCam',
+        debug=False,
+        bootloader_ignore_signals=False,
+        strip=False,
+        upx=False,
+        upx_exclude=[],
+        runtime_tmpdir=None,
+        console=False,
+        disable_windowed_traceback=False,
+        argv_emulation=False,
+        target_arch=None,
+        codesign_identity=None,
+        entitlements_file=None,
+        version=pe_version_info,
+        icon=icon_path,
+    )

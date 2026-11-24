@@ -989,6 +989,16 @@ class LatestFrameCamera:
             return self._apply_orientation(left_mono)
         return None
 
+    def read_right_mono(self):
+        """
+        Returns the synchronized Right Eye 8-bit single-channel luminance frame (H, W)
+        when running on Native PS4CameraBackend without redundant YUY2->BGR conversion (<0.08 ms).
+        """
+        if self.ps4_backend is not None and hasattr(self.ps4_backend, "read_right_mono"):
+            right_mono = self.ps4_backend.read_right_mono()
+            return self._apply_orientation(right_mono)
+        return None
+
     def read_left_eye(self, mono: bool = False):
         """
         Returns the synchronized Left Eye frame when running on Native PS4CameraBackend,

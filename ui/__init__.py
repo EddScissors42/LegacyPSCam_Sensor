@@ -67,9 +67,23 @@ def launch_app() -> int:
         print("[ERROR] PySide6 is not installed. Please install requirements: pip install -r requirements.txt")
         return 1
 
+    # Bind explicit Windows AppUserModelID before QApplication so the taskbar uses our custom icon & identity
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("LegacyPSCam")
+        except Exception:
+            pass
+
     from PySide6.QtWidgets import QApplication
     from PySide6 import QtGui
+    from assets import ICON_APP_ICO_PATH, ICON_PSCAMERA_PATH
     app = QApplication.instance() or QApplication(sys.argv)
+    app.setApplicationName("LegacyPSCam")
+    app.setApplicationDisplayName("LegacyPSCam")
+    app_icon_path = ICON_APP_ICO_PATH if (ICON_APP_ICO_PATH and ICON_APP_ICO_PATH.exists()) else ICON_PSCAMERA_PATH
+    if app_icon_path and app_icon_path.exists():
+        app.setWindowIcon(QtGui.QIcon(str(app_icon_path)))
 
     # Force a crisp-white & PlayStation light palette so OS dark mode never bleeds black into popup menus/comboboxes
     pal = QtGui.QPalette()
@@ -92,6 +106,15 @@ def launch_app() -> int:
 
     window = LegacySensorQtGUI()
     window.show()
+
+    # Dismiss PyInstaller native boot splash screen as soon as Qt window is painted
+    try:
+        import pyi_splash  # type: ignore[import-not-found]
+        if pyi_splash.is_alive():
+            pyi_splash.close()
+    except Exception:
+        pass
+
     return app.exec()
 
 

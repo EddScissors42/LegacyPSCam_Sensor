@@ -6,11 +6,11 @@ This application is written in Python with zero bloatware to deliver low-latency
 
 ### Available Devices & Tracking Modes
 
-- **PlayStation 4 Camera (PS4 Camera / OV580):** Native user-space WinUSB driver (`sensor/ps4_backend/`) with automatic firmware upload, 60 FPS dual-eye streaming, optional stereo depth, plus PSCam4Win fallback.
+- **PlayStation 4 Camera (PS4 Camera / OV580):** Native user-space WinUSB driver (`sensor/ps4_backend/`) with automatic firmware upload, 60 FPS dual-eye streaming, built-in Stereo Vision depth (`PyrLK`), plus PSCam4Win fallback.
 - **Standard Webcam (USB / Integrated):** DirectShow low-latency capture with asynchronous frame polling (`LatestFrameCamera`).
 - **Smartphone Camera (Wi-Fi WebApp):** Use any Android or iOS browser as a 30/60 FPS wireless camera via QR Code pairing over self-signed TLS/WSS (no APK/IPA required).
 - **DualShock 4 (USB / Bluetooth HID):** Native Windows HID driver with 500+ Hz 6-axis IMU readout, battery monitoring, haptic rumble, and LED feedback.
-- **2-Player (2P Duo) Tracking:** Full 2-player body tracking with anti-swap identity memory and `JDP2` / `JMI2` shared memory channels.
+- **2-Player [Experimental] (2P Duo) Tracking:** Full 2-player body tracking with anti-swap identity memory and `JDP2` / `JMI2` shared memory channels.
 
 ### Zero-File-Replacement Kinect Emulation & Virtual Phone
 
