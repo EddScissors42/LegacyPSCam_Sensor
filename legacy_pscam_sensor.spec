@@ -180,6 +180,7 @@ _PRUNE_SUBSTRINGS = (
     'pil\\_avif',
     '_sounddevice_data',
     'websockets',
+    'dmsans.ttf',
 )
 
 
@@ -194,6 +195,13 @@ a.datas = [d for d in a.datas if _should_keep(d)]
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 icon_path = 'assets/icons/app_icon.ico' if Path('assets/icons/app_icon.ico').exists() else None
 splash_path = 'assets/icons/splash.png'
+
+# Always synchronize assets/icons/splash.png with version.py before bundling
+try:
+    from tools.generate_splash import generate_splash
+    generate_splash(Path(splash_path))
+except Exception as _splash_err:
+    print(f"[WARN] Could not regenerate splash screen automatically: {_splash_err}")
 
 if IS_ONEDIR:
     # Fast-launch Portable Folder build (< 1s startup, zero %TEMP% re-extraction)
