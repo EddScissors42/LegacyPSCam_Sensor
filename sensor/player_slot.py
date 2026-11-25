@@ -255,6 +255,11 @@ def extract_detection_features(
     torso_hs_hist = None
     torso_v_hist = None
     lower_hs_hist = None
+    lower_v_hist = None
+    body_height = max(0.20, float(bbox[3] - bbox[1]))
+    contrast_ratio = 1.0
+    t_hsv = None
+    l_hsv = None
 
     if frame_bgr is not None and frame_bgr.ndim == 3 and frame_bgr.shape[2] == 3:
         fh, fw = frame_bgr.shape[:2]
@@ -304,9 +309,8 @@ def extract_detection_features(
                     cv2.normalize(lvh, lvh, alpha=1.0, beta=0.0, norm_type=cv2.NORM_L1)
                     lower_v_hist = lvh
 
-        body_height = max(0.20, float(bbox[3] - bbox[1]))
-        torso_mean_v = float(np.mean(t_patch[:, :, 2])) if 't_patch' in locals() and t_patch is not None and t_patch.size > 0 else 128.0
-        lower_mean_v = float(np.mean(l_patch[:, :, 2])) if 'l_patch' in locals() and l_patch is not None and l_patch.size > 0 else 128.0
+        torso_mean_v = float(np.mean(t_hsv[:, :, 2])) if t_hsv is not None and t_hsv.size > 0 else 128.0
+        lower_mean_v = float(np.mean(l_hsv[:, :, 2])) if l_hsv is not None and l_hsv.size > 0 else 128.0
         contrast_ratio = float(np.clip(torso_mean_v / max(10.0, lower_mean_v), 0.1, 10.0))
 
     sig = AppearanceSignature(

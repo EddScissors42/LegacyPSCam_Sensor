@@ -849,12 +849,19 @@ def test_project_structure():
         assert hasattr(win, "btn_ds4_reconnect"), "Reconnect button must exist in DS4 view"
         assert hasattr(win, "chk_ds4_permissive"), "Permissive mode checkbox must exist in DS4 settings"
         assert hasattr(win, "scoring_bridge_box"), "Scoring Bridge pill must exist in Controller Settings"
-        assert hasattr(win, "btn_vphone_reconnect"), "Reconnect Game button must exist in Scoring Bridge"
-        assert win.btn_vphone_reconnect.text() == "Reconnect Game", "Button text must be 'Reconnect Game'"
-        assert hasattr(win, "btn_vphone_discover"), "Auto-Find button must exist in Scoring Bridge"
-        assert win.btn_vphone_discover.text() == "Auto-Find", "Button text must be 'Auto-Find'"
-        assert hasattr(win, "btn_vphone_ftue"), "Skip Finish button must exist in Scoring Bridge"
-        assert win.btn_vphone_ftue.text() == "Skip Finish", "Button text must be 'Skip Finish'"
+        assert hasattr(win, "btn_ds4_sb_reconnect"), "Reconnect Game button must exist in Scoring Bridge"
+        assert win.btn_ds4_sb_reconnect.text() == "Reconnect Game", "Button text must be 'Reconnect Game'"
+        assert hasattr(win, "btn_ds4_sb_discover"), "Auto-Find button must exist in Scoring Bridge"
+        assert win.btn_ds4_sb_discover.text() == "Auto-Find", "Button text must be 'Auto-Find'"
+        assert hasattr(win, "btn_ds4_sb_ftue"), "Skip Finish button must exist in Scoring Bridge"
+        assert win.btn_ds4_sb_ftue.text() == "Skip Finish", "Button text must be 'Skip Finish'"
+
+        # Verify Experimental features ARE visible in Camera modes (pscam/webcam/phone_cam)
+        for cam_mode in ("pscam", "webcam", "phone_cam"):
+            win._set_mode(cam_mode, animate=False)
+            assert not win.auto_frame_box.isHidden(), f"Auto-Frame box must be visible in {cam_mode} mode"
+            assert not win.vphone_box.isHidden(), f"Virtual Phone box must be visible in {cam_mode} mode"
+            assert win.lbl_exp_empty.isHidden(), f"Empty placeholder must be hidden in {cam_mode} mode"
 
         win._set_mode("ds4")
         assert win.active_tab == "controller", "Should switch to controller settings tab on ds4 mode"
@@ -864,6 +871,8 @@ def test_project_structure():
         assert not win.chk_vphone_enabled.isEnabled(), "Virtual phone checkbox must be disabled/locked in ds4 mode"
         assert not win.vphone_details_frame.isHidden(), "Virtual phone telemetry details must not be hidden in ds4 mode"
         assert win.auto_frame_box.isHidden(), "Auto-frame box must be hidden in ds4 mode"
+        assert win.vphone_box.isHidden(), "Virtual Phone box in Experimental must be hidden in ds4 mode"
+        assert not win.lbl_exp_empty.isHidden(), "Experimental empty placeholder must be visible in ds4 mode"
         assert not hasattr(win, "emulate_kinect_box"), "Emulate Kinect box must be removed from Experimental UI"
         assert not hasattr(win, "chk_emulate_kinect"), "Emulate Kinect checkbox must be removed from Experimental UI"
         assert not hasattr(win, "lbl_emulate_tip"), "Sidebar Emulate Kinect reminder must be removed"
@@ -2098,7 +2107,18 @@ def test_multi_player_tracking():
         MultiPlayerAssociator,
         compose_player_index_mask,
         is_plausible_human_dancer,
+        extract_detection_features,
     )
+    # Regression guard: upper-body-only poses (knees hidden) and frame_bgr=None must never raise UnboundLocalError
+    upper_only_lms = [type("Lm", (), {"x": 0.5, "y": 0.35, "z": 0.0, "visibility": 0.9 if i <= 24 else 0.05})() for i in range(33)]
+    upper_only_lms[11].x, upper_only_lms[11].y = 0.42, 0.30
+    upper_only_lms[12].x, upper_only_lms[12].y = 0.58, 0.30
+    upper_only_lms[23].x, upper_only_lms[23].y = 0.44, 0.55
+    upper_only_lms[24].x, upper_only_lms[24].y = 0.56, 0.55
+    _cx, _cy, _sw, _bb, _sig = extract_detection_features(np.full((240, 320, 3), 120, dtype=np.uint8), upper_only_lms)
+    assert _sig.lower_v_hist is None and _sig.torso_hs_hist is not None
+    _cx2, _cy2, _sw2, _bb2, _sig2 = extract_detection_features(None, upper_only_lms)
+    assert _sig2.body_height >= 0.20 and _sig2.contrast_ratio == 1.0
     from sensor.tracking_overlay import (
         TrackingOverlay,
         COLOR_P1_SILHOUETTE,

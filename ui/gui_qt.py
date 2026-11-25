@@ -1484,9 +1484,11 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin, UIDeviceReadoutMixin):
         self._update_vphone_ui_readout()
 
     def _on_vphone_discover_clicked(self):
-        if hasattr(self, "btn_vphone_discover"):
-            self.btn_vphone_discover.setEnabled(False)
-            self.btn_vphone_discover.setText("Searching...")
+        for btn_attr in ("btn_vphone_discover", "btn_ds4_sb_discover"):
+            btn = getattr(self, btn_attr, None)
+            if btn is not None:
+                btn.setEnabled(False)
+                btn.setText("Searching...")
 
         def _done(ip, port, code):
             QtCore.QMetaObject.invokeMethod(

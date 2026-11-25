@@ -476,18 +476,30 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None, prewar
                 kinect_frame, kinect_mask = display_frame, display_mask
 
             # Update Shared Memory for Just Dance PC (JDP1, JDP2 664B, JMI1 & JMI2 player index mask)
-            # Always stream Kinect skeletons in camera modes (never allow stale vphone flag from DS4 mode to wipe Kinect!)
+            # Only mute Kinect pose when Virtual Phone Controller is explicitly enabled in camera mode config
             players_3d = [
                 pf.kinect_joints if (pf is not None and pf.tracked) else None
                 for pf in multi_res.players
             ]
+            vphone_cam_active = bool(config.get("virtual_phone_enabled", False)) and vphone.enabled
             if is_tracked and multi_res.tracked_mask > 0:
-                bridge.write_multi(
-                    players_3d,
-                    kinect_frame,
-                    kinect_mask,
-                    tracked_mask=multi_res.tracked_mask,
-                )
+                if vphone_cam_active and max_players == 1:
+                    bridge.pose.write_empty()
+                    bridge.pose_v2.write_empty()
+                    bridge.image.write_image_and_mask(
+                        kinect_frame,
+                        kinect_mask,
+                        tracked=True,
+                        tracked_mask=multi_res.tracked_mask,
+                        is_player_index_mask=True,
+                    )
+                else:
+                    bridge.write_multi(
+                        players_3d,
+                        kinect_frame,
+                        kinect_mask,
+                        tracked_mask=multi_res.tracked_mask,
+                    )
             else:
                 bridge.write_empty()
 
@@ -621,7 +633,14 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None, prewar
                 break
 
     except Exception as e:
-        print(f"[ERROR] Exception in tracking loop: {e}")
+        import traceback
+        tb_str = traceback.format_exc()
+        print(f"[ERROR] Exception in tracking loop: {e}\n{tb_str}")
+        try:
+            from sensor.session_logger import get_session_logger
+            get_session_logger().log("ERROR", "TRACKING", f"Exception in tracking loop: {e}\n{tb_str}")
+        except Exception:
+            pass
     finally:
         set_high_resolution_timer(False)
         try:

@@ -619,8 +619,9 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
   - A descrição original detalhada do Virtual Phone foi preservada no cabeçalho da pílula.
 - **Limpeza do Bloco Controller Hardware:**
   - O botão `Skip Finish` foi removido da linha de ações do hardware (`Controller Hardware`), mantendo aquela área focada exclusivamente nas ações físicas do gamepad (`Test Rumble Vibration` e `Reconnect Controller`).
-- **Aba Experimental Esvaziada:**
-  - A aba `Experimental` permanece ativa na navegação superior (`page_exp`), porém agora se mantém limpa como um placeholder (`"No experimental features available at this time."`), sem elementos funcionais poluindo o painel.
+- **Aba Experimental Contextual por Modo:**
+  - Nos modos de câmera (**PlayStation 4 Camera**, **Standard Webcam** e **Phone Camera**), a aba `Experimental` preserva integralmente o aviso de cautela, o **Auto-Frame (Digital PTZ)** e o **Virtual Phone Controller (JD Controller via Camera)**.
+  - No modo **DualShock 4**, a aba `Experimental` fica limpa como placeholder (`"No experimental features available at this time."`), já que os controles da ponte de pontuação vivem na pílula dedicada **Scoring Bridge** dentro de `Controller Settings`.
 - **Otimização de Alto FPS para Android no Phone Camera WebApp (`assets/webapp/mobile_webapp.html` & `sensor/phone_camera.py`):**
   - Substituída a verificação estrita `ws.bufferedAmount > 0` (que causava travamentos e descarte de frames devido ao IPC assíncrono do Chrome no Android) por uma janela de backpressure de `128 KB`, permitindo 1–2 frames em voo sem engasgar o fluxo Wi-Fi.
   - Adotado `video.requestVideoFrameCallback` (sincronizado diretamente aos frames de hardware da câmera, eliminando o *sleep* forçado de `10ms` por frame).
@@ -636,6 +637,9 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
   - Staging automático de `Legacy10.dll` para `%APPDATA%\LegacyPSCam_Sensor\tools\` em builds `--onefile`, evitando bloqueios do Windows Defender ao carregar DLLs de `%TEMP%\_MEI*`.
   - Leitura dinâmica da tabela `OriginalFirstThunk` (ILT) por ordinal e nome, checagem de `GetExitCodeThread` do `LoadLibraryW`, polling mais rápido (`100ms`) para capturar o boot do jogo, suporte a aliases (`JustDance2017.exe`, `LegacyOffline.exe`) e feedback visual de diagnóstico no HUD (`GAME: Run as Administrator!`, `GAME: Check Antivirus/AV!`, `IPC: Active • Game Linked`).
   - Proteção no modo câmera para que um flag residual `virtual_phone_enabled` do modo DualShock 4 nunca zere o esqueleto Kinect na memória compartilhada.
+- **Correção de Crash Imediato no Modo 2 Players (`sensor/player_slot.py` & `sensor/tracking_session.py`):**
+  - Corrigido `UnboundLocalError` em `extract_detection_features()` (`lower_v_hist`, `body_height` e `contrast_ratio` não inicializados quando os joelhos do jogador estavam fora do enquadramento), que fazia a janela de rastreamento 2P abrir e fechar imediatamente no primeiro frame.
+  - Exceções inesperadas no loop de rastreamento agora são registradas com traceback completo em `session.log` via `SessionLogger`.
 
 ---
 

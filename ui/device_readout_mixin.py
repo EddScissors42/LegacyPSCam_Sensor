@@ -22,8 +22,16 @@ class UIDeviceReadoutMixin:
             return
 
         is_ds4 = (mode == "ds4")
+        # Camera modes show full Experimental features (Warning, Auto-Frame, Virtual Phone);
+        # DualShock 4 mode keeps Experimental tab clean/empty (Scoring Bridge lives in Controller Settings).
+        if hasattr(self, "exp_warn_box"):
+            self.exp_warn_box.setVisible(not is_ds4)
         if hasattr(self, "auto_frame_box"):
-            self.auto_frame_box.setVisible(False)
+            self.auto_frame_box.setVisible(not is_ds4)
+        if hasattr(self, "vphone_box"):
+            self.vphone_box.setVisible(not is_ds4)
+        if hasattr(self, "lbl_exp_empty"):
+            self.lbl_exp_empty.setVisible(is_ds4)
 
         if is_ds4:
             if hasattr(self, "cb_ds4_hand") and hasattr(self, "cb_vphone_hand"):
@@ -57,11 +65,6 @@ class UIDeviceReadoutMixin:
             """)
             self.chk_vphone_enabled.blockSignals(False)
 
-            if hasattr(self, "lbl_vp_desc"):
-                self.lbl_vp_desc.setText(
-                    "Emulates a smartphone connected to Just Dance via WebSocket/TLS (/smartphone) and converts your hand motion "
-                    "in the camera into 3D accelerometer commands for songs that only support hand controllers."
-                )
             if hasattr(self, "vphone_details_frame"):
                 self.vphone_details_frame.setVisible(True)
         else:
@@ -95,13 +98,11 @@ class UIDeviceReadoutMixin:
             self.chk_vphone_enabled.setChecked(saved_state)
             self.chk_vphone_enabled.blockSignals(False)
 
-            if hasattr(self, "lbl_vp_desc"):
-                self.lbl_vp_desc.setText(
-                    "Emulates a smartphone connected to Just Dance via WebSocket/TLS (/smartphone) and converts your hand motion "
-                    "in the camera into 3D accelerometer commands for songs that only support hand controllers."
-                )
             if hasattr(self, "vphone_details_frame"):
-                self.vphone_details_frame.setVisible(True)
+                self.vphone_details_frame.setVisible(saved_state)
+            # Sync controller state when leaving DS4 so DS4 doesn't leave vphone stuck enabled in camera modes
+            if getattr(self.controller.devices, "_vphone", None) is not None:
+                self.controller.devices.set_vphone_enabled(saved_state)
 
     def _update_phone_cam_status(self):
         st = self.controller.devices.get_phone_cam_status()
@@ -133,9 +134,11 @@ class UIDeviceReadoutMixin:
 
     @Slot(str, int, str)
     def _on_vphone_discover_finished(self, ip: str, port: int, code: str):
-        if hasattr(self, "btn_vphone_discover"):
-            self.btn_vphone_discover.setEnabled(True)
-            self.btn_vphone_discover.setText("Auto-Find")
+        for btn_attr in ("btn_vphone_discover", "btn_ds4_sb_discover"):
+            btn = getattr(self, btn_attr, None)
+            if btn is not None:
+                btn.setEnabled(True)
+                btn.setText("Auto-Find")
 
         if ip:
             self.txt_vphone_host.setText(ip)
@@ -199,23 +202,31 @@ class UIDeviceReadoutMixin:
             return
         st = self.controller.devices.get_vphone_readout()
         if not st.get("initialized"):
-            self.lbl_vphone_status.setText("Status: Disabled (Virtual Phone)")
-            self.lbl_vphone_status.setStyleSheet(
+            dis_style = (
                 f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['text_muted']}; background: transparent; border: none;"
             )
+            self.lbl_vphone_status.setText("Status: Disabled (Virtual Phone)")
+            self.lbl_vphone_status.setStyleSheet(dis_style)
+            if hasattr(self, "lbl_ds4_sb_status"):
+                self.lbl_ds4_sb_status.setText("Status: Disconnected")
+                self.lbl_ds4_sb_status.setStyleSheet(dis_style)
             return
 
         status = st.get("status_text", "")
-        self.lbl_vphone_status.setText(f"Status: {status}")
         if st.get("connected"):
             color = PALETTE["status_ok"]
         elif st.get("enabled"):
             color = PALETTE["status_warn"]
         else:
             color = PALETTE["text_muted"]
-        self.lbl_vphone_status.setStyleSheet(
+        st_style = (
             f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {color}; background: transparent; border: none;"
         )
+        self.lbl_vphone_status.setText(f"Status: {status}")
+        self.lbl_vphone_status.setStyleSheet(st_style)
+        if hasattr(self, "lbl_ds4_sb_status"):
+            self.lbl_ds4_sb_status.setText(f"Status: {status}")
+            self.lbl_ds4_sb_status.setStyleSheet(st_style)
 
         lbl_song = getattr(self, "lbl_benchmark_song", getattr(self, "lbl_vphone_song", None))
         if lbl_song is not None:
@@ -263,8 +274,15 @@ class UIDeviceReadoutMixin:
                 self.btn_vphone_log.setText("Record Log")
                 self.btn_vphone_log.setStyleSheet(getattr(self, "_btn_vphone_outline_style", ""))
 
-        if hasattr(self, "lbl_vphone_accel"):
-            self.lbl_vphone_accel.setVisible(False)
+        should_show_accel = getattr(self, "is_tracking_active", False)
+        if self.lbl_vphone_accel.isVisible() != should_show_accel:
+            self.lbl_vphone_accel.setVisible(should_show_accel)
+        if should_show_accel:
+            ax, ay, az = self.vphone.latest_accel
+            spd = getattr(self.vphone.accelerometer, "latest_speed", 0.0)
+            self.lbl_vphone_accel.setText(
+                f"3D Accelerometer: X: {ax:+.2f}G | Y: {ay:+.2f}G | Z: {az:+.2f}G ({spd:.1f} m/s)"
+            )
 
     def _update_ds4_ui_readout(self):
         if not hasattr(self, "lbl_ds4_status") or not hasattr(self, "lbl_ds4_accel"):
