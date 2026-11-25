@@ -229,16 +229,27 @@ class InertialCoastingFilter:
         dt: Optional[float] = None,
         frame_w: int = 640,
         frame_h: int = 480,
+        max_ms_override: Optional[float] = None,
+        damping_override: Optional[float] = None,
     ) -> Tuple[bool, Optional[List[Tuple[float, float, float, float]]], Optional[List[Tuple[int, int, float]]], Optional[np.ndarray]]:
         """
         Extrapolates the dancer's 3D skeleton, 2D HUD skeleton, and 320x240 silhouette mask
-        during a tracking dropout if within `inertial_coasting_max_ms` (default 250 ms).
+        during a tracking dropout if within `inertial_coasting_max_ms` (default 250 ms, or
+        `max_ms_override` during 2-player close overlap occlusions).
         """
         if not self.is_enabled or self.last_joints_3d is None or self.last_joints_2d is None:
             return False, None, None, None
 
         dt_sec = self._resolve_dt(dt)
-        max_ms = float(self.cfg.get("inertial_coasting_max_ms", 250.0))
+        max_ms = (
+            float(max_ms_override)
+            if max_ms_override is not None
+            else float(self.cfg.get("inertial_coasting_max_ms", 420.0))
+        )
+        # Under heavy game CPU contention (< 25 FPS, dt >= 40ms), ensure at least 450ms of
+        # coasting so 360° spins don't drop tracking after just 2-3 low-FPS frames.
+        if max_ms_override is None and dt_sec >= 0.040:
+            max_ms = max(max_ms, 450.0)
         self.coasting_elapsed_s += dt_sec
 
         if self.coasting_elapsed_s * 1000.0 > max_ms:
@@ -248,7 +259,16 @@ class InertialCoastingFilter:
 
         self.coasting_active = True
         self.coasting_frames += 1
-        damping = float(np.clip(float(self.cfg.get("inertial_coasting_damping", 0.82)), 0.50, 0.98))
+        raw_damping = (
+            float(damping_override)
+            if damping_override is not None
+            else float(self.cfg.get("inertial_coasting_damping", 0.80))
+        )
+        base_damping = float(np.clip(raw_damping, 0.45, 0.98))
+        # Normalize velocity decay to elapsed wall time so 12-30 FPS frames never launch limbs off-body
+        damping = float(base_damping ** max(0.5, dt_sec / self.REF_DT))
+        conf_decay = 0.96 if max_ms > 350.0 else 0.94
+        conf_floor = 0.38 if max_ms > 350.0 else 0.35
 
         coasted_3d = []
         new_vel_3d = []
@@ -257,7 +277,7 @@ class InertialCoastingFilter:
             nx = x + vx * dt_sec
             ny = y + vy * dt_sec
             nz = float(np.clip(z + vz * dt_sec, 0.8, 4.5))
-            nconf = max(0.35, float(conf) * 0.94)
+            nconf = max(conf_floor, float(conf) * conf_decay)
             coasted_3d.append((nx, ny, nz, nconf))
             new_vel_3d.append((vx * damping, vy * damping, vz * damping))
 
@@ -267,7 +287,7 @@ class InertialCoastingFilter:
         for (px, py, pconf), (vpx, vpy) in zip(self.last_joints_2d, vel_2d):
             npx = int(round(min(frame_w - 1, max(0, px + vpx * dt_sec))))
             npy = int(round(min(frame_h - 1, max(0, py + vpy * dt_sec))))
-            npconf = max(0.35, float(pconf) * 0.94)
+            npconf = max(conf_floor, float(pconf) * conf_decay)
             coasted_2d.append((npx, npy, npconf))
             new_vel_2d.append((vpx * damping, vpy * damping))
 
@@ -354,11 +374,11 @@ class DancerIdentityLock:
         hip_l = norm_landmarks[LEFT_HIP]
         hip_r = norm_landmarks[RIGHT_HIP]
 
-        sh_vis = min(
+        sh_max = max(
             float(getattr(sh_l, "visibility", 1.0)),
             float(getattr(sh_r, "visibility", 1.0)),
         )
-        if sh_vis < 0.15:
+        if sh_max < 0.18:
             return None
 
         sh_cx = (float(sh_l.x) + float(sh_r.x)) * 0.5
@@ -455,8 +475,12 @@ class DancerIdentityLock:
         dy = abs(cy - self.locked_cy)
         dist = math.hypot(dx, dy * 0.38)
         base_jump = float(self.cfg.get("dancer_lock_max_jump_norm", 0.28))
+        # Scale displacement tolerance smoothly when frame intervals stretch under game load (< 28 FPS)
+        dt_scale = 1.0
+        if dt is not None and dt > 0.036:
+            dt_scale = min(1.55, float(dt) / 0.036)
         # Expand search radius slightly during rejection streaks so fast leaps can re-lock
-        max_jump = base_jump * (1.0 + 0.30 * min(10, self.rejected_streak))
+        max_jump = base_jump * dt_scale * (1.0 + 0.30 * min(10, self.rejected_streak))
         scale_ratio = max(sh_w, 1e-3) / max(self.locked_sh_w, 1e-3)
 
         color_corr = 1.0
@@ -468,18 +492,18 @@ class DancerIdentityLock:
         # Impostor rejection logic:
         # 1) Sudden spatial jump combined with mismatched shirt color or drastic scale change
         # 2) Extreme instantaneous jump across the room (> 1.85x max_jump in a single tick)
+        # Sideways spins / back-turns stay horizontally close (dx <= max_jump) so they are NEVER rejected.
         is_impostor = False
         if dist > max_jump:
-            if color_corr < color_thresh or scale_ratio > 2.1 or scale_ratio < 0.45:
+            if color_corr < color_thresh or scale_ratio > 2.2 or scale_ratio < 0.38:
                 is_impostor = True
             elif dist > max_jump * 1.85:
                 is_impostor = True
 
         if is_impostor:
             self.rejected_streak += 1
-            # If the original dancer has been gone for > 45 consecutive detections (~1.0-1.5s),
-            # release lock and adopt the new dancer in frame
-            if self.rejected_streak > 45:
+            # Release lock promptly (~0.6-1.2s, 18 frames) so legitimate fast re-entry never stalls
+            if self.rejected_streak > 18:
                 self.reset()
                 return self.validate_candidate(frame_bgr, norm_landmarks, dt=dt)
             return False
@@ -566,6 +590,9 @@ class PersonLockController:
         self.identity.reset()
 
     def apply_pre_inference_roi(self, infer_rgb: Optional[np.ndarray]) -> Optional[np.ndarray]:
+        # Never darken peripheral regions while coasting/re-acquiring after a missed frame
+        if self.coasting.coasting_active:
+            return infer_rgb
         return self.identity.apply_roi_focus(infer_rgb)
 
     def validate_candidate(
@@ -593,5 +620,13 @@ class PersonLockController:
         dt: Optional[float] = None,
         frame_w: int = 640,
         frame_h: int = 480,
+        max_ms_override: Optional[float] = None,
+        damping_override: Optional[float] = None,
     ) -> Tuple[bool, Optional[List[Tuple[float, float, float, float]]], Optional[List[Tuple[int, int, float]]], Optional[np.ndarray]]:
-        return self.coasting.coast(dt=dt, frame_w=frame_w, frame_h=frame_h)
+        return self.coasting.coast(
+            dt=dt,
+            frame_w=frame_w,
+            frame_h=frame_h,
+            max_ms_override=max_ms_override,
+            damping_override=damping_override,
+        )

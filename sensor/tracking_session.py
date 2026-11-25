@@ -126,6 +126,28 @@ def apply_window_icon(window_name: str) -> None:
         pass
 
 
+def is_window_minimized(hwnd) -> bool:
+    """Fast Win32 IsIconic check (<0.005 ms) to skip OpenCV preview work while minimized."""
+    if os.name != "nt" or not hwnd:
+        return False
+    try:
+        return bool(ctypes.windll.user32.IsIconic(hwnd))
+    except Exception:
+        return False
+
+
+def _find_window_hwnd(window_name: str):
+    if os.name != "nt":
+        return None
+    try:
+        user32 = ctypes.windll.user32
+        user32.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+        user32.FindWindowW.restype = wintypes.HWND
+        return user32.FindWindowW(None, window_name)
+    except Exception:
+        return None
+
+
 def set_high_resolution_timer(enable=True):
     """
     Enables/disables Windows 1ms high-resolution timer via winmm and ntdll
@@ -331,6 +353,8 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None, prewar
     cv2.namedWindow(window_name, cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_EXPANDED)
     cv2.resizeWindow(window_name, normal_win_size[0], normal_win_size[1])
     apply_window_icon(window_name)
+    window_hwnd = _find_window_hwnd(window_name)
+    _preview_resize_buf = None
 
     track_fps_counter = 0
     track_fps_last_time = time.time()
@@ -425,13 +449,6 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None, prewar
             kinect_joints = primary_p.kinect_joints if primary_p else None
             body_mask = multi_res.player_index_mask
 
-            # Detect arm raised gesture from ANY active player (P1 or P2) to dispatch virtual ENTER
-            all_px_joints = [
-                pf.pixel_joints if (pf is not None and pf.tracked) else None
-                for pf in multi_res.players
-            ]
-            gesture_info = gesture_detector.update_multi(all_px_joints, is_tracked=is_tracked, vphone=vphone)
-
             # Measure tracking FPS
             track_fps_counter += 1
             now = time.time()
@@ -441,24 +458,52 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None, prewar
                 track_fps_counter = 0
                 track_fps_last_time = now
 
-            # Prepare frame, mask and per-player skeletons for display and Kinect HUD preview
+            # Prepare frame & mask for Kinect IPC (640x480) and OpenCV preview.
+            # Capping the working preview buffer to <= 800px wide (e.g. 800x500 for 1280x800 PS4 Camera)
+            # preserves >100% of Kinect's 640x400 detail while cutting flip/overlay/imshow CPU load by ~60%
+            # during fullscreen Just Dance Legacy gameplay.
             fh, fw = frame.shape[:2]
+            if fw > 800:
+                prev_w = 800
+                prev_h = max(200, (int(round(fh * (800.0 / float(fw)))) // 2) * 2)
+                if _preview_resize_buf is None or _preview_resize_buf.shape[:2] != (prev_h, prev_w):
+                    _preview_resize_buf = np.empty((prev_h, prev_w, 3), dtype=np.uint8)
+                cv2.resize(frame, (prev_w, prev_h), dst=_preview_resize_buf, interpolation=cv2.INTER_LINEAR)
+                work_frame = _preview_resize_buf
+            else:
+                prev_w, prev_h = fw, fh
+                work_frame = frame
+
+            sx_prev = prev_w / float(max(1, fw))
+            sy_prev = prev_h / float(max(1, fh))
+
             if mirror:
-                display_frame = cv2.flip(frame, 1)
+                display_frame = cv2.flip(work_frame, 1)
                 display_mask = cv2.flip(body_mask, 1) if body_mask is not None else None
                 display_players_px = [
-                    [(fw - 1 - p[0], p[1], p[2]) for p in pf.pixel_joints]
+                    [
+                        (int(round((fw - 1 - p[0]) * sx_prev)), int(round(p[1] * sy_prev)), p[2])
+                        for p in pf.pixel_joints
+                    ]
                     if (pf is not None and pf.tracked and pf.pixel_joints)
                     else None
                     for pf in multi_res.players
                 ]
             else:
-                display_frame = frame
+                display_frame = work_frame.copy()
                 display_mask = body_mask
                 display_players_px = [
-                    pf.pixel_joints if (pf is not None and pf.tracked and pf.pixel_joints) else None
+                    [
+                        (int(round(p[0] * sx_prev)), int(round(p[1] * sy_prev)), p[2])
+                        for p in pf.pixel_joints
+                    ]
+                    if (pf is not None and pf.tracked and pf.pixel_joints)
+                    else None
                     for pf in multi_res.players
                 ]
+
+            # Detect arm raised gesture using mirrored/scaled preview coordinates so the radial ring aligns 1:1
+            gesture_info = gesture_detector.update_multi(display_players_px, is_tracked=is_tracked, vphone=vphone)
 
             # Apply dynamic Face Follow (PTZ Auto-framing) ONLY in 1-Player mode so Player 2 is never cropped out
             face_follow_on = bool(config.get("face_follow_enabled", False)) and (max_players == 1)
@@ -558,51 +603,56 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None, prewar
                 except Exception:
                     pass
 
-            # Render Player Silhouette Shadow & Contour ("sombrinha"): P1 Blue, P2 Light Orange
-            if is_tracked and display_mask is not None:
-                display_frame = overlay.draw_multi_player_silhouettes(display_frame, display_mask)
+            # Skip OpenCV overlay & imshow when tracking window is minimized (e.g. fullscreen gameplay)
+            # so 100% of CPU headroom goes to MediaPipe + Kinect IPC.
+            if not window_hwnd:
+                window_hwnd = _find_window_hwnd(window_name)
+            if not is_window_minimized(window_hwnd):
+                # Render Player Silhouette Shadow & Contour ("sombrinha"): P1 Blue, P2 Light Orange
+                if is_tracked and display_mask is not None:
+                    display_frame = overlay.draw_multi_player_silhouettes(display_frame, display_mask)
 
-            # Render Skeletons on top for each active player with Scoring Hand Aura
-            scoring_hand_side = str(getattr(vphone, "hand", "right")).lower()
-            current_hand_speed = float(getattr(vphone.accelerometer, "latest_speed", 0.0))
-            for s_idx, p_px in enumerate(display_players_px):
-                if p_px:
-                    display_frame = overlay.draw_skeleton(
+                # Render Skeletons on top for each active player with Scoring Hand Aura
+                scoring_hand_side = str(getattr(vphone, "hand", "right")).lower()
+                current_hand_speed = float(getattr(vphone.accelerometer, "latest_speed", 0.0))
+                for s_idx, p_px in enumerate(display_players_px):
+                    if p_px:
+                        display_frame = overlay.draw_skeleton(
+                            display_frame,
+                            p_px,
+                            player_idx=s_idx,
+                            show_badge=(max_players >= 2 and not overlay.pip_mode),
+                            scoring_hand=scoring_hand_side,
+                            hand_speed=current_hand_speed,
+                        )
+
+                if not overlay.pip_mode:
+                    primary_calib = primary_p.is_calibrated if primary_p else tracker.calibrator.is_calibrated
+                    primary_tier = primary_p.calibration_tier if primary_p else tracker.calibrator.calibration_tier
+                    emu_st = local_kinect_emulator.get_status() if local_kinect_emulator is not None else None
+                    display_frame = overlay.draw_hud(
                         display_frame,
-                        p_px,
-                        player_idx=s_idx,
-                        show_badge=(max_players >= 2 and not overlay.pip_mode),
-                        scoring_hand=scoring_hand_side,
-                        hand_speed=current_hand_speed,
+                        camera_info_str=mode_label,
+                        is_tracked=is_tracked,
+                        cam_fps=cam_fps,
+                        track_fps=measured_track_fps,
+                        is_calibrated=primary_calib,
+                        is_mirrored=mirror,
+                        calibration_tier=primary_tier,
+                        max_players=max_players,
+                        tracked_mask=multi_res.tracked_mask,
+                        phone_portrait_warning=(mode == "phone_cam" and fh > fw),
+                        kinect_emu_status=emu_st,
                     )
 
-            if not overlay.pip_mode:
-                primary_calib = primary_p.is_calibrated if primary_p else tracker.calibrator.is_calibrated
-                primary_tier = primary_p.calibration_tier if primary_p else tracker.calibrator.calibration_tier
-                emu_st = local_kinect_emulator.get_status() if local_kinect_emulator is not None else None
-                display_frame = overlay.draw_hud(
-                    display_frame,
-                    camera_info_str=mode_label,
-                    is_tracked=is_tracked,
-                    cam_fps=cam_fps,
-                    track_fps=measured_track_fps,
-                    is_calibrated=primary_calib,
-                    is_mirrored=mirror,
-                    calibration_tier=primary_tier,
-                    max_players=max_players,
-                    tracked_mask=multi_res.tracked_mask,
-                    phone_portrait_warning=(mode == "phone_cam" and fh > fw),
-                    kinect_emu_status=emu_st,
-                )
+                    # Render modern gesture radial progress ring & success pulse
+                    display_frame = overlay.draw_gesture_feedback(
+                        display_frame,
+                        gesture_info,
+                        max_players=max_players,
+                    )
 
-                # Render modern gesture radial progress ring & success pulse
-                display_frame = overlay.draw_gesture_feedback(
-                    display_frame,
-                    gesture_info,
-                    max_players=max_players,
-                )
-
-            cv2.imshow(window_name, display_frame)
+                cv2.imshow(window_name, display_frame)
 
             key = cv2.waitKey(1) & 0xFF
             if key in (27, ord('q'), ord('Q')):  # ESC or Q

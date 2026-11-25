@@ -124,7 +124,8 @@ def is_plausible_human_dancer(norm_landmarks: Any, w: Optional[int] = None, h: O
     """
     Validates whether a detected MediaPipe pose corresponds to a plausible human dancer,
     rejecting inanimate background objects (flat horizontal chairs, coats, cushions, reflections)
-    while fully supporting deep crouches, floor drops, forward bends, and wide arm extensions.
+    while fully supporting deep crouches, floor drops, forward bends, wide arm extensions,
+    and transient single-shoulder occlusions during 2-player close contact.
     Returns (is_valid: bool, score: float).
     """
     if not norm_landmarks or len(norm_landmarks) < 25:
@@ -132,20 +133,31 @@ def is_plausible_human_dancer(norm_landmarks: Any, w: Optional[int] = None, h: O
 
     sh_l = norm_landmarks[LEFT_SHOULDER]
     sh_r = norm_landmarks[RIGHT_SHOULDER]
-    sh_vis = min(float(getattr(sh_l, "visibility", 1.0)), float(getattr(sh_r, "visibility", 1.0)))
-    if sh_vis < 0.20:
-        return False, 0.0
-
-    sh_y = (float(sh_l.y) + float(sh_r.y)) * 0.5
-    sh_w = math.hypot(float(sh_r.x) - float(sh_l.x), float(sh_r.y) - float(sh_l.y))
-
-    # Reject absurdly narrow or wide shoulder artifacts
-    if sh_w < 0.035 or sh_w > 0.80:
+    sh_l_vis = float(getattr(sh_l, "visibility", 1.0))
+    sh_r_vis = float(getattr(sh_r, "visibility", 1.0))
+    sh_min = min(sh_l_vis, sh_r_vis)
+    sh_max = max(sh_l_vis, sh_r_vis)
+    if sh_max < 0.25:
         return False, 0.0
 
     hip_l = norm_landmarks[LEFT_HIP]
     hip_r = norm_landmarks[RIGHT_HIP]
     hip_vis = max(float(getattr(hip_l, "visibility", 1.0)), float(getattr(hip_r, "visibility", 1.0)))
+    nose_vis = float(getattr(norm_landmarks[NOSE], "visibility", 1.0)) if len(norm_landmarks) > NOSE else 0.0
+
+    # Allow temporary single-shoulder occlusion (e.g., 360° spins, sideways turns, or 2P arm contact)
+    # as long as the other shoulder plus either hips or head remain visible.
+    if sh_min < 0.18:
+        if not (sh_min >= 0.04 and (hip_vis >= 0.25 or nose_vis >= 0.25)):
+            return False, 0.0
+
+    sh_y = (float(sh_l.y) + float(sh_r.y)) * 0.5
+    sh_w = math.hypot(float(sh_r.x) - float(sh_l.x), float(sh_r.y) - float(sh_l.y))
+
+    # Reject absurdly wide shoulder artifacts; narrow sh_w is allowed during 90° sideways profile spins
+    # as long as the full body height confirms a real upright dancer (checked below).
+    if sh_w > 0.80:
+        return False, 0.0
 
     # Allow deep crouches & forward torso bends where shoulders approach hip level;
     # only reject clearly inverted non-human artifacts where hips are far above shoulders AND head.
@@ -156,16 +168,21 @@ def is_plausible_human_dancer(norm_landmarks: Any, w: Optional[int] = None, h: O
             return False, 0.0
 
     # Check bounding box
-    xs = [float(lm.x) for lm in norm_landmarks if float(getattr(lm, "visibility", 1.0)) >= 0.20]
-    ys = [float(lm.y) for lm in norm_landmarks if float(getattr(lm, "visibility", 1.0)) >= 0.20]
+    xs = [float(lm.x) for lm in norm_landmarks if float(getattr(lm, "visibility", 1.0)) >= 0.15]
+    ys = [float(lm.y) for lm in norm_landmarks if float(getattr(lm, "visibility", 1.0)) >= 0.15]
     if len(xs) < 6:
         return False, 0.0
 
     bbox_w = max(xs) - min(xs)
     bbox_h = max(ys) - min(ys)
 
-    # A crouching dancer still occupies at least 12% frame height and 5% frame width
-    if bbox_h < 0.12 or bbox_w < 0.05:
+    # A crouching dancer still occupies at least 12% frame height; a tall 90° sideways profile spin
+    # (pirouette with arms tucked) can narrow to ~0.8% width while maintaining >= 24% height.
+    min_bbox_w = 0.008 if bbox_h >= 0.24 else 0.05
+    if bbox_h < 0.12 or bbox_w < min_bbox_w:
+        return False, 0.0
+
+    if sh_w < 0.028 and bbox_h < 0.24:
         return False, 0.0
 
     # Aspect ratio check in physical pixels (accounts for 16:10 PS4 Camera 1280x800).
@@ -191,10 +208,150 @@ def is_plausible_human_dancer(norm_landmarks: Any, w: Optional[int] = None, h: O
             p = min(1.0, max(0.0, float(getattr(lm, "presence", 1.0))))
             score += 0.5 * (v + p)
 
-    if score < 3.6:
+    if score < 3.2:
         return False, score
 
     return True, score
+
+
+def _pose_torso_geometry(norm_landmarks: Any) -> Optional[Dict[str, Any]]:
+    """Extracts lightweight torso geometry for Pose NMS duplicate suppression."""
+    if not norm_landmarks or len(norm_landmarks) <= RIGHT_HIP:
+        return None
+    sh_l = norm_landmarks[LEFT_SHOULDER]
+    sh_r = norm_landmarks[RIGHT_SHOULDER]
+    hip_l = norm_landmarks[LEFT_HIP]
+    hip_r = norm_landmarks[RIGHT_HIP]
+
+    sh_cx = 0.5 * (float(sh_l.x) + float(sh_r.x))
+    sh_cy = 0.5 * (float(sh_l.y) + float(sh_r.y))
+    sh_w = max(0.04, math.hypot(float(sh_r.x) - float(sh_l.x), float(sh_r.y) - float(sh_l.y)))
+
+    hip_vis = max(float(getattr(hip_l, "visibility", 1.0)), float(getattr(hip_r, "visibility", 1.0)))
+    if hip_vis >= 0.20:
+        hip_cx = 0.5 * (float(hip_l.x) + float(hip_r.x))
+        hip_cy = 0.5 * (float(hip_l.y) + float(hip_r.y))
+        txs = [float(sh_l.x), float(sh_r.x), float(hip_l.x), float(hip_r.x)]
+        tys = [float(sh_l.y), float(sh_r.y), float(hip_l.y), float(hip_r.y)]
+    else:
+        hip_cx = sh_cx
+        hip_cy = min(0.95, sh_cy + sh_w * 1.35)
+        txs = [float(sh_l.x), float(sh_r.x)]
+        tys = [float(sh_l.y), float(sh_r.y), hip_cy]
+
+    pad_x = max(0.02, sh_w * 0.15)
+    torso_bbox = (
+        max(0.0, min(txs) - pad_x),
+        max(0.0, min(tys) - 0.02),
+        min(1.0, max(txs) + pad_x),
+        min(1.0, max(tys) + 0.02),
+    )
+
+    core_pts: Dict[int, Tuple[float, float]] = {}
+    for idx in (NOSE, LEFT_SHOULDER, RIGHT_SHOULDER, LEFT_HIP, RIGHT_HIP):
+        if idx < len(norm_landmarks):
+            lm = norm_landmarks[idx]
+            if float(getattr(lm, "visibility", 1.0)) >= 0.15:
+                core_pts[idx] = (float(lm.x), float(lm.y))
+
+    limb_pts: Dict[int, Tuple[float, float]] = dict(core_pts)
+    for idx in (LEFT_ELBOW, RIGHT_ELBOW, LEFT_WRIST, RIGHT_WRIST):
+        if idx < len(norm_landmarks):
+            lm = norm_landmarks[idx]
+            if float(getattr(lm, "visibility", 1.0)) >= 0.20:
+                limb_pts[idx] = (float(lm.x), float(lm.y))
+
+    return {
+        "cx": 0.5 * (sh_cx + hip_cx),
+        "cy": 0.5 * (sh_cy + hip_cy),
+        "sh_cx": sh_cx,
+        "sh_cy": sh_cy,
+        "sh_w": sh_w,
+        "torso_bbox": torso_bbox,
+        "core_pts": core_pts,
+        "limb_pts": limb_pts,
+    }
+
+
+def suppress_duplicate_poses(
+    candidates: List[Tuple[float, Tuple[Any, Any, Any]]],
+    max_players: int = 2,
+) -> Tuple[List[Tuple[float, Tuple[Any, Any, Any]]], int]:
+    """
+    Pose-level Non-Maximum Suppression (NMS) using torso geometry & core landmark overlap.
+    Prevents MediaPipe from emitting two overlapping detections on the same dancer (e.g., when
+    Player 1 places an arm onto Player 2) and stealing the other player's slot.
+    Expects `candidates` as `[(score, (world_lm, norm_lm, seg_obj)), ...]` sorted by score desc.
+    Returns `(kept_candidates, suppressed_count)`.
+    """
+    if len(candidates) <= 1:
+        return list(candidates), 0
+
+    ordered = sorted(candidates, key=lambda c: c[0], reverse=True)
+    extra_candidates = len(ordered) > max_players
+    kept: List[Tuple[float, Tuple[Any, Any, Any]]] = []
+    kept_geoms: List[Optional[Dict[str, Any]]] = []
+    suppressed = 0
+
+    for cand in ordered:
+        _, (_, n_lm, _) = cand
+        g_cur = _pose_torso_geometry(n_lm)
+        if g_cur is None:
+            kept.append(cand)
+            kept_geoms.append(None)
+            continue
+
+        is_dup = False
+        for g_ref in kept_geoms:
+            if g_ref is None:
+                continue
+            avg_sh_w = max(0.06, 0.5 * (g_cur["sh_w"] + g_ref["sh_w"]))
+            torso_dist = math.hypot(g_cur["cx"] - g_ref["cx"], g_cur["cy"] - g_ref["cy"])
+            sh_dist = math.hypot(g_cur["sh_cx"] - g_ref["sh_cx"], g_cur["sh_cy"] - g_ref["sh_cy"])
+            torso_iou = compute_bbox_iou(g_cur["torso_bbox"], g_ref["torso_bbox"])
+
+            shared_core = [
+                math.hypot(g_cur["core_pts"][k][0] - g_ref["core_pts"][k][0],
+                           g_cur["core_pts"][k][1] - g_ref["core_pts"][k][1])
+                for k in g_cur["core_pts"]
+                if k in g_ref["core_pts"]
+            ]
+            core_med = float(np.median(shared_core)) if shared_core else torso_dist
+
+            if extra_candidates:
+                # 3+ detections for 2 players: suppress any secondary proposal sitting on the same torso
+                if (
+                    (torso_dist < max(0.060, 0.45 * avg_sh_w) and sh_dist < max(0.065, 0.50 * avg_sh_w))
+                    or (torso_iou > 0.55 and core_med < max(0.065, 0.48 * avg_sh_w))
+                ):
+                    is_dup = True
+                    break
+            else:
+                # Only 2 detections total: only suppress true near-identical duplicates so real close
+                # waltz crossovers (distinct people passing in front of each other) are never merged.
+                shared_limbs = [
+                    math.hypot(g_cur["limb_pts"][k][0] - g_ref["limb_pts"][k][0],
+                               g_cur["limb_pts"][k][1] - g_ref["limb_pts"][k][1])
+                    for k in g_cur["limb_pts"]
+                    if k in g_ref["limb_pts"]
+                ]
+                limb_med = float(np.median(shared_limbs)) if shared_limbs else core_med
+                if (
+                    torso_dist < 0.032
+                    and sh_dist < 0.032
+                    and torso_iou > 0.72
+                    and limb_med < 0.042
+                ):
+                    is_dup = True
+                    break
+
+        if is_dup:
+            suppressed += 1
+        else:
+            kept.append(cand)
+            kept_geoms.append(g_cur)
+
+    return kept, suppressed
 
 
 def extract_detection_features(
@@ -212,8 +369,8 @@ def extract_detection_features(
     hip_l = norm_landmarks[LEFT_HIP]
     hip_r = norm_landmarks[RIGHT_HIP]
 
-    sh_vis = min(float(getattr(sh_l, "visibility", 1.0)), float(getattr(sh_r, "visibility", 1.0)))
-    if sh_vis < 0.12:
+    sh_max = max(float(getattr(sh_l, "visibility", 1.0)), float(getattr(sh_r, "visibility", 1.0)))
+    if sh_max < 0.18:
         return None
 
     sh_cx = (float(sh_l.x) + float(sh_r.x)) * 0.5
@@ -583,9 +740,30 @@ class PlayerSlotState:
             self.calibrator.target_height_m = float(target_height_m)
             self.calibrator.reset()
 
-    def handle_missing(self, dt: Optional[float], frame_w: int, frame_h: int) -> Optional[PlayerFrame]:
-        """Attempts inertial coasting during transient dropouts (<= 250 ms)."""
-        is_coasting, c_3d, c_2d, c_mask = self.person_lock.coast(dt=dt, frame_w=frame_w, frame_h=frame_h)
+    def handle_missing(
+        self,
+        dt: Optional[float],
+        frame_w: int,
+        frame_h: int,
+        is_crowded: bool = False,
+    ) -> Optional[PlayerFrame]:
+        """
+        Attempts inertial coasting during transient dropouts.
+        During 2-player close overlap occlusions (`is_crowded=True`), extends coasting up to
+        650 ms with stronger velocity damping (0.65) so a brief arm crossover never blinks a dancer out.
+        """
+        if is_crowded:
+            is_coasting, c_3d, c_2d, c_mask = self.person_lock.coast(
+                dt=dt,
+                frame_w=frame_w,
+                frame_h=frame_h,
+                max_ms_override=650.0,
+                damping_override=0.65,
+            )
+        else:
+            is_coasting, c_3d, c_2d, c_mask = self.person_lock.coast(
+                dt=dt, frame_w=frame_w, frame_h=frame_h
+            )
         if is_coasting and c_3d and c_2d:
             cz = float(c_3d[0][2]) if len(c_3d) > 0 else 2.0
             return PlayerFrame(
@@ -620,6 +798,8 @@ class PlayerSlotState:
         enforce_single_person_gate: bool = False,
         sample_bgr: Optional[np.ndarray] = None,
         primary_eye: str = "right",
+        other_norm_lm: Any = None,
+        is_crowded: bool = False,
     ) -> Optional[PlayerFrame]:
         """Runs the full 20-joint kinematic, calibration, smoothing, and mask pipeline for this slot."""
         if enforce_single_person_gate:
@@ -847,6 +1027,8 @@ class PlayerSlotState:
             mw=mw,
             mh=mh,
             build_body_mask_fn=build_body_mask_fn,
+            other_norm_lm=other_norm_lm,
+            is_crowded=is_crowded,
         )
 
         snapped, pixel_joints, body_mask = self.person_lock.record_valid_frame(
@@ -868,6 +1050,7 @@ class PlayerSlotState:
         )
 
     _ELLIPSE_3X3 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    _ELLIPSE_15X15 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
 
     def _build_exact_player_mask(
         self,
@@ -876,6 +1059,8 @@ class PlayerSlotState:
         mw: int,
         mh: int,
         build_body_mask_fn: Callable,
+        other_norm_lm: Any = None,
+        is_crowded: bool = False,
     ) -> np.ndarray:
         """
         Produces a tight, true-to-life 320x240 player silhouette directly from MediaPipe's
@@ -887,7 +1072,9 @@ class PlayerSlotState:
              (true semantic human boundary) instead of bloated low thresholds.
           4. Keeps only connected components anchored to this dancer's visible landmarks so stray
              background objects are removed without clipping hair, clothes, or outstretched hands.
-          5. Never overlays the geometric `anatomical_mask` on top of a valid neural silhouette;
+          5. In 2-player mode (`other_norm_lm` present), isolates merged neural segmentation blobs
+             so one player's silhouette never swallows the other dancer's torso/body when arms touch.
+          6. Never overlays the geometric `anatomical_mask` on top of a valid neural silhouette;
              only falls back to `build_body_mask_fn` when neural segmentation is unavailable/empty.
         """
         neural_mask = None
@@ -945,6 +1132,72 @@ class PlayerSlotState:
                         best_lbl = int(np.argmax(areas)) + 1
                         if int(areas[best_lbl - 1]) >= 60:
                             neural_mask = np.where(labels == best_lbl, np.uint8(255), np.uint8(0))
+
+                # MediaPipe PoseLandmarker computes segmentation inside a square pose ROI box that can
+                # hard-clip raised hands/head at the top or legs/feet at the bottom. Restore ONLY the
+                # clipped top/bottom bands from landmarks while preserving 100% crisp neural torso cutout.
+                my_anat_cache = None
+                if neural_mask is not None and norm_lm is not None:
+                    nz_ys = np.nonzero(neural_mask)[0]
+                    if nz_ys.size >= 60:
+                        ny_min = int(nz_ys.min())
+                        ny_max = int(nz_ys.max())
+                        ext_ys = []
+                        for j_idx in (
+                            NOSE, LEFT_ELBOW, RIGHT_ELBOW, LEFT_WRIST, RIGHT_WRIST,
+                            LEFT_INDEX, RIGHT_INDEX, LEFT_KNEE, RIGHT_KNEE,
+                            LEFT_ANKLE, RIGHT_ANKLE, LEFT_FOOT_INDEX, RIGHT_FOOT_INDEX,
+                        ):
+                            if j_idx < len(norm_lm):
+                                lm = norm_lm[j_idx]
+                                if float(getattr(lm, "visibility", 1.0)) >= 0.30:
+                                    ly_f = float(lm.y)
+                                    if 0.0 <= ly_f <= 1.0:
+                                        ext_ys.append(int(round(ly_f * (mh - 1))))
+                        if ext_ys:
+                            # Include cranial margin above nose so top of head isn't shaved off
+                            nose_lm = norm_lm[NOSE] if len(norm_lm) > NOSE else None
+                            lm_top = min(ext_ys)
+                            if nose_lm is not None and float(getattr(nose_lm, "visibility", 1.0)) >= 0.30:
+                                sh_l_lm = norm_lm[LEFT_SHOULDER]
+                                sh_r_lm = norm_lm[RIGHT_SHOULDER]
+                                sh_px = max(12.0, math.hypot(
+                                    (float(sh_r_lm.x) - float(sh_l_lm.x)) * mw,
+                                    (float(sh_r_lm.y) - float(sh_l_lm.y)) * mh,
+                                ))
+                                head_top = max(0, int(round(float(nose_lm.y) * (mh - 1) - sh_px * 0.42)))
+                                lm_top = min(lm_top, head_top)
+                            lm_bot = max(ext_ys)
+
+                            need_top = (ny_min > 1 and lm_top < ny_min - 2)
+                            need_bot = (ny_max < mh - 2 and lm_bot > ny_max + 2)
+                            if need_top or need_bot:
+                                my_anat_cache = build_body_mask_fn(norm_lm, mw, mh)
+                                if my_anat_cache is not None:
+                                    neural_mask = neural_mask.copy()
+                                    if need_top:
+                                        cut_top = min(mh, ny_min + 3)
+                                        neural_mask[:cut_top, :] = cv2.bitwise_or(
+                                            neural_mask[:cut_top, :], my_anat_cache[:cut_top, :]
+                                        )
+                                    if need_bot:
+                                        cut_bot = max(0, ny_max - 3)
+                                        neural_mask[cut_bot:, :] = cv2.bitwise_or(
+                                            neural_mask[cut_bot:, :], my_anat_cache[cut_bot:, :]
+                                        )
+
+                # 2P Anti-Swallow Isolation: when two dancers touch (e.g., arm on shoulder), MediaPipe's
+                # neural segmentation can merge both bodies into one connected component. Carve out pixels
+                # that belong exclusively to the other player's anatomical envelope and lie outside ours.
+                if neural_mask is not None and other_norm_lm is not None and norm_lm is not None:
+                    my_anat = my_anat_cache if my_anat_cache is not None else build_body_mask_fn(norm_lm, mw, mh)
+                    other_anat = build_body_mask_fn(other_norm_lm, mw, mh)
+                    if my_anat is not None and other_anat is not None:
+                        my_keep = cv2.dilate(my_anat, self._ELLIPSE_15X15, iterations=1)
+                        stolen = (other_anat >= 64) & (my_keep < 64)
+                        if np.any(stolen):
+                            neural_mask = neural_mask.copy()
+                            neural_mask[stolen] = 0
             except Exception as exc:
                 if not self._warned_seg_err:
                     print(f"[WARN] Neural segmentation mask fallback to anatomical mask: {exc}")
@@ -959,25 +1212,28 @@ class PlayerSlotState:
 
 class MultiPlayerAssociator:
     """
-    Matches 1..2 MediaPipe Pose detections to persistent Player Slots (Slot 0 = P1, Slot 1 = P2)
-    with Long-Term Identity Memory, Proximity/Waltz Freeze, Velocity Prediction, and Post-Separation Re-ID Audit.
+    Matches 1..N MediaPipe Pose detections to persistent Player Slots (Slot 0 = P1, Slot 1 = P2)
+    with Long-Term Identity Memory, Proximity/Waltz Freeze, Velocity Prediction, Multi-Candidate
+    Optimal Pairing, and Post-Separation Re-ID Audit.
     """
     CROWD_DIST_THRESH = 0.22
     CROWD_IOU_THRESH = 0.08
     AUDIT_SWAP_MARGIN = 0.10
     AUDIT_CONFIRM_FRAMES = 2
-    CURRENT_SLOT_INERTIA_BONUS = 0.35
+    CURRENT_SLOT_INERTIA_BONUS = 0.22
 
     def __init__(self, max_players: int = 2):
         self.max_players = max(1, min(2, int(max_players)))
         self.was_crowded: bool = False
         self.swap_audit_streak: int = 0
         self.last_assignments: Dict[int, int] = {}
+        self.last_swap_audit_triggered: bool = False
 
     def reset(self) -> None:
         self.was_crowded = False
         self.swap_audit_streak = 0
         self.last_assignments = {}
+        self.last_swap_audit_triggered = False
 
     @staticmethod
     def _swap_slot_kinematics(slot_a: PlayerSlotState, slot_b: PlayerSlotState) -> None:
@@ -1012,40 +1268,33 @@ class MultiPlayerAssociator:
     ) -> Tuple[Dict[int, int], bool]:
         """
         Assigns each slot_index in `0..len(slots)-1` to at most one detection index in `0..len(detections)-1`.
+        Evaluates all NMS-filtered candidate detections (up to 4) against both slots' enrolled
+        long-term identity memory so a noisy/background candidate never displaces an occluded dancer.
         Returns:
             assignments: dict mapping `slot_index -> detection_index`
-            is_crowded: True if the two detections are in close waltz/crossover proximity
+            is_crowded: True if the two dancers are in close waltz/crossover/overlap proximity
         """
+        self.last_swap_audit_triggered = False
         now_t = time.perf_counter() if now is None else now
         num_dets = len(detections_norm_lm)
         if num_dets == 0 or not slots:
             self.last_assignments = {}
-            return {}, False
+            return {}, self.was_crowded
 
         if len(slots) == 1:
             self.last_assignments = {0: 0}
             return {0: 0}, False
 
-        # Extract features for candidate detections (up to 2 plausible human dancers)
+        # Extract features for ALL plausible candidate detections (not prematurely sliced to 2)
         det_feats = []
-        for d_idx, nlm in enumerate(detections_norm_lm[:2]):
+        for d_idx, nlm in enumerate(detections_norm_lm[:4]):
             feats = extract_detection_features(sample_bgr, nlm)
             if feats is not None:
                 det_feats.append((d_idx, feats))
 
         if not det_feats:
             self.last_assignments = {}
-            return {}, False
-
-        # Check if 2 detections are in a close waltz / crossover interaction
-        is_crowded = False
-        if len(det_feats) == 2:
-            _, (cx0, cy0, _, bbox0, _) = det_feats[0]
-            _, (cx1, cy1, _, bbox1, _) = det_feats[1]
-            pair_dist = math.hypot(cx1 - cx0, cy1 - cy0)
-            pair_iou = compute_bbox_iou(bbox0, bbox1)
-            if pair_dist < self.CROWD_DIST_THRESH or pair_iou > self.CROWD_IOU_THRESH:
-                is_crowded = True
+            return {}, self.was_crowded
 
         p0 = slots[0].identity_profile
         p1 = slots[1].identity_profile
@@ -1054,14 +1303,15 @@ class MultiPlayerAssociator:
 
         assignments: Dict[int, int] = {}
 
+        def _pair_is_crowded(f_a, f_b) -> bool:
+            p_dist = math.hypot(f_b[0] - f_a[0], f_b[1] - f_a[1])
+            p_iou = compute_bbox_iou(f_a[3], f_b[3])
+            return (p_dist < self.CROWD_DIST_THRESH) or (p_iou > self.CROWD_IOU_THRESH)
+
         # Case 1: Neither slot has been enrolled yet -> deterministic screen order
-        # Note: in raw un-mirrored camera coordinates, larger raw x (right side of raw image)
-        # corresponds to the left side of the mirrored preview screen (Player 1), and smaller raw x
-        # corresponds to the right side of the mirrored preview screen (Player 2).
-        # Using standard raw x ascending (or screen left-to-right): we sort by raw cx ascending so
-        # detection with smaller cx is Slot 0 (P1) and larger cx is Slot 1 (P2), deterministic & stable.
         if not p0_mem and not p1_mem:
-            sorted_dets = sorted(det_feats, key=lambda item: item[1][0])
+            sorted_dets = sorted(det_feats[:2], key=lambda item: item[1][0])
+            is_crowded = _pair_is_crowded(sorted_dets[0][1], sorted_dets[1][1]) if len(sorted_dets) >= 2 else False
             for s_idx, (d_idx, (cx, cy, sh_w, bbox, sig)) in enumerate(sorted_dets[:2]):
                 assignments[s_idx] = d_idx
                 slots[s_idx].identity_profile.update(cx, cy, sh_w, bbox, sig, is_crowded=is_crowded, dt=dt, now=now_t)
@@ -1070,7 +1320,11 @@ class MultiPlayerAssociator:
             return assignments, is_crowded
 
         # Helper cost function combining kinematic trajectory distance + long-term appearance dissimilarity + velocity alignment
-        def pair_cost(slot_idx: int, feat_tuple: Tuple[float, float, float, Tuple[float, float, float, float], AppearanceSignature]) -> float:
+        def pair_cost(
+            slot_idx: int,
+            feat_tuple: Tuple[float, float, float, Tuple[float, float, float, float], AppearanceSignature],
+            crowded: bool = False,
+        ) -> float:
             prof = slots[slot_idx].identity_profile
             cx, cy, sh_w, _, sig = feat_tuple
             if not prof.has_valid_memory(now=now_t):
@@ -1083,7 +1337,6 @@ class MultiPlayerAssociator:
             scale_cost = abs(math.log(max(0.25, min(4.0, max(sh_w, 1e-3) / max(prof.sh_w, 1e-3)))))
 
             if prof.active:
-                # Directional velocity momentum alignment: rewards maintaining velocity vector direction during crossover
                 vel_len = math.hypot(prof.vx, prof.vy)
                 disp_x = cx - prof.cx
                 disp_y = cy - prof.cy
@@ -1092,7 +1345,10 @@ class MultiPlayerAssociator:
                 if vel_len > 0.08 and disp_len > 0.02:
                     cos_theta = (prof.vx * disp_x + prof.vy * disp_y) / (vel_len * disp_len)
                     vel_align_bonus = -0.25 * float(cos_theta)
-                # Active tracking: blend predicted trajectory distance, appearance memory, and directional momentum
+                if crowded:
+                    # During close arm/body overlap, shirt color patches are partially occluded ->
+                    # rely slightly more on predicted spatial trajectory and momentum.
+                    return max(0.0, 1.25 * dist + 0.60 * app_cost + 0.20 * scale_cost + vel_align_bonus)
                 return max(0.0, 1.05 * dist + 0.85 * app_cost + 0.20 * scale_cost + vel_align_bonus)
             else:
                 # Re-entry after temporary exit: rely primarily on long-term visual appearance memory!
@@ -1117,50 +1373,75 @@ class MultiPlayerAssociator:
                 else:
                     chosen_slot = 1
             else:
-                c0 = pair_cost(0, feat)
-                c1 = pair_cost(1, feat)
+                c0 = pair_cost(0, feat, crowded=self.was_crowded)
+                c1 = pair_cost(1, feat, crowded=self.was_crowded)
                 chosen_slot = 0 if c0 <= c1 else 1
 
+            # Check if the missing slot was just overlapping with this surviving detection
+            # (e.g., P1 placed an arm across P2 and MediaPipe momentarily collapsed to 1 pose).
+            other_slot = 1 - chosen_slot
+            other_prof = slots[other_slot].identity_profile
+            is_crowded = False
+            if other_prof.is_enrolled and (other_prof.active or (now_t - other_prof.last_seen_time) <= 0.85):
+                d_other = math.hypot(cx - other_prof.cx, cy - other_prof.cy)
+                iou_other = compute_bbox_iou(bbox, other_prof.bbox)
+                if self.was_crowded or d_other < self.CROWD_DIST_THRESH * 1.35 or iou_other > 0.02:
+                    is_crowded = True
+
             assignments[chosen_slot] = d_idx
-            slots[chosen_slot].identity_profile.update(cx, cy, sh_w, bbox, sig, is_crowded=False, dt=dt, now=now_t)
-            self.was_crowded = False
+            slots[chosen_slot].identity_profile.update(
+                cx, cy, sh_w, bbox, sig, is_crowded=is_crowded, dt=dt, now=now_t
+            )
+            self.was_crowded = is_crowded
             self.swap_audit_streak = 0
             self.last_assignments = dict(assignments)
-            return assignments, False
+            return assignments, is_crowded
 
-        # Case 3: 2 detections present in frame -> evaluate 2x2 assignment permutations
-        (d0_idx, feat0), (d1_idx, feat1) = det_feats[0], det_feats[1]
+        # Case 3: 2+ detections present in frame -> evaluate all ordered pairs (i != j)
+        # Uses spatial continuity against each slot's predicted position (never raw array index)
+        # so re-sorting candidates by MediaPipe plausibility score never induces a false swap.
+        p0_pred = p0.predict_position(dt=dt) if p0.active else (p0.cx, p0.cy)
+        p1_pred = p1.predict_position(dt=dt) if p1.active else (p1.cx, p1.cy)
+        both_active = bool(p0.active and p1.active)
 
-        # Option A: Slot 0 -> det 0, Slot 1 -> det 1
-        cost_a = pair_cost(0, feat0) + pair_cost(1, feat1)
-        # Option B: Slot 0 -> det 1, Slot 1 -> det 0
-        cost_b = pair_cost(0, feat1) + pair_cost(1, feat0)
+        best_cost = float("inf")
+        best_pair: Optional[Tuple[int, int, Any, Any, bool]] = None
 
-        # Apply slot inertia bonus to avoid flip-flop jitter when dancers are close
-        if self.last_assignments.get(0) == d0_idx and self.last_assignments.get(1) == d1_idx:
-            cost_a -= self.CURRENT_SLOT_INERTIA_BONUS
-        elif self.last_assignments.get(0) == d1_idx and self.last_assignments.get(1) == d0_idx:
-            cost_b -= self.CURRENT_SLOT_INERTIA_BONUS
+        n_cands = len(det_feats)
+        for i in range(n_cands):
+            di, fi = det_feats[i]
+            for j in range(n_cands):
+                if i == j:
+                    continue
+                dj, fj = det_feats[j]
+                pair_crowded = _pair_is_crowded(fi, fj)
+                cost = pair_cost(0, fi, crowded=pair_crowded) + pair_cost(1, fj, crowded=pair_crowded)
 
-        # Crowd lock: if currently crowded, resist flip-flop swapping during overlap
-        if is_crowded and len(self.last_assignments) == 2:
-            prev_0 = self.last_assignments.get(0)
-            prev_1 = self.last_assignments.get(1)
-            if prev_0 == d0_idx and prev_1 == d1_idx:
-                if cost_b >= cost_a - 0.20:
-                    cost_b = float("inf")
-            elif prev_0 == d1_idx and prev_1 == d0_idx:
-                if cost_a >= cost_b - 0.20:
-                    cost_a = float("inf")
+                # Spatial-continuity inertia: gently favor keeping each active slot on the closer body
+                if both_active:
+                    d_direct = (
+                        math.hypot(fi[0] - p0_pred[0], fi[1] - p0_pred[1])
+                        + math.hypot(fj[0] - p1_pred[0], fj[1] - p1_pred[1])
+                    )
+                    d_swapped = (
+                        math.hypot(fj[0] - p0_pred[0], fj[1] - p0_pred[1])
+                        + math.hypot(fi[0] - p1_pred[0], fi[1] - p1_pred[1])
+                    )
+                    if d_direct + 0.015 < d_swapped:
+                        bonus_scale = 1.25 if pair_crowded else 0.55
+                        cost -= self.CURRENT_SLOT_INERTIA_BONUS * bonus_scale
 
-        if cost_a <= cost_b:
-            assignments[0] = d0_idx
-            assignments[1] = d1_idx
-            f_s0, f_s1 = feat0, feat1
-        else:
-            assignments[0] = d1_idx
-            assignments[1] = d0_idx
-            f_s0, f_s1 = feat1, feat0
+                if cost < best_cost:
+                    best_cost = cost
+                    best_pair = (di, dj, fi, fj, pair_crowded)
+
+        if best_pair is None:
+            self.last_assignments = {}
+            return {}, False
+
+        d_s0, d_s1, f_s0, f_s1, is_crowded = best_pair
+        assignments[0] = d_s0
+        assignments[1] = d_s1
 
         # Post-Separation Re-Identification Audit:
         # When both dancers are clearly separated (not crowded) and both have consolidated permanent anchors,
@@ -1185,6 +1466,7 @@ class MultiPlayerAssociator:
                     assignments[0], assignments[1] = assignments[1], assignments[0]
                     f_s0, f_s1 = f_s1, f_s0
                     self.swap_audit_streak = 0
+                    self.last_swap_audit_triggered = True
             else:
                 self.swap_audit_streak = 0
         else:

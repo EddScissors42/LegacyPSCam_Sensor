@@ -204,13 +204,28 @@ def test_shared_memory():
     kcx.close()
     print("  -> KinectCoachXSharedMemory (CoachX JXC1 28-byte contract) PASSED")
 
-    # Test Unified Bridge
+    # Test Unified Bridge + Widescreen 16:10 (PS4 Camera 1280x800) Aspect-Preserving Letterbox
     bridge = KinectBridge()
     assert bridge.is_connected
     assert bridge.write(NEUTRAL_POSE, dummy_frame, dummy_mask, tracked=True)
+
+    wide_frame = np.full((800, 1280, 3), 180, dtype=np.uint8)
+    wide_mask = np.full((240, 320), 255, dtype=np.uint8)
+    assert bridge.write(NEUTRAL_POSE, wide_frame, wide_mask, tracked=True)
+    mm_wide = mmap.mmap(-1, IMAGE_SHARED_SIZE, tagname=IMAGE_SHARED_NAME)
+    mm_wide.seek(32)
+    bgra_wide = np.frombuffer(mm_wide.read(640 * 480 * 4), dtype=np.uint8).reshape((480, 640, 4))
+    mask_wide = np.frombuffer(mm_wide.read(320 * 240), dtype=np.uint8).reshape((240, 320))
+    mm_wide.close()
+    # 1280x800 (16:10) -> 640x400 centered at y=40..440 in 640x480, and 320x200 centered at y=20..220 in 320x240
+    assert int(bgra_wide[10, 320, 0]) == 0 and int(bgra_wide[470, 320, 0]) == 0, "16:10 color letterbox top/bottom bars must be black"
+    assert int(bgra_wide[240, 320, 0]) == 180, "16:10 color center content must remain intact"
+    assert int(mask_wide[10, 160]) == 0 and int(mask_wide[230, 160]) == 0, "16:10 mask letterbox top/bottom bars must be background (0)"
+    assert int(mask_wide[25, 160]) == 255 and int(mask_wide[215, 160]) == 255, "16:10 mask content must occupy y=20..220 unstretched"
+
     assert bridge.write_empty()
     bridge.close()
-    print("  -> KinectBridge (Unified IPC) PASSED")
+    print("  -> KinectBridge (Unified IPC & 16:10 Aspect-Preserving Letterbox) PASSED")
 
     # Verify Legacy10.dll pacer byte (33ms / 30 FPS standard for Just Dance scoring compatibility)
     # and Ordinal 9 (NuiImageGetColorPixelCoordinatesFromDepthPixel) 320x240 -> 640x480 2x scaling
@@ -1794,9 +1809,19 @@ def test_person_lock_subsystem():
     z_span = max(z_samples) - min(z_samples)
     assert z_span < 0.06, f"Monocular Head.z must remain damped against zoom breathing (span={z_span:.3f}m)"
 
-    # 4. Test PersonLockController master toggle & PoseTracker integration
-    ctrl = PersonLockController(cfg={"person_lock_enabled": True})
+    # 4. Test PersonLockController master toggle, low-FPS spin coasting & ROI bypass while coasting
+    ctrl = PersonLockController(cfg={"person_lock_enabled": True, "inertial_coasting_max_ms": 250})
     assert ctrl.is_enabled is True
+    for _ in range(6):
+        ctrl.validate_candidate(scene_bgr, dancer_lms, dt=0.016)
+    ctrl.record_valid_frame([(0.1, 0.5, 2.0, 0.95)] * 20, [(320, 240, 0.95)] * 20, mask_in, dt=0.016)
+    # Simulate 12.5 FPS (dt=0.080s) spin dropout: must survive 400ms (5 frames) and disable ROI darkening while coasting!
+    for step in range(5):
+        ok_lo, _, _, _ = ctrl.coast(dt=0.080, frame_w=640, frame_h=480)
+        assert ok_lo is True, f"Low-FPS spin coasting must survive 400ms (failed at step {step})"
+    test_rgb_coast = np.full((400, 640, 3), 200, dtype=np.uint8)
+    ctrl.apply_pre_inference_roi(test_rgb_coast)
+    assert int(test_rgb_coast[200, 5, 0]) == 200, "ROI darkening must be bypassed while coasting so re-acquisition sees full bright frame"
     ctrl.set_enabled(False)
     assert ctrl.is_enabled is False
     assert ctrl.coasting.is_enabled is False
@@ -2313,6 +2338,147 @@ def test_multi_player_tracking():
     crouch_pose[28] = type("MockLM", (), {"x": 0.56, "y": 0.90, "z": 0.0, "visibility": 0.80, "presence": 0.80})()  # AnkleR
     ok_crouch, crouch_score = is_plausible_human_dancer(crouch_pose, w=1280, h=800)
     assert ok_crouch is True, f"Deep crouch pose on 1280x800 PS4 Camera must be accepted (score={crouch_score:.2f})"
+
+    # 3.2 Verify 2P Arm-Overlap Resilience: Pose NMS, Single-Shoulder Occlusion, 3-Candidate Matching,
+    # Score-Order Anti-Swap, Overlap Extended Coasting (650 ms), and Anti-Swallow Silhouette Isolation
+    from sensor.player_slot import suppress_duplicate_poses, extract_detection_features
+
+    # (a) Single-shoulder occlusion during arm-on-P2 contact must pass plausibility & feature extraction
+    occluded_p1 = make_person_lms(0.30)
+    occluded_p1[12] = SynthLM(0.38, 0.33, vis=0.08)  # Right shoulder momentarily occluded by P2/arm
+    ok_occ, occ_score = is_plausible_human_dancer(occluded_p1, w=1280, h=800)
+    assert ok_occ is True, f"Single-shoulder occluded dancer must pass plausibility check (score={occ_score:.2f})"
+    occ_feats = extract_detection_features(np.zeros((240, 320, 3), dtype=np.uint8), occluded_p1)
+    assert occ_feats is not None, "Single-shoulder occluded dancer must still yield valid detection features"
+
+    # (b) Pose NMS suppresses duplicate overlapping detection on P2 so occluded P1 is NOT pushed out
+    p2_main = make_person_lms(0.72)
+    p2_dup = make_person_lms(0.735, cy=0.455)  # Duplicate proposal sitting on top of P2
+    p1_real = make_person_lms(0.30)
+    raw_cands = [
+        (11.5, (p2_main, p2_main, None)),
+        (10.9, (p2_dup, p2_dup, None)),
+        (8.8, (p1_real, p1_real, None)),
+    ]
+    kept_cands, sup_cnt = suppress_duplicate_poses(raw_cands, max_players=2)
+    assert sup_cnt == 1 and len(kept_cands) == 2, (
+        f"Expected Pose NMS to suppress 1 duplicate on P2 and retain P1+P2, got sup={sup_cnt}, kept={len(kept_cands)}"
+    )
+    kept_xs = sorted(float(c[1][1][0].x) for c in kept_cands)
+    assert abs(kept_xs[0] - 0.30) < 0.02 and abs(kept_xs[1] - 0.72) < 0.02, (
+        f"Pose NMS must keep real P1 (0.30) and P2 (0.72), got nose xs={kept_xs}"
+    )
+
+    # (c) 3-candidate matching: enrolled P1 (Blue, 0.25) & P2 (Orange, 0.75) stay matched even when
+    # a 3rd candidate sits at index 0 and P1 is pushed to index 2!
+    slots_ov = [PlayerSlotState(0), PlayerSlotState(1)]
+    assoc_ov = MultiPlayerAssociator(max_players=2)
+    t_ov = 200.0
+    for _ in range(15):
+        t_ov += 1.0 / 30.0
+        frm_ov = np.zeros((240, 320, 3), dtype=np.uint8)
+        paint_dancer(frm_ov, 0.25, blue_shirt, dark_pants)
+        paint_dancer(frm_ov, 0.75, orange_shirt, light_pants)
+        assoc_ov.match(slots_ov, [make_person_lms(0.25), make_person_lms(0.75)], frm_ov, dt=1.0 / 30.0, now=t_ov)
+
+    frm_3c = np.zeros((240, 320, 3), dtype=np.uint8)
+    paint_dancer(frm_3c, 0.25, blue_shirt, dark_pants)
+    paint_dancer(frm_3c, 0.50, (80, 220, 80), (60, 60, 60))  # Green bystander at index 0
+    paint_dancer(frm_3c, 0.75, orange_shirt, light_pants)
+    assign_3c, _ = assoc_ov.match(
+        slots_ov,
+        [make_person_lms(0.50), make_person_lms(0.75), make_person_lms(0.25)],
+        frm_3c,
+        dt=1.0 / 30.0,
+        now=t_ov + 0.033,
+    )
+    assert assign_3c.get(0) == 2 and assign_3c.get(1) == 1, (
+        f"3-candidate associator must keep Slot 0 -> det[2] (P1) and Slot 1 -> det[1] (P2), got {assign_3c}"
+    )
+
+    # (d) Score-order flip during crowded arm-reach overlap must NOT force a false swap
+    t_ov += 0.066
+    p1_arm_reach = make_person_lms(0.38)
+    p1_arm_reach[16] = SynthLM(0.60, 0.36, vis=0.90)  # P1 right wrist reaches onto P2!
+    p2_close = make_person_lms(0.56)
+    frm_reach = np.zeros((240, 320, 3), dtype=np.uint8)
+    paint_dancer(frm_reach, 0.38, blue_shirt, dark_pants)
+    paint_dancer(frm_reach, 0.56, orange_shirt, light_pants)
+    # Deliver detections in flipped array order [P2, P1]
+    assign_flip, crowd_flip = assoc_ov.match(
+        slots_ov, [p2_close, p1_arm_reach], frm_reach, dt=1.0 / 30.0, now=t_ov
+    )
+    assert crowd_flip is True, "Arm-on-P2 overlap must trigger is_crowded=True"
+    assert assign_flip.get(0) == 1 and assign_flip.get(1) == 0, (
+        f"Flipped detection array order during overlap must not swap slots, got {assign_flip}"
+    )
+
+    # (e) Single surviving detection during overlap keeps is_crowded=True & extends missing slot coasting to >400 ms
+    assign_1det, crowd_1det = assoc_ov.match(
+        slots_ov, [p2_close], frm_reach, dt=1.0 / 30.0, now=t_ov + 0.033
+    )
+    assert crowd_1det is True, "Single surviving detection during active overlap must preserve is_crowded=True"
+    assert assign_1det.get(1) == 0, f"Surviving detection on P2 must remain assigned to Slot 1, got {assign_1det}"
+
+    # Prime P1's coasting filter and verify crowded overlap coasting survives 400 ms (> 250 ms normal cap)
+    dummy_2d = [(200, 200, 0.9)] * 20
+    dummy_m = np.full((240, 320), 255, dtype=np.uint8)
+    slots_ov[0].person_lock.record_valid_frame(pose_p1, dummy_2d, dummy_m, dt=1.0 / 30.0)
+    pf_coast = None
+    for _ in range(12):  # 12 * 33ms = 400 ms > 250 ms default cap, < 650 ms overlap cap
+        pf_coast = slots_ov[0].handle_missing(dt=0.033, frame_w=640, frame_h=480, is_crowded=True)
+    assert pf_coast is not None and pf_coast.tracked and pf_coast.coasting, (
+        "2P overlap coasting must keep occluded dancer tracked past 400 ms"
+    )
+
+    # (f) Anti-Swallow Silhouette Isolation: merged neural blob touching both dancers must carve out P1 from P2's mask
+    class FakeSegMask:
+        def __init__(self, arr):
+            self._arr = arr
+        def numpy_view(self):
+            return self._arr
+
+    merged_prob = np.zeros((240, 320), dtype=np.float32)
+    merged_prob[40:210, 45:275] = 0.95  # Single merged blob spanning both P1 (x=0.25) and P2 (x=0.75)
+    p2_mask_iso = slots_ov[1]._build_exact_player_mask(
+        seg_mask_obj=FakeSegMask(merged_prob),
+        norm_lm=make_person_lms(0.75),
+        mw=320,
+        mh=240,
+        build_body_mask_fn=tracker_2p.build_body_mask,
+        other_norm_lm=make_person_lms(0.25),
+        is_crowded=True,
+    )
+    # P2's torso center (x≈240, y≈108) must stay foreground; P1's torso center (x≈80, y≈108) must be carved out!
+    assert int(p2_mask_iso[108, 240]) == 255, "P2 isolated mask must keep P2's own torso"
+    assert int(p2_mask_iso[108, 80]) == 0, "P2 isolated mask must carve out P1's torso from merged neural blob"
+
+    # (g) 90° Sideways Profile Spin resilience: shoulders overlapping in 2D (sh_w=0.012) on tall standing dancer MUST pass!
+    profile_spin = make_person_lms(0.50, cy=0.50, sh_w=0.012)
+    profile_spin[12] = SynthLM(0.506, 0.38, vis=0.10)  # Far shoulder occluded mid-spin
+    ok_spin, spin_score = is_plausible_human_dancer(profile_spin, w=1280, h=800)
+    assert ok_spin is True, f"90° sideways profile spin must pass plausibility check (score={spin_score:.2f})"
+
+    # (h) Neural ROI Top/Bottom Clip Recovery: if MediaPipe's square ROI clips head/feet flat at y=75..165,
+    # _build_exact_player_mask must restore the clipped top & bottom bands from landmarks without bloating torso!
+    clipped_prob = np.zeros((240, 320), dtype=np.float32)
+    clipped_prob[75:165, 130:190] = 0.95  # Hard-clipped top & bottom neural ROI
+    tall_dancer = make_person_lms(0.50, cy=0.50, sh_w=0.16)
+    tall_dancer[0] = SynthLM(0.50, 0.18, vis=0.95)   # Nose above y=75 (y≈43)
+    tall_dancer[7] = SynthLM(0.47, 0.18, vis=0.90)   # Left ear at head level
+    tall_dancer[8] = SynthLM(0.53, 0.18, vis=0.90)   # Right ear at head level
+    tall_dancer[27] = SynthLM(0.46, 0.88, vis=0.90)  # Left ankle below y=165 (y≈211)
+    tall_dancer[28] = SynthLM(0.54, 0.88, vis=0.90)  # Right ankle below y=165 (y≈211)
+    slots_ov[0]._seg_prob_ema = None
+    recovered_mask = slots_ov[0]._build_exact_player_mask(
+        seg_mask_obj=FakeSegMask(clipped_prob),
+        norm_lm=tall_dancer,
+        mw=320,
+        mh=240,
+        build_body_mask_fn=tracker_2p.build_body_mask,
+    )
+    assert np.any(recovered_mask[35:65, 140:180] == 255), "Top clipped head/hand region must be recovered from landmarks"
+    assert np.any(recovered_mask[180:215, 135:185] == 255), "Bottom clipped legs/ankles region must be recovered from landmarks"
 
     # 4. Verify ArmRaiseGestureDetector.update_multi accepts arm raise from Player 2
     g_det = ArmRaiseGestureDetector(

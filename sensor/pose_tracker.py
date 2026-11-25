@@ -58,7 +58,9 @@ from sensor.player_slot import (
     MultiPlayerAssociator,
     compose_player_index_mask,
     is_plausible_human_dancer,
+    suppress_duplicate_poses,
 )
+from sensor.session_logger import get_session_logger
 
 
 from sensor.model_manager import ModelManager, MODEL_FILENAMES
@@ -181,12 +183,22 @@ class PoseTracker:
 
     def _init_detector(self):
         base_options = python.BaseOptions(model_asset_path=str(self.model_path))
-        det_c = max(0.50, min(0.70, float(self.detection_confidence)))
-        # Keep detection strict (rejects empty background objects) while allowing lower presence/tracking
-        # confidence so already-tracked dancers never drop during deep crouches, floor moves, or spins.
-        pres_c = max(0.38, min(0.58, det_c * 0.80))
-        track_c = max(0.30, min(0.50, det_c * 0.65))
-        detector_num_poses = 4 if self.max_players >= 2 else 1
+        if self.max_players >= 2:
+            # 2-Player mode: slightly more forgiving detection/presence/tracking thresholds so
+            # overlapping arms/shoulders during duo interactions don't drop a dancer instantaneously,
+            # while num_poses=3 (2 players + 1 spare for Pose NMS) trims ~25% worst-case CPU cost vs 4.
+            det_c = max(0.40, min(0.65, float(self.detection_confidence)))
+            pres_c = max(0.28, min(0.50, det_c * 0.72))
+            track_c = max(0.22, min(0.42, det_c * 0.58))
+            detector_num_poses = 3
+        else:
+            # 1-Player mode: balanced detection + spin/back-turn resilient presence & tracking thresholds
+            # so 360° spins, sideways turns, and low-FPS frames under game load don't drop lock;
+            # inanimate room clutter is strictly rejected downstream by `is_plausible_human_dancer`.
+            det_c = max(0.40, min(0.65, float(self.detection_confidence) * 0.88))
+            pres_c = max(0.26, min(0.48, det_c * 0.66))
+            track_c = max(0.20, min(0.40, det_c * 0.52))
+            detector_num_poses = 1
         options = vision.PoseLandmarkerOptions(
             base_options=base_options,
             running_mode=vision.RunningMode.VIDEO,
@@ -539,28 +551,70 @@ class PoseTracker:
         seg_list = list(result.segmentation_masks) if getattr(result, "segmentation_masks", None) else []
 
         candidates = []
-        for idx in range(min(len(world_list), len(norm_list))):
+        raw_pose_count = min(len(world_list), len(norm_list))
+        for idx in range(raw_pose_count):
             w_lm = world_list[idx]
             n_lm = norm_list[idx]
             if w_lm and n_lm:
-                seg_obj = seg_list[idx] if idx < len(seg_list) else (seg_list[0] if seg_list else None)
+                # Never fall back to another player's segmentation mask (seg_list[0]); use None to
+                # trigger clean per-player anatomical mask fallback if MediaPipe omitted a mask.
+                seg_obj = seg_list[idx] if idx < len(seg_list) else None
                 is_plausible, score = is_plausible_human_dancer(n_lm, w, h)
                 if is_plausible:
                     candidates.append((score, (w_lm, n_lm, seg_obj)))
 
-        # Sort candidates by anatomical plausibility score descending and select top max_players
+        # Sort candidates by anatomical plausibility score descending and suppress overlapping duplicates
         candidates.sort(key=lambda c: c[0], reverse=True)
-        valid_dets = [c[1] for c in candidates[: self.max_players]]
+        nms_suppressed = 0
+        if self.max_players >= 2 and len(candidates) > 1:
+            candidates, nms_suppressed = suppress_duplicate_poses(candidates, max_players=self.max_players)
+            if nms_suppressed > 0:
+                get_session_logger().log_throttled(
+                    "2p_nms_dup",
+                    "INFO",
+                    "TRACKING_2P",
+                    f"Pose NMS suppressed {nms_suppressed} duplicate detection(s) (raw={raw_pose_count}, kept={len(candidates)}).",
+                    interval_s=3.0,
+                )
+
+        # In 1P mode take top 1; in 2P mode pass ALL NMS-filtered candidates to MultiPlayerAssociator
+        # so enrolled players are matched by position + appearance rather than blind top-2 truncation.
+        valid_dets = [c[1] for c in (candidates[:1] if self.max_players == 1 else candidates)]
 
         active_slots = self.slots[: self.max_players]
         players_out: List[Optional[PlayerFrame]] = [None] * self.max_players
 
         if not valid_dets:
+            if self.max_players == 1 and raw_pose_count > 0:
+                get_session_logger().log_throttled(
+                    "1p_plaus_reject",
+                    "INFO",
+                    "TRACKING_1P",
+                    f"Pose detected by MediaPipe (raw={raw_pose_count}) rejected by plausibility gate.",
+                    interval_s=3.0,
+                )
+            crowded_fallback = self.max_players >= 2 and self.associator.was_crowded
             for s_idx, slot in enumerate(active_slots):
-                players_out[s_idx] = slot.handle_missing(dt=dt_infer, frame_w=w, frame_h=h)
+                was_tracked_1p = (
+                    self.max_players == 1
+                    and slot.person_lock.coasting.last_joints_3d is not None
+                )
+                pf_miss = slot.handle_missing(
+                    dt=dt_infer, frame_w=w, frame_h=h, is_crowded=crowded_fallback
+                )
+                players_out[s_idx] = pf_miss
+                if was_tracked_1p and pf_miss is None:
+                    dt_ms = round((dt_infer or 0.0) * 1000.0, 1)
+                    get_session_logger().log_throttled(
+                        "1p_drop",
+                        "WARN",
+                        "TRACKING_1P",
+                        f"1P tracking dropped after coasting (raw_poses={raw_pose_count}, dt={dt_ms}ms).",
+                        interval_s=2.5,
+                    )
         elif self.max_players == 1:
             w_lm, n_lm, seg_obj = valid_dets[0]
-            players_out[0] = active_slots[0].process_detection(
+            pf0 = active_slots[0].process_detection(
                 world_lm=w_lm,
                 norm_lm=n_lm,
                 seg_mask_obj=seg_obj,
@@ -577,19 +631,43 @@ class PoseTracker:
                 sample_bgr=sample_bgr,
                 primary_eye=primary_eye,
             )
+            players_out[0] = pf0
+            if pf0 is None or pf0.coasting:
+                get_session_logger().log_throttled(
+                    "1p_impostor_gate",
+                    "INFO",
+                    "TRACKING_1P",
+                    f"DancerIdentityLock gated candidate (coasting={bool(pf0 and pf0.coasting)}, streak={active_slots[0].person_lock.identity.rejected_streak}).",
+                    interval_s=2.5,
+                )
         else:
             # 2-Player mode: associate detections to persistent slots with Long-Term Identity Memory
-            assignments, _ = self.associator.match(
+            assignments, is_crowded = self.associator.match(
                 slots=active_slots,
                 detections_norm_lm=[d[1] for d in valid_dets],
                 sample_bgr=sample_bgr,
                 dt=dt_infer,
                 now=now_perf,
             )
+            if self.associator.last_swap_audit_triggered:
+                get_session_logger().log_throttled(
+                    "2p_swap_audit",
+                    "INFO",
+                    "TRACKING_2P",
+                    "Post-Separation Re-ID Audit corrected a P1/P2 identity swap.",
+                    interval_s=2.0,
+                )
+
             for s_idx, slot in enumerate(active_slots):
                 if s_idx in assignments:
                     d_idx = assignments[s_idx]
                     w_lm, n_lm, seg_obj = valid_dets[d_idx]
+                    other_idx = 1 - s_idx
+                    other_nlm = (
+                        valid_dets[assignments[other_idx]][1]
+                        if other_idx in assignments
+                        else active_slots[other_idx].last_norm_landmarks
+                    )
                     players_out[s_idx] = slot.process_detection(
                         world_lm=w_lm,
                         norm_lm=n_lm,
@@ -606,9 +684,31 @@ class PoseTracker:
                         enforce_single_person_gate=False,
                         sample_bgr=sample_bgr,
                         primary_eye=primary_eye,
+                        other_norm_lm=other_nlm,
+                        is_crowded=is_crowded,
                     )
                 else:
-                    players_out[s_idx] = slot.handle_missing(dt=dt_infer, frame_w=w, frame_h=h)
+                    was_active = slot.identity_profile.active
+                    pf_miss = slot.handle_missing(
+                        dt=dt_infer, frame_w=w, frame_h=h, is_crowded=is_crowded
+                    )
+                    players_out[s_idx] = pf_miss
+                    if pf_miss is not None and pf_miss.coasting and is_crowded:
+                        get_session_logger().log_throttled(
+                            f"2p_crowd_coast_p{s_idx + 1}",
+                            "INFO",
+                            "TRACKING_2P",
+                            f"Player {s_idx + 1} entered overlap coasting (raw_poses={raw_pose_count}, kept={len(valid_dets)}, crowded={is_crowded}).",
+                            interval_s=2.5,
+                        )
+                    elif was_active and pf_miss is None:
+                        get_session_logger().log_throttled(
+                            f"2p_drop_p{s_idx + 1}",
+                            "WARN",
+                            "TRACKING_2P",
+                            f"Player {s_idx + 1} tracking dropped after coasting (raw_poses={raw_pose_count}, kept={len(valid_dets)}, crowded={is_crowded}).",
+                            interval_s=2.5,
+                        )
 
         tracked_mask = sum(
             (1 << i)

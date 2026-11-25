@@ -32,6 +32,7 @@ from .player_slot import (
     PlayerSlotState,
     MultiPlayerAssociator,
     compose_player_index_mask,
+    suppress_duplicate_poses,
 )
 from .gesture_detector import (
     ArmRaiseGestureDetector,
