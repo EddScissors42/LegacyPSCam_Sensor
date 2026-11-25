@@ -194,7 +194,9 @@ def is_plausible_human_dancer(norm_landmarks: Any, w: Optional[int] = None, h: O
     if aspect < 0.28:
         return False, 0.0
 
-    # Calculate anatomical completeness score across core joints
+    # Calculate anatomical completeness score across core joints.
+    # When upper body is unmistakably human (strong nose + both shoulders, e.g. desk/menu framing
+    # where lower legs are off-screen), allow score >= 2.2 so the silhouette appears immediately.
     core_joints = (
         NOSE, LEFT_SHOULDER, RIGHT_SHOULDER, LEFT_ELBOW, RIGHT_ELBOW,
         LEFT_WRIST, RIGHT_WRIST, LEFT_HIP, RIGHT_HIP, LEFT_KNEE, RIGHT_KNEE,
@@ -208,10 +210,49 @@ def is_plausible_human_dancer(norm_landmarks: Any, w: Optional[int] = None, h: O
             p = min(1.0, max(0.0, float(getattr(lm, "presence", 1.0))))
             score += 0.5 * (v + p)
 
-    if score < 3.2:
+    strong_upper_body = (nose_vis >= 0.45 and sh_min >= 0.45 and sh_w >= 0.08)
+    min_score = 2.2 if strong_upper_body else 3.2
+    if score < min_score:
         return False, score
 
     return True, score
+
+
+def explain_plausibility_rejection(norm_landmarks: Any, w: Optional[int] = None, h: Optional[int] = None) -> str:
+    """Returns a compact diagnostic reason string when `is_plausible_human_dancer` rejects a pose."""
+    if not norm_landmarks or len(norm_landmarks) < 25:
+        return "too_few_landmarks"
+    sh_l = norm_landmarks[LEFT_SHOULDER]
+    sh_r = norm_landmarks[RIGHT_SHOULDER]
+    sh_l_v = float(getattr(sh_l, "visibility", 1.0))
+    sh_r_v = float(getattr(sh_r, "visibility", 1.0))
+    sh_min, sh_max = min(sh_l_v, sh_r_v), max(sh_l_v, sh_r_v)
+    if sh_max < 0.25:
+        return f"sh_max={sh_max:.2f}"
+    hip_vis = max(
+        float(getattr(norm_landmarks[LEFT_HIP], "visibility", 1.0)),
+        float(getattr(norm_landmarks[RIGHT_HIP], "visibility", 1.0)),
+    )
+    nose_vis = float(getattr(norm_landmarks[NOSE], "visibility", 1.0))
+    if sh_min < 0.18 and not (sh_min >= 0.04 and (hip_vis >= 0.25 or nose_vis >= 0.25)):
+        return f"sh_min={sh_min:.2f},hip={hip_vis:.2f},nose={nose_vis:.2f}"
+    sh_w = math.hypot(float(sh_r.x) - float(sh_l.x), float(sh_r.y) - float(sh_l.y))
+    if sh_w > 0.80:
+        return f"sh_w={sh_w:.2f}>0.80"
+    xs = [float(lm.x) for lm in norm_landmarks if float(getattr(lm, "visibility", 1.0)) >= 0.15]
+    ys = [float(lm.y) for lm in norm_landmarks if float(getattr(lm, "visibility", 1.0)) >= 0.15]
+    if len(xs) < 6:
+        return f"vis_pts={len(xs)}<6"
+    bbox_w = max(xs) - min(xs)
+    bbox_h = max(ys) - min(ys)
+    px_w = bbox_w * float(w) if (w and h) else bbox_w
+    px_h = bbox_h * float(h) if (w and h) else bbox_h
+    aspect = px_h / max(1e-3, px_w)
+    if bbox_h < 0.12:
+        return f"bbox_h={bbox_h:.2f}<0.12"
+    if aspect < 0.28:
+        return f"aspect={aspect:.2f}<0.28"
+    return f"score/geom(sh_w={sh_w:.2f},bw={bbox_w:.2f},bh={bbox_h:.2f},asp={aspect:.2f})"
 
 
 def _pose_torso_geometry(norm_landmarks: Any) -> Optional[Dict[str, Any]]:
@@ -1094,7 +1135,9 @@ class PlayerSlotState:
                     cv2.addWeighted(prob_small, 0.80, self._seg_prob_ema, 0.20, 0.0, dst=self._seg_prob_ema)
 
                 smooth_prob = cv2.GaussianBlur(self._seg_prob_ema, (3, 3), 0)
-                raw_bin = (smooth_prob >= 0.48).astype(np.uint8) * 255
+                # Threshold at 0.36 (captures full hair/top of head and darker lower legs/shoes on
+                # MediaPipe Lite while keeping interior arm/waist gaps crisp and clean).
+                raw_bin = (smooth_prob >= 0.36).astype(np.uint8) * 255
 
                 # Remove tiny isolated background specks and fill 1px clothing pinholes
                 raw_bin = cv2.morphologyEx(raw_bin, cv2.MORPH_OPEN, self._ELLIPSE_3X3)

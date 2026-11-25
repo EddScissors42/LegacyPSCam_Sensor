@@ -58,6 +58,7 @@ from sensor.player_slot import (
     MultiPlayerAssociator,
     compose_player_index_mask,
     is_plausible_human_dancer,
+    explain_plausibility_rejection,
     suppress_duplicate_poses,
 )
 from sensor.session_logger import get_session_logger
@@ -192,12 +193,11 @@ class PoseTracker:
             track_c = max(0.22, min(0.42, det_c * 0.58))
             detector_num_poses = 3
         else:
-            # 1-Player mode: balanced detection + spin/back-turn resilient presence & tracking thresholds
-            # so 360° spins, sideways turns, and low-FPS frames under game load don't drop lock;
-            # inanimate room clutter is strictly rejected downstream by `is_plausible_human_dancer`.
-            det_c = max(0.40, min(0.65, float(self.detection_confidence) * 0.88))
-            pres_c = max(0.26, min(0.48, det_c * 0.66))
-            track_c = max(0.20, min(0.40, det_c * 0.52))
+            # 1-Player mode: keep detection clean (avoids background hallucinations) and presence/tracking
+            # balanced so low-confidence twisted limb artifacts never corrupt Just Dance beat scoring.
+            det_c = max(0.45, min(0.68, float(self.detection_confidence)))
+            pres_c = max(0.32, min(0.54, det_c * 0.72))
+            track_c = max(0.25, min(0.46, det_c * 0.56))
             detector_num_poses = 1
         options = vision.PoseLandmarkerOptions(
             base_options=base_options,
@@ -586,11 +586,12 @@ class PoseTracker:
 
         if not valid_dets:
             if self.max_players == 1 and raw_pose_count > 0:
+                reason = explain_plausibility_rejection(norm_list[0], w, h) if norm_list else "empty"
                 get_session_logger().log_throttled(
                     "1p_plaus_reject",
                     "INFO",
                     "TRACKING_1P",
-                    f"Pose detected by MediaPipe (raw={raw_pose_count}) rejected by plausibility gate.",
+                    f"Pose detected by MediaPipe (raw={raw_pose_count}) rejected by plausibility gate ({reason}).",
                     interval_s=3.0,
                 )
             crowded_fallback = self.max_players >= 2 and self.associator.was_crowded

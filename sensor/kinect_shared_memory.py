@@ -354,31 +354,9 @@ class KinectImageSharedMemory:
                 v1_tracked_val = 1 if tracked else 0
                 v2_tracked_mask = 1 if tracked else 0
 
-            # 1. Prepare 640x480 BGRA buffer in-place (aspect-preserving letterbox for widescreen
-            # cameras like PS4 Camera 1280x800 16:10 or 1280x720 16:9 so Just Dance Legacy's 16:9
-            # HUD silhouette viewport never stretches or slices off head/raised arms/feet).
-            letterbox_fit_h = IMAGE_H
-            letterbox_pad_y = 0
+            # 1. Prepare 640x480 BGRA buffer in-place (zero heap allocation, full-frame 1:1 with Kinect)
             if frame_bgr is not None:
-                fh_src, fw_src = frame_bgr.shape[:2]
-                src_aspect = fw_src / float(max(1, fh_src))
-                dst_aspect = IMAGE_W / float(IMAGE_H)
-                if src_aspect > dst_aspect + 0.03:
-                    # Fit width to 640px and center vertically inside 640x480 (multiple of 4px
-                    # so the 320x240 depth/player mask shares exact 2:1 pixel alignment).
-                    fit_h = max(4, min(IMAGE_H, (int(round(IMAGE_W / src_aspect)) // 4) * 4))
-                    pad_y = ((IMAGE_H - fit_h) // 4) * 2
-                    letterbox_fit_h = fit_h
-                    letterbox_pad_y = pad_y
-                    self._resized_bgr.fill(0)
-                    cv2.resize(
-                        frame_bgr,
-                        (IMAGE_W, fit_h),
-                        dst=self._resized_bgr[pad_y:pad_y + fit_h, :],
-                        interpolation=cv2.INTER_LINEAR,
-                    )
-                    src_bgr = self._resized_bgr
-                elif fh_src != IMAGE_H or fw_src != IMAGE_W:
+                if frame_bgr.shape[0] != IMAGE_H or frame_bgr.shape[1] != IMAGE_W:
                     cv2.resize(frame_bgr, (IMAGE_W, IMAGE_H), dst=self._resized_bgr, interpolation=cv2.INTER_LINEAR)
                     src_bgr = self._resized_bgr
                 else:
@@ -388,20 +366,9 @@ class KinectImageSharedMemory:
             else:
                 bgra_payload = ZERO_BGRA_BYTES
 
-            # 2. Prepare 320x240 masks for both V1 and V2 in-place (aligned 1:1 with color letterbox)
+            # 2. Prepare 320x240 masks for both V1 and V2 in-place (SIMD threshold, zero allocation)
             if mask_binary is not None and v1_tracked_val == 1:
-                if letterbox_pad_y > 0 and letterbox_fit_h < IMAGE_H:
-                    m_fit_h = max(2, letterbox_fit_h // 2)
-                    m_pad_y = letterbox_pad_y // 2
-                    self._small_mask.fill(0)
-                    cv2.resize(
-                        mask_binary,
-                        (MASK_W, m_fit_h),
-                        dst=self._small_mask[m_pad_y:m_pad_y + m_fit_h, :],
-                        interpolation=cv2.INTER_NEAREST,
-                    )
-                    src_mask = self._small_mask
-                elif mask_binary.shape[0] != MASK_H or mask_binary.shape[1] != MASK_W:
+                if mask_binary.shape[0] != MASK_H or mask_binary.shape[1] != MASK_W:
                     cv2.resize(mask_binary, (MASK_W, MASK_H), dst=self._small_mask, interpolation=cv2.INTER_NEAREST)
                     src_mask = self._small_mask
                 else:

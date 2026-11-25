@@ -244,12 +244,12 @@ class InertialCoastingFilter:
         max_ms = (
             float(max_ms_override)
             if max_ms_override is not None
-            else float(self.cfg.get("inertial_coasting_max_ms", 420.0))
+            else float(self.cfg.get("inertial_coasting_max_ms", 250.0))
         )
-        # Under heavy game CPU contention (< 25 FPS, dt >= 40ms), ensure at least 450ms of
-        # coasting so 360° spins don't drop tracking after just 2-3 low-FPS frames.
+        # Under transient CPU stalls (< 25 FPS, dt >= 40ms), keep a modest 320ms floor so micro-drops
+        # stay bridged without feeding long stale/extrapolated poses into Just Dance's beat scorer.
         if max_ms_override is None and dt_sec >= 0.040:
-            max_ms = max(max_ms, 450.0)
+            max_ms = max(max_ms, 320.0)
         self.coasting_elapsed_s += dt_sec
 
         if self.coasting_elapsed_s * 1000.0 > max_ms:

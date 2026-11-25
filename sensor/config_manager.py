@@ -54,7 +54,7 @@ DEFAULT_CONFIG = {
     "face_follow_adaptive_zoom": False,
     "person_lock_enabled": True,
     "inertial_coasting_enabled": True,
-    "inertial_coasting_max_ms": 420,
+    "inertial_coasting_max_ms": 250,
     "dancer_lock_enabled": True,
     "dancer_lock_color_thresh": 0.35,
     "dancer_lock_roi_focus": True,

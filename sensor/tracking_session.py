@@ -148,6 +148,53 @@ def _find_window_hwnd(window_name: str):
         return None
 
 
+class _PROCESS_POWER_THROTTLING_STATE(ctypes.Structure):
+    _fields_ = [
+        ("Version", wintypes.DWORD),
+        ("ControlMask", wintypes.DWORD),
+        ("StateMask", wintypes.DWORD),
+    ]
+
+
+def set_realtime_process_qos(enable: bool = True) -> None:
+    """
+    Prevents Windows 11 EcoQoS / Thread Director from demoting the sensor process to throttled
+    E-cores (~13 FPS) when Just Dance Legacy runs fullscreen in the foreground.
+    Raises priority to HIGH_PRIORITY_CLASS and disables ProcessPowerThrottling during active
+    tracking, cleanly restoring NORMAL_PRIORITY_CLASS when the session ends.
+    """
+    if os.name != "nt":
+        return
+    try:
+        k32 = ctypes.windll.kernel32
+        k32.GetCurrentProcess.restype = wintypes.HANDLE
+        hproc = k32.GetCurrentProcess()
+
+        k32.SetPriorityClass.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        k32.SetPriorityClass.restype = wintypes.BOOL
+        # HIGH_PRIORITY_CLASS = 0x80, NORMAL_PRIORITY_CLASS = 0x20
+        k32.SetPriorityClass(hproc, 0x00000080 if enable else 0x00000020)
+
+        # ProcessPowerThrottling = 4, PROCESS_POWER_THROTTLING_EXECUTION_SPEED = 0x1
+        # ControlMask=1, StateMask=0 explicitly opts out of Windows 11 Efficiency Mode throttling.
+        if hasattr(k32, "SetProcessInformation"):
+            k32.SetProcessInformation.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+            k32.SetProcessInformation.restype = wintypes.BOOL
+            state = _PROCESS_POWER_THROTTLING_STATE(
+                Version=1,
+                ControlMask=1 if enable else 0,
+                StateMask=0,
+            )
+            k32.SetProcessInformation(hproc, 4, ctypes.byref(state), ctypes.sizeof(state))
+
+        # Keep CPU awake during active dance session (ES_CONTINUOUS | ES_SYSTEM_REQUIRED)
+        k32.SetThreadExecutionState.argtypes = [wintypes.DWORD]
+        k32.SetThreadExecutionState.restype = wintypes.DWORD
+        k32.SetThreadExecutionState(0x80000001 if enable else 0x80000000)
+    except Exception:
+        pass
+
+
 def set_high_resolution_timer(enable=True):
     """
     Enables/disables Windows 1ms high-resolution timer via winmm and ntdll
@@ -213,8 +260,9 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None, prewar
     print(f"  Mirrored: {mirror} | Smoothing: {smoothing_alpha}")
     print(f"==========================================\n")
 
-    # Enable Windows 1ms high-precision timer for 60 FPS IPC streaming
+    # Enable Windows 1ms high-precision timer + disable Windows 11 EcoQoS background throttling
     set_high_resolution_timer(True)
+    set_realtime_process_qos(True)
 
     # Ensure PS4 Camera is initialized (firmware uploaded if in bootloader state)
     if mode == "pscam":
@@ -546,7 +594,11 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None, prewar
                         tracked_mask=multi_res.tracked_mask,
                     )
             else:
-                bridge.write_empty()
+                # Keep live camera image flowing to Just Dance even when untracked (zero skeleton/mask)
+                bridge.pose.write_empty()
+                bridge.pose_v2.write_empty()
+                bridge.image.write_image_and_mask(kinect_frame, None, tracked=False)
+                bridge.coach_x.write_coach_x(coach_x=0.0, enabled=False)
 
             # Feed primary player's 3D Hand Coordinates to Virtual Phone Controller
             vphone.update_from_joints(kinect_joints, bool(kinect_joints is not None))
@@ -692,6 +744,7 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None, prewar
         except Exception:
             pass
     finally:
+        set_realtime_process_qos(False)
         set_high_resolution_timer(False)
         try:
             from sensor.session_logger import get_session_logger
@@ -751,6 +804,7 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
         vphone.set_enabled(True)
 
     set_high_resolution_timer(True)
+    set_realtime_process_qos(True)
     bridge = get_kinect_bridge()
 
     overlay = TrackingOverlay(show_hud=True)
@@ -909,6 +963,7 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
     except Exception as e:
         print(f"[ERROR] Exception in DualShock 4 tracking loop: {e}")
     finally:
+        set_realtime_process_qos(False)
         set_high_resolution_timer(False)
         try:
             from sensor.session_logger import get_session_logger
