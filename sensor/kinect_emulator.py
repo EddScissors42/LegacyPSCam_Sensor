@@ -7,6 +7,8 @@ without requiring any DLL file replacement in the game directory.
 import sys
 import os
 import time
+import shutil
+import hashlib
 import ctypes
 from ctypes import wintypes
 import threading
@@ -31,6 +33,7 @@ MEM_COMMIT = 0x1000
 MEM_RESERVE = 0x2000
 MEM_RELEASE = 0x8000
 PAGE_READWRITE = 0x04
+LIST_MODULES_32BIT = 0x01
 LIST_MODULES_ALL = 0x03
 TH32CS_SNAPPROCESS = 0x00000002
 PE32_MAGIC = 0x010B
@@ -68,6 +71,21 @@ TARGET_PROCESS_NAMES = [
     "justdance.exe",
 ]
 
+# Additional Just Dance Legacy / 2017 executable aliases detected safely alongside TARGET_PROCESS_NAMES
+TARGET_PROCESS_ALIASES = (
+    "justdance2017.exe",
+    "legacyoffline.exe",
+    "legacy_offline.exe",
+    "jd2017.exe",
+    "jdlegacy.exe",
+)
+
+# Never match our own sensor binaries even if named similarly
+_SELF_PROCESS_EXCLUDES = (
+    "legacypscam",
+    "legacysensor",
+)
+
 
 class KinectEmulatorDaemon:
     """
@@ -87,6 +105,8 @@ class KinectEmulatorDaemon:
         self.attached_pid: Optional[int] = None
         self.attached_game_name: Optional[str] = None
         self.attached_mode: Optional[str] = None
+        self.last_error_code: str = ""
+        self.last_error_message: str = ""
         self._status_callbacks: List[Callable[[bool, str, int], None]] = []
         self._warned_pids: Set[Tuple[int, str]] = set()
 
@@ -96,11 +116,14 @@ class KinectEmulatorDaemon:
         self._ntdll = ctypes.WinDLL("ntdll")
         self._configure_win32_signatures()
 
-        # Resolve path to our 32-bit proxy DLL (Legacy10.dll)
-        self.proxy_dll_path = self._resolve_proxy_dll_path()
+        # Resolve path to our 32-bit proxy DLL (Legacy10.dll), staged outside %TEMP% when frozen
+        self.proxy_dll_path = self._stage_proxy_dll(self._resolve_proxy_dll_path())
 
     def _log_diag_once(self, pid: int, reason_key: str, message: str) -> None:
         """Logs an injection diagnostic message once per (pid, reason_key) to prevent log spam."""
+        with self._lock:
+            self.last_error_code = str(reason_key)
+            self.last_error_message = str(message)
         key = (int(pid), str(reason_key))
         if key in self._warned_pids:
             return
@@ -160,6 +183,9 @@ class KinectEmulatorDaemon:
         self._k32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
         self._k32.WaitForSingleObject.restype = wintypes.DWORD
 
+        self._k32.GetExitCodeThread.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+        self._k32.GetExitCodeThread.restype = wintypes.BOOL
+
         self._k32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
         self._k32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
 
@@ -205,6 +231,57 @@ class KinectEmulatorDaemon:
                 return p
 
         return candidate_dirs[0] / "Legacy10.dll"
+
+    @staticmethod
+    def _stage_proxy_dll(src_path: Path) -> Path:
+        """
+        When running from a PyInstaller --onefile %TEMP%\\_MEI* extraction directory,
+        stages Legacy10.dll into the persistent %APPDATA%\\LegacyPSCam_Sensor\\tools\\
+        folder so Windows 10 Defender does not block LoadLibraryW from %TEMP%.
+        """
+        if not src_path.is_file():
+            return src_path
+
+        src_lower = str(src_path).lower()
+        needs_staging = getattr(sys, "frozen", False) and (
+            "_mei" in src_lower or "\\temp\\" in src_lower or "/temp/" in src_lower
+        )
+        if not needs_staging:
+            return src_path
+
+        try:
+            appdata = os.environ.get("APPDATA")
+            if not appdata:
+                return src_path
+            dst_dir = Path(appdata) / "LegacyPSCam_Sensor" / "tools"
+            dst_dir.mkdir(parents=True, exist_ok=True)
+            dst_path = dst_dir / "Legacy10.dll"
+
+            src_bytes = src_path.read_bytes()
+            src_hash = hashlib.sha256(src_bytes).hexdigest()
+            if dst_path.is_file():
+                try:
+                    if hashlib.sha256(dst_path.read_bytes()).hexdigest() == src_hash:
+                        return dst_path
+                except Exception:
+                    pass
+
+            tmp_path = dst_dir / f"Legacy10.{os.getpid()}.part"
+            tmp_path.write_bytes(src_bytes)
+            try:
+                tmp_path.replace(dst_path)
+            except OSError:
+                # If an already-running game locks dst_path, keep using it if size matches
+                try:
+                    tmp_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
+                if dst_path.is_file() and dst_path.stat().st_size == len(src_bytes):
+                    return dst_path
+                return src_path
+            return dst_path
+        except Exception:
+            return src_path
 
     def _get_process_path(self, pid: int) -> Optional[str]:
         """Resolves the executable absolute path of a running process."""
@@ -277,11 +354,13 @@ class KinectEmulatorDaemon:
                 "connected": self.attached_pid is not None,
                 "game_name": self.attached_game_name or "",
                 "pid": self.attached_pid or 0,
-                "mode": self.attached_mode or ""
+                "mode": self.attached_mode or "",
+                "last_error_code": self.last_error_code,
+                "last_error_message": self.last_error_message,
             }
 
     def _monitor_loop(self) -> None:
-        """Main daemon loop running at ~3 Hz when searching, 1 Hz when already attached."""
+        """Main daemon loop running at 10 Hz when searching (catches fast game boot), 1.25 Hz when attached."""
         while self._running:
             try:
                 if not self.enabled:
@@ -317,12 +396,14 @@ class KinectEmulatorDaemon:
                                 self.attached_pid = pid
                                 self.attached_game_name = name
                                 self.attached_mode = "iat_hook_32"
+                                self.last_error_code = ""
+                                self.last_error_message = ""
                             self._notify_status(True, name, pid)
 
             except Exception as exc:
                 self._log_diag_once(0, "MONITOR_LOOP_ERR", f"Monitor loop error: {exc}")
 
-            time.sleep(0.35)
+            time.sleep(0.10)
 
     def _is_process_alive(self, pid: int) -> bool:
         """Checks if a process handle can be opened with query permissions."""
@@ -372,14 +453,17 @@ class KinectEmulatorDaemon:
             if not self._k32.Process32FirstW(h_snap, ctypes.byref(pe)):
                 return None
 
+            self_pid = os.getpid()
+            all_targets = tuple(TARGET_PROCESS_NAMES) + TARGET_PROCESS_ALIASES
             while True:
                 pid = int(pe.th32ProcessID)
-                if pid > 4:
+                if pid > 4 and pid != self_pid:
                     exe_name = pe.szExeFile
                     exe_lower = exe_name.lower()
-                    for target_name in TARGET_PROCESS_NAMES:
-                        if exe_lower == target_name or target_name in exe_lower:
-                            return {"pid": pid, "name": exe_name}
+                    if not any(excl in exe_lower for excl in _SELF_PROCESS_EXCLUDES):
+                        for target_name in all_targets:
+                            if exe_lower == target_name or target_name in exe_lower:
+                                return {"pid": pid, "name": exe_name}
                 if not self._k32.Process32NextW(h_snap, ctypes.byref(pe)):
                     break
         finally:
@@ -413,25 +497,38 @@ class KinectEmulatorDaemon:
         try:
             h_mods = (wintypes.HMODULE * 1024)()
             cb_needed = wintypes.DWORD()
-            if not self._psapi.EnumProcessModulesEx(h_proc, h_mods, ctypes.sizeof(h_mods), ctypes.byref(cb_needed), LIST_MODULES_ALL):
-                return False
+            # Prefer LIST_MODULES_32BIT (0x01) so 64-bit WoW64 system DLLs never shadow 32-bit kernel32.dll on Win10
+            ok_enum = self._psapi.EnumProcessModulesEx(
+                h_proc, h_mods, ctypes.sizeof(h_mods), ctypes.byref(cb_needed), LIST_MODULES_32BIT
+            )
+            if not ok_enum or cb_needed.value == 0:
+                if not self._psapi.EnumProcessModulesEx(
+                    h_proc, h_mods, ctypes.sizeof(h_mods), ctypes.byref(cb_needed), LIST_MODULES_ALL
+                ):
+                    return False
 
-            mod_count = cb_needed.value // ctypes.sizeof(wintypes.HMODULE)
+            mod_count = min(1024, cb_needed.value // ctypes.sizeof(wintypes.HMODULE))
             mod_buf = ctypes.create_unicode_buffer(512)
             k32_base = None
             exe_base = None
             proxy_base = None
+            exe_lower = exe_name.lower()
 
             for i in range(mod_count):
                 try:
+                    mod_addr = int(h_mods[i] or 0)
+                    # Strictly enforce 32-bit address space (< 4 GB) to reject 64-bit WoW64 modules
+                    if mod_addr == 0 or mod_addr >= 0x100000000:
+                        continue
                     self._psapi.GetModuleFileNameExW(h_proc, h_mods[i], mod_buf, 512)
                     fn = mod_buf.value.lower()
-                    if "kernel32.dll" in fn and ("system32" in fn or "syswow64" in fn):
-                        k32_base = h_mods[i]
-                    elif exe_name.lower() in fn:
-                        exe_base = h_mods[i]
-                    elif "legacy10.dll" in fn or "legacy10" in fn:
-                        proxy_base = h_mods[i]
+                    base_name = Path(fn).name
+                    if base_name == "kernel32.dll" and ("system32" in fn or "syswow64" in fn):
+                        k32_base = mod_addr
+                    elif base_name == exe_lower:
+                        exe_base = mod_addr
+                    elif "legacy10.dll" in base_name or "legacy10" in base_name:
+                        proxy_base = mod_addr
                 except Exception:
                     pass
 
@@ -442,7 +539,11 @@ class KinectEmulatorDaemon:
             if not proxy_base:
                 loadlib_addr = self._find_remote_export(h_proc, k32_base, b"LoadLibraryW")
                 if not loadlib_addr:
-                    self._log_diag_once(pid, "NO_LOADLIB", f"Could not resolve LoadLibraryW in {exe_name} (PID {pid}).")
+                    self._log_diag_once(
+                        pid,
+                        "NO_LOADLIB",
+                        f"Could not resolve 32-bit LoadLibraryW in {exe_name} (PID {pid}, k32={hex(k32_base)}).",
+                    )
                     return False
 
                 dll_path_str = str(proxy_path.resolve())
@@ -451,6 +552,7 @@ class KinectEmulatorDaemon:
                 if not remote_str:
                     return False
 
+                remote_hmod = 0
                 try:
                     written_path = ctypes.c_size_t(0)
                     if not self._k32.WriteProcessMemory(
@@ -468,41 +570,68 @@ class KinectEmulatorDaemon:
                         )
                         return False
 
-                    self._k32.WaitForSingleObject(h_thread, 3000)
+                    self._k32.WaitForSingleObject(h_thread, 4000)
+                    exit_code = wintypes.DWORD(0)
+                    if self._k32.GetExitCodeThread(h_thread, ctypes.byref(exit_code)):
+                        if exit_code.value not in (0, 259):  # 259 = STILL_ACTIVE
+                            remote_hmod = int(exit_code.value)
                     self._k32.CloseHandle(h_thread)
                 finally:
                     self._k32.VirtualFreeEx(h_proc, ctypes.c_void_p(remote_str), 0, MEM_RELEASE)
 
-                # Re-enumerate to locate the injected proxy DLL base address
-                self._psapi.EnumProcessModulesEx(h_proc, h_mods, ctypes.sizeof(h_mods), ctypes.byref(cb_needed), LIST_MODULES_ALL)
-                mod_count = cb_needed.value // ctypes.sizeof(wintypes.HMODULE)
-                for i in range(mod_count):
-                    try:
-                        self._psapi.GetModuleFileNameExW(h_proc, h_mods[i], mod_buf, 512)
-                        fn = mod_buf.value.lower()
-                        if "legacy10.dll" in fn or "legacy10" in fn:
-                            proxy_base = h_mods[i]
-                            break
-                    except Exception:
-                        pass
+                # Re-enumerate 32-bit modules to locate the injected proxy DLL base address
+                if self._psapi.EnumProcessModulesEx(
+                    h_proc, h_mods, ctypes.sizeof(h_mods), ctypes.byref(cb_needed), LIST_MODULES_32BIT
+                ):
+                    mod_count = min(1024, cb_needed.value // ctypes.sizeof(wintypes.HMODULE))
+                    for i in range(mod_count):
+                        try:
+                            mod_addr = int(h_mods[i] or 0)
+                            if mod_addr == 0 or mod_addr >= 0x100000000:
+                                continue
+                            self._psapi.GetModuleFileNameExW(h_proc, h_mods[i], mod_buf, 512)
+                            fn = mod_buf.value.lower()
+                            if "legacy10.dll" in fn or "legacy10" in fn:
+                                proxy_base = mod_addr
+                                break
+                        except Exception:
+                            pass
+
+                # Fallback: LoadLibraryW's 32-bit return value IS the loaded HMODULE base address
+                if not proxy_base and remote_hmod != 0:
+                    proxy_base = remote_hmod
 
             if not proxy_base:
-                self._log_diag_once(pid, "PROXY_NOT_LOADED", f"Legacy10.dll failed to load into {exe_name} (PID {pid}).")
+                self._log_diag_once(
+                    pid,
+                    "LOADLIB_RETURNED_NULL",
+                    f"Legacy10.dll failed to load into {exe_name} (PID {pid}) from '{proxy_path}'. Check Windows Defender / antivirus exclusions.",
+                )
                 return False
 
-            proxy_exports = self._get_dll_exports_by_ordinal(h_proc, proxy_base)
-            if not proxy_exports:
+            exports_by_ord, exports_by_name = self._get_dll_exports(h_proc, proxy_base)
+            if not exports_by_ord:
+                self._log_diag_once(pid, "NO_EXPORTS", f"Could not read exports from Legacy10.dll in {exe_name} (PID {pid}).")
                 return False
 
-            iat_rva = self._find_kinect_iat_rva(h_proc, exe_base) or 0x9cd250
+            ilt_rva, iat_rva = self._find_kinect_iat_descriptor(h_proc, exe_base)
+            if not iat_rva:
+                iat_rva = 0x9CD250
             iat_addr = exe_base + iat_rva
 
-            new_iat_pointers = []
-            for ord_val in KINECT_ORDINALS_ORDER:
-                fn_addr = proxy_exports.get(ord_val)
-                if not fn_addr:
-                    return False
-                new_iat_pointers.append(fn_addr)
+            # Prefer dynamic ILT (OriginalFirstThunk) matching so any ordinal order or named import works
+            new_iat_pointers: List[int] = []
+            if ilt_rva:
+                new_iat_pointers = self._resolve_iat_via_ilt(
+                    h_proc, exe_base, ilt_rva, exports_by_ord, exports_by_name
+                )
+
+            if not new_iat_pointers:
+                for ord_val in KINECT_ORDINALS_ORDER:
+                    fn_addr = exports_by_ord.get(ord_val)
+                    if not fn_addr:
+                        return False
+                    new_iat_pointers.append(fn_addr)
 
             iat_bytes = bytearray()
             for ptr in new_iat_pointers:
@@ -510,11 +639,18 @@ class KinectEmulatorDaemon:
 
             old_protect = wintypes.DWORD()
             if self._k32.VirtualProtectEx(h_proc, ctypes.c_void_p(iat_addr), len(iat_bytes), PAGE_READWRITE, ctypes.byref(old_protect)):
-                written = ctypes.c_size_t()
-                self._k32.WriteProcessMemory(h_proc, ctypes.c_void_p(iat_addr), bytes(iat_bytes), len(iat_bytes), ctypes.byref(written))
+                written = ctypes.c_size_t(0)
+                ok_write = self._k32.WriteProcessMemory(
+                    h_proc, ctypes.c_void_p(iat_addr), bytes(iat_bytes), len(iat_bytes), ctypes.byref(written)
+                )
                 self._k32.VirtualProtectEx(h_proc, ctypes.c_void_p(iat_addr), len(iat_bytes), old_protect, ctypes.byref(old_protect))
-                return True
+                if ok_write and written.value == len(iat_bytes):
+                    print(
+                        f"[KINECT-EMU] Attached to {exe_name} (PID {pid}): patched {len(new_iat_pointers)} Kinect10 IAT entries via {proxy_path.name}"
+                    )
+                    return True
 
+            self._log_diag_once(pid, "IAT_PATCH_FAIL", f"Failed to patch Kinect10 IAT in {exe_name} (PID {pid}).")
             return False
 
         except Exception as exc:
@@ -532,6 +668,10 @@ class KinectEmulatorDaemon:
 
         nt_hdr = ctypes.create_string_buffer(256)
         if not self._k32.ReadProcessMemory(h_proc, ctypes.c_void_p(mod_base + e_lfanew), nt_hdr, 256, None):
+            return None
+
+        opt_magic = int.from_bytes(nt_hdr[0x18:0x1A], "little")
+        if opt_magic != PE32_MAGIC:
             return None
 
         exp_dir_rva = int.from_bytes(nt_hdr[0x78:0x7C], "little")
@@ -564,29 +704,39 @@ class KinectEmulatorDaemon:
 
         return None
 
-    def _get_dll_exports_by_ordinal(self, h_proc, mod_base: int) -> Dict[int, int]:
-        """Maps ordinal -> remote virtual address for 32-bit Legacy10.dll proxy."""
-        exports = {}
+    def _get_dll_exports(self, h_proc, mod_base: int) -> Tuple[Dict[int, int], Dict[bytes, int]]:
+        """Maps ordinal -> VA and export_name -> VA for 32-bit Legacy10.dll proxy."""
+        by_ord: Dict[int, int] = {}
+        by_name: Dict[bytes, int] = {}
         dos_hdr = ctypes.create_string_buffer(64)
         if not self._k32.ReadProcessMemory(h_proc, ctypes.c_void_p(mod_base), dos_hdr, 64, None):
-            return exports
+            return by_ord, by_name
         e_lfanew = int.from_bytes(dos_hdr[0x3C:0x40], "little")
 
         nt_hdr = ctypes.create_string_buffer(256)
         if not self._k32.ReadProcessMemory(h_proc, ctypes.c_void_p(mod_base + e_lfanew), nt_hdr, 256, None):
-            return exports
+            return by_ord, by_name
+
+        if int.from_bytes(nt_hdr[0x18:0x1A], "little") != PE32_MAGIC:
+            return by_ord, by_name
 
         exp_dir_rva = int.from_bytes(nt_hdr[0x78:0x7C], "little")
         if not exp_dir_rva:
-            return exports
+            return by_ord, by_name
 
         exp_dir = ctypes.create_string_buffer(40)
         if not self._k32.ReadProcessMemory(h_proc, ctypes.c_void_p(mod_base + exp_dir_rva), exp_dir, 40, None):
-            return exports
+            return by_ord, by_name
 
         base_ordinal = int.from_bytes(exp_dir[0x10:0x14], "little")
         num_funcs = int.from_bytes(exp_dir[0x14:0x18], "little")
+        num_names = int.from_bytes(exp_dir[0x18:0x1C], "little")
         funcs_rva = int.from_bytes(exp_dir[0x1C:0x20], "little")
+        names_rva = int.from_bytes(exp_dir[0x20:0x24], "little")
+        ords_rva = int.from_bytes(exp_dir[0x24:0x28], "little")
+
+        if num_funcs == 0 or num_funcs > 4096:
+            return by_ord, by_name
 
         funcs_table = (ctypes.c_uint32 * num_funcs)()
         self._k32.ReadProcessMemory(h_proc, ctypes.c_void_p(mod_base + funcs_rva), funcs_table, ctypes.sizeof(funcs_table), None)
@@ -595,24 +745,41 @@ class KinectEmulatorDaemon:
             ord_num = base_ordinal + i
             fn_rva = funcs_table[i]
             if fn_rva != 0:
-                exports[ord_num] = mod_base + fn_rva
+                by_ord[ord_num] = mod_base + fn_rva
 
-        return exports
+        if 0 < num_names <= 4096 and names_rva and ords_rva:
+            names_table = (ctypes.c_uint32 * num_names)()
+            ord_table = (ctypes.c_uint16 * num_names)()
+            self._k32.ReadProcessMemory(h_proc, ctypes.c_void_p(mod_base + names_rva), names_table, ctypes.sizeof(names_table), None)
+            self._k32.ReadProcessMemory(h_proc, ctypes.c_void_p(mod_base + ords_rva), ord_table, ctypes.sizeof(ord_table), None)
+            name_buf = ctypes.create_string_buffer(128)
+            for idx in range(num_names):
+                self._k32.ReadProcessMemory(h_proc, ctypes.c_void_p(mod_base + names_table[idx]), name_buf, 128, None)
+                fn_idx = ord_table[idx]
+                if fn_idx < num_funcs and funcs_table[fn_idx] != 0:
+                    by_name[name_buf.value] = mod_base + funcs_table[fn_idx]
 
-    def _find_kinect_iat_rva(self, h_proc, exe_base: int) -> Optional[int]:
-        """Finds FirstThunk RVA for Kinect10.dll in 32-bit game executable import directory."""
+        return by_ord, by_name
+
+    def _get_dll_exports_by_ordinal(self, h_proc, mod_base: int) -> Dict[int, int]:
+        """Maps ordinal -> remote virtual address for 32-bit Legacy10.dll proxy."""
+        by_ord, _ = self._get_dll_exports(h_proc, mod_base)
+        return by_ord
+
+    def _find_kinect_iat_descriptor(self, h_proc, exe_base: int) -> Tuple[Optional[int], Optional[int]]:
+        """Finds (OriginalFirstThunk, FirstThunk) RVAs for Kinect10.dll in 32-bit game executable."""
         dos_hdr = ctypes.create_string_buffer(64)
         if not self._k32.ReadProcessMemory(h_proc, ctypes.c_void_p(exe_base), dos_hdr, 64, None):
-            return None
+            return None, None
         e_lfanew = int.from_bytes(dos_hdr[0x3C:0x40], "little")
 
         nt_hdr = ctypes.create_string_buffer(256)
         if not self._k32.ReadProcessMemory(h_proc, ctypes.c_void_p(exe_base + e_lfanew), nt_hdr, 256, None):
-            return None
+            return None, None
 
         imp_dir_rva = int.from_bytes(nt_hdr[0x80:0x84], "little")
         if not imp_dir_rva:
-            return None
+            return None, None
 
         desc_buf = ctypes.create_string_buffer(20)
         curr_rva = imp_dir_rva
@@ -623,6 +790,7 @@ class KinectEmulatorDaemon:
             if desc_buf.raw == b"\x00" * 20:
                 break
 
+            orig_first_thunk = int.from_bytes(desc_buf[0x00:0x04], "little")
             name_rva = int.from_bytes(desc_buf[0x0C:0x10], "little")
             first_thunk = int.from_bytes(desc_buf[0x10:0x14], "little")
 
@@ -631,11 +799,49 @@ class KinectEmulatorDaemon:
                 self._k32.ReadProcessMemory(h_proc, ctypes.c_void_p(exe_base + name_rva), name_buf, 32, None)
                 dll_name = name_buf.value.lower()
                 if b"kinect10" in dll_name or b"legacy10" in dll_name:
-                    return first_thunk
+                    return (orig_first_thunk or None), (first_thunk or None)
 
             curr_rva += 20
 
-        return None
+        return None, None
+
+    def _find_kinect_iat_rva(self, h_proc, exe_base: int) -> Optional[int]:
+        """Finds FirstThunk RVA for Kinect10.dll in 32-bit game executable import directory."""
+        _, first_thunk = self._find_kinect_iat_descriptor(h_proc, exe_base)
+        return first_thunk
+
+    def _resolve_iat_via_ilt(
+        self,
+        h_proc,
+        exe_base: int,
+        ilt_rva: int,
+        exports_by_ord: Dict[int, int],
+        exports_by_name: Dict[bytes, int],
+    ) -> List[int]:
+        """Walks the 32-bit Import Lookup Table to match each Kinect10 import dynamically by ordinal or name."""
+        resolved: List[int] = []
+        entry_buf = ctypes.c_uint32(0)
+        name_buf = ctypes.create_string_buffer(128)
+        for idx in range(64):
+            if not self._k32.ReadProcessMemory(
+                h_proc, ctypes.c_void_p(exe_base + ilt_rva + idx * 4), ctypes.byref(entry_buf), 4, None
+            ):
+                return []
+            val = int(entry_buf.value)
+            if val == 0:
+                break
+            if val & 0x80000000:
+                ord_num = val & 0xFFFF
+                fn_addr = exports_by_ord.get(ord_num)
+            else:
+                # IMAGE_IMPORT_BY_NAME: 2-byte hint followed by null-terminated ASCII name
+                if not self._k32.ReadProcessMemory(h_proc, ctypes.c_void_p(exe_base + val + 2), name_buf, 128, None):
+                    return []
+                fn_addr = exports_by_name.get(name_buf.value)
+            if not fn_addr:
+                return []
+            resolved.append(fn_addr)
+        return resolved
 
 
 _emulator_instance: Optional[KinectEmulatorDaemon] = None

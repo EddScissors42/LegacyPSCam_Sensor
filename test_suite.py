@@ -566,6 +566,21 @@ def test_overlay():
     assert frame.shape == (800, 1280, 3)
     assert np.any(frame > 0)
 
+    # Verify Phone Camera portrait orientation notification pill renders cleanly above bottom controls
+    portrait_canvas = np.zeros((640, 480, 3), dtype=np.uint8)
+    portrait_hud = overlay.draw_hud(
+        portrait_canvas, "Phone Camera (480x640)", True, 30.0, 30.0, True, True, phone_portrait_warning=True
+    )
+    assert portrait_hud.shape == (640, 480, 3)
+    # Region directly above bottom controls bar (y in 544..588) must contain the notification pill pixels
+    assert np.any(portrait_hud[544:588, 100:380] > 0), "Rotate phone notification pill must render above bottom controls"
+
+    portrait_clean = np.zeros((640, 480, 3), dtype=np.uint8)
+    portrait_no_warn = overlay.draw_hud(
+        portrait_clean, "Phone Camera (640x480)", True, 30.0, 30.0, True, True, phone_portrait_warning=False
+    )
+    assert not np.any(portrait_no_warn[544:588, 100:380] > 0), "Notification pill must disappear when landscape"
+
     # Verify Picture-in-Picture (PiP) mode toggle ([P] shortcut)
     assert overlay.pip_mode is False
     assert overlay.toggle_pip() is True
@@ -833,6 +848,13 @@ def test_project_structure():
         assert hasattr(win, "btn_ds4_rumble"), "Test rumble button must exist in DS4 view"
         assert hasattr(win, "btn_ds4_reconnect"), "Reconnect button must exist in DS4 view"
         assert hasattr(win, "chk_ds4_permissive"), "Permissive mode checkbox must exist in DS4 settings"
+        assert hasattr(win, "scoring_bridge_box"), "Scoring Bridge pill must exist in Controller Settings"
+        assert hasattr(win, "btn_vphone_reconnect"), "Reconnect Game button must exist in Scoring Bridge"
+        assert win.btn_vphone_reconnect.text() == "Reconnect Game", "Button text must be 'Reconnect Game'"
+        assert hasattr(win, "btn_vphone_discover"), "Auto-Find button must exist in Scoring Bridge"
+        assert win.btn_vphone_discover.text() == "Auto-Find", "Button text must be 'Auto-Find'"
+        assert hasattr(win, "btn_vphone_ftue"), "Skip Finish button must exist in Scoring Bridge"
+        assert win.btn_vphone_ftue.text() == "Skip Finish", "Button text must be 'Skip Finish'"
 
         win._set_mode("ds4")
         assert win.active_tab == "controller", "Should switch to controller settings tab on ds4 mode"
@@ -1287,6 +1309,26 @@ def test_stereo_vision_engine():
     assert out_stereo[0][2] > 2.2, f"Expected stereo grounded Z > 2.2, got {out_stereo[0][2]}"
     print(f"  -> SkeletonCalibrator Stereo Grounding PASSED (Z moved from {out_mono[0][2]:.2f}m to {out_stereo[0][2]:.2f}m)")
 
+    # 5.1 Stereo Head.z & Hand.z Anti-Oscillation Regression Test (prevents face zoom-in/zoom-out pumping)
+    head_zs = []
+    hand_zs = []
+    for tick in range(20):
+        # Simulate violent frame-to-frame stereo spikes (1.15m <-> 3.45m) on Head(3), Hip(0), and HandRight(11)
+        spike_z = 3.45 if (tick % 2 == 0) else 1.15
+        noisy_stereo = {
+            0: (0.0, 0.0, spike_z, 0.85),
+            3: (0.0, 0.7, spike_z, 0.90),
+            11: (0.3, 0.2, spike_z, 0.90),
+        }
+        out_noisy = sk_calib.transform(joints, stereo_depths=noisy_stereo)
+        head_zs.append(out_noisy[3][2])
+        hand_zs.append(out_noisy[11][2])
+    head_z_span = max(head_zs) - min(head_zs)
+    hand_z_max_step = max(abs(hand_zs[i] - hand_zs[i - 1]) for i in range(1, len(hand_zs)))
+    assert head_z_span < 0.05, f"Stereo Head.z must never pump face zoom (span={head_z_span:.3f}m)"
+    assert hand_z_max_step < 0.45, f"Stereo Hand.z must stay anatomically bounded (max_step={hand_z_max_step:.3f}m)"
+    print(f"  -> Stereo Anti-Zoom-Oscillation PASSED (Head.z span={head_z_span:.4f}m, Hand max_step={hand_z_max_step:.3f}m)")
+
     # 6. PoseTracker Interface Compatibility
     import sensor
     assert hasattr(sensor, "PoseTracker")
@@ -1434,6 +1476,10 @@ def test_kinect_emulator():
     status = daemon.get_status()
     assert status["enabled"] is False
     assert status["connected"] is False
+    assert "last_error_code" in status and "last_error_message" in status
+    assert hasattr(ke_mod, "LIST_MODULES_32BIT") and ke_mod.LIST_MODULES_32BIT == 0x01
+    assert hasattr(ke_mod, "TARGET_PROCESS_ALIASES") and "justdance2017.exe" in ke_mod.TARGET_PROCESS_ALIASES
+    assert hasattr(daemon, "_stage_proxy_dll") and hasattr(daemon, "_resolve_iat_via_ilt")
 
     callback_called = []
     def on_status(conn, name, pid):
@@ -1837,6 +1883,7 @@ def test_phone_camera_webapp():
 
     # 0. Verify external HTML templates in assets/webapp/
     assert "Legacy PSCam Sensor" in MOBILE_WEBAPP_HTML and "computeScaledDimensions" in MOBILE_WEBAPP_HTML
+    assert "Rotate your phone horizontally" in MOBILE_WEBAPP_HTML and "rotateBanner" in MOBILE_WEBAPP_HTML
     assert "Pairing Session Expired" in EXPIRED_SESSION_HTML
     assert load_webapp_html("nonexistent_file.html", "FALLBACK_OK") == "FALLBACK_OK"
 
@@ -1848,9 +1895,28 @@ def test_phone_camera_webapp():
     decoded_url, _, _ = cv2.QRCodeDetector().detectAndDecode(qr_bgr)
     assert decoded_url == test_url, f"OpenCV QRCodeDetector failed to decode QR: got {decoded_url!r}"
 
-    # 2. Verify Pure-Python X.509v3 Self-Signed TLS Certificate & SSLContext loading
-    tls_ctx = SelfSignedTLSManager.create_ssl_context("127.0.0.1")
+    # 2. Verify Pure-Python X.509v3 Self-Signed TLS Certificate (multi-IP SAN) & SSLContext loading
+    cert_pem, _key_pem = SelfSignedTLSManager.build_self_signed_pem(
+        "192.168.1.42", extra_ips=["10.0.0.15", "192.168.1.42"]
+    )
+    assert "BEGIN CERTIFICATE" in cert_pem
+    tls_ctx = SelfSignedTLSManager.create_ssl_context("127.0.0.1", extra_ips=["192.168.1.42"])
     assert isinstance(tls_ctx, ssl.SSLContext)
+
+    # 2b. Verify smart LAN IP ranking (physical Wi-Fi/Ethernet outranks VPN/virtual adapters) & firewall probe
+    from sensor.phone_camera import _is_virtual_or_vpn_adapter, _score_lan_candidate
+    assert _is_virtual_or_vpn_adapter("Wi-Fi", "Intel Wireless", 71, "192.168.1.42", True) is False
+    assert _is_virtual_or_vpn_adapter("Radmin VPN", "Famatech Radmin VPN", 6, "26.212.15.52", True) is True
+    assert _is_virtual_or_vpn_adapter("Tailscale", "Tailscale Tunnel", 53, "100.64.10.2", False) is True
+    assert _is_virtual_or_vpn_adapter("VirtualBox Host-Only", "VirtualBox", 6, "192.168.56.1", False) is True
+    assert _is_virtual_or_vpn_adapter("vEthernet (WSL)", "Hyper-V Virtual Ethernet", 6, "172.24.0.1", False) is True
+    wifi_score = _score_lan_candidate("192.168.1.42", "Wi-Fi", "Intel Wireless", 71, True, False, "26.212.15.52")
+    vpn_score = _score_lan_candidate("26.212.15.52", "Radmin VPN", "Radmin", 6, True, True, "26.212.15.52")
+    assert wifi_score > vpn_score, f"Physical Wi-Fi ({wifi_score}) must outrank VPN ({vpn_score})"
+    lan_list = PhoneCameraServer.list_local_lan_ips()
+    assert isinstance(lan_list, list) and len(lan_list) >= 1 and "ip" in lan_list[0] and "label" in lan_list[0]
+    fw_status = PhoneCameraServer.check_windows_firewall_rule(8443)
+    assert isinstance(fw_status, dict) and fw_status.get("port") == 8443 and "port_rule_allowed" in fw_status
 
     # 3. Start PhoneCameraServer on an ephemeral loopback port and test HTTPS GET / + WSS /ws
     srv = PhoneCameraServer(port=0)
@@ -1992,6 +2058,13 @@ def test_phone_camera_webapp():
         old_tok = srv.session_token
         srv.disconnect_client(rotate_token=True)
         assert srv.session_token != old_tok, "disconnect_client must rotate pairing session token"
+
+        # Verify DeviceController status readout includes full stream metadata (lens, dims, fps, info_text)
+        from ui.controllers.device_controller import DeviceController
+        dc = DeviceController()
+        st_snap = dc.get_phone_cam_status()
+        for req_k in ("is_connected", "info_text", "client_lens", "width", "height", "fps", "target_fps"):
+            assert req_k in st_snap, f"Missing key {req_k!r} in DeviceController.get_phone_cam_status()"
     finally:
         srv.stop()
 

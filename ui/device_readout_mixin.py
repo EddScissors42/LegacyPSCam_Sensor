@@ -23,7 +23,7 @@ class UIDeviceReadoutMixin:
 
         is_ds4 = (mode == "ds4")
         if hasattr(self, "auto_frame_box"):
-            self.auto_frame_box.setVisible(not is_ds4)
+            self.auto_frame_box.setVisible(False)
 
         if is_ds4:
             if hasattr(self, "cb_ds4_hand") and hasattr(self, "cb_vphone_hand"):
@@ -59,7 +59,8 @@ class UIDeviceReadoutMixin:
 
             if hasattr(self, "lbl_vp_desc"):
                 self.lbl_vp_desc.setText(
-                    "Streams physical 3D accelerometer commands from your DualShock 4 directly to Just Dance via the /smartphone WebSocket protocol for seamless dance scoring."
+                    "Emulates a smartphone connected to Just Dance via WebSocket/TLS (/smartphone) and converts your hand motion "
+                    "in the camera into 3D accelerometer commands for songs that only support hand controllers."
                 )
             if hasattr(self, "vphone_details_frame"):
                 self.vphone_details_frame.setVisible(True)
@@ -96,10 +97,11 @@ class UIDeviceReadoutMixin:
 
             if hasattr(self, "lbl_vp_desc"):
                 self.lbl_vp_desc.setText(
-                    "Emulates a smartphone connected to Just Dance via WebSocket/TLS (/smartphone) and converts your hand motion in the camera into 3D accelerometer commands for songs that only support hand controllers."
+                    "Emulates a smartphone connected to Just Dance via WebSocket/TLS (/smartphone) and converts your hand motion "
+                    "in the camera into 3D accelerometer commands for songs that only support hand controllers."
                 )
             if hasattr(self, "vphone_details_frame"):
-                self.vphone_details_frame.setVisible(saved_state)
+                self.vphone_details_frame.setVisible(True)
 
     def _update_phone_cam_status(self):
         st = self.controller.devices.get_phone_cam_status()
@@ -107,16 +109,18 @@ class UIDeviceReadoutMixin:
         prev_conn = getattr(self, "_last_phone_cam_conn", None)
 
         if is_conn:
-            lens_lbl = "Rear Camera" if st.get("client_lens") == "environment" else "Front Camera"
-            if st.get("streaming_active"):
-                fps_disp = st.get("fps", 0.0) if st.get("fps", 0.0) > 0.5 else float(st.get("target_fps", 30))
-                stream_lbl = f"{st.get('width', 640)}x{st.get('height', 480)} @ {fps_disp:.0f} FPS"
-            else:
-                stream_lbl = "Standby (Cool Mode)"
-            info_txt = (
-                f"{st.get('device_name', 'Smartphone')} connected ({st.get('client_ip', '127.0.0.1')} • "
-                f"{stream_lbl} • {lens_lbl})"
-            )
+            info_txt = st.get("info_text")
+            if not info_txt:
+                lens_lbl = "Rear Camera" if st.get("client_lens") == "environment" else "Front Camera"
+                if st.get("streaming_active"):
+                    fps_disp = st.get("fps", 0.0) if st.get("fps", 0.0) > 0.5 else float(st.get("target_fps", 30))
+                    stream_lbl = f"{st.get('width', 640)}x{st.get('height', 480)} @ {fps_disp:.0f} FPS"
+                else:
+                    stream_lbl = "Standby (Cool Mode)"
+                info_txt = (
+                    f"{st.get('device_name', 'Smartphone')} connected ({st.get('client_ip', '127.0.0.1')} • "
+                    f"{stream_lbl} • {lens_lbl})"
+                )
             if hasattr(self, "lbl_phone_cam_ready_info"):
                 self.lbl_phone_cam_ready_info.setText(info_txt)
 
@@ -259,15 +263,8 @@ class UIDeviceReadoutMixin:
                 self.btn_vphone_log.setText("Record Log")
                 self.btn_vphone_log.setStyleSheet(getattr(self, "_btn_vphone_outline_style", ""))
 
-        should_show_accel = getattr(self, "is_tracking_active", False)
-        if self.lbl_vphone_accel.isVisible() != should_show_accel:
-            self.lbl_vphone_accel.setVisible(should_show_accel)
-        if should_show_accel:
-            ax, ay, az = self.vphone.latest_accel
-            spd = getattr(self.vphone.accelerometer, "latest_speed", 0.0)
-            self.lbl_vphone_accel.setText(
-                f"3D Accelerometer: X: {ax:+.2f}G | Y: {ay:+.2f}G | Z: {az:+.2f}G ({spd:.1f} m/s)"
-            )
+        if hasattr(self, "lbl_vphone_accel"):
+            self.lbl_vphone_accel.setVisible(False)
 
     def _update_ds4_ui_readout(self):
         if not hasattr(self, "lbl_ds4_status") or not hasattr(self, "lbl_ds4_accel"):

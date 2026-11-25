@@ -38,7 +38,7 @@ All non-essential overhead has been removed while perfecting the core components
 | Device Settings & Navigation Polish | Aligned controls anatomy, experimental safety notice, and auto-return to Video Settings on device toggle. | Implemented |
 | Camera Orientation Control | Real-time 0°, 90°, 180°, and 270° rotation block supporting inverted or sideways camera mounts. | Implemented |
 | Responsive Scroll & Anti-Collision | Transparent QScrollArea with minimum card heights preventing widget overlap on compact window sizes. | Implemented |
-| Virtual Phone Controller ("Celular Virtual") | Emulates the Just Dance Smartphone Controller over WebSocket (`/smartphone`), converting 3D camera hand tracking into 3-axis accelerometer scoring data and menu navigation commands. | Implemented |
+| Scoring Bridge (Just Dance Controller App mode) | Emulates the Just Dance Smartphone Controller over WebSocket (`/smartphone`) inside Controller Settings with Game Connection Status, Reconnect Game, Auto-Find and Skip Finish shortcuts. | Implemented |
 | DualShock 4 & Clones (Level A) | Native Bluetooth/USB HID driver supporting official DS4, licensed pads (Hori, Nacon, Razer, Astro, Scuf) and clone chips (ShanWan, DragonRise) with automatic IMU frozen (0G) diagnostic. | Implemented |
 | Emulate Kinect (Zero-File-Replacement) | Emulates Kinect directly in game memory via process detection; keeps original Kinect10.dll on disk intact. | Implemented |
 | High-Resolution Windows Timer (1ms) | Python timer synchronization ensuring `Sleep(33)` in `Kinect10.dll` delivers solid 30 FPS. | Implemented |
@@ -64,7 +64,7 @@ All non-essential overhead has been removed while perfecting the core components
 ```
 LegacyPSCam_Sensor/
 ├── main.py                     # CLI launcher and entry point
-├── version.py                  # Official versioning & build metadata (v0.10.0 Alpha)
+├── version.py                  # Official versioning & build metadata (v0.10.1 Alpha)
 ├── test_suite.py               # 19 complete automated test suites (19/19 PASSED)
 ├── config.json                 # Saved user preferences
 ├── THIRD_PARTY_NOTICES.md      # Licensing & third-party attribution notices

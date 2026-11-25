@@ -418,18 +418,25 @@ class SkeletonCalibrator:
         baseline_z = float(self.cfg.get('baseline_z_m', 2.0))
         depth_gain = float(self.cfg.get('depth_gain', 0.65))
 
-        # Ground baseline Z to true physical stereo depth if available for torso/hip
+        # Ground baseline Z to true physical stereo depth using robust torso median + slew-rate clamp
+        # Prevents single-joint stereo outliers (walls/plain shirts) from causing whole-body Z jumps.
         if stereo_depths:
-            ref_z = None
-            for j_cand in (0, 2, 1):
-                if j_cand in stereo_depths and stereo_depths[j_cand][3] > 0.25:
-                    ref_z = stereo_depths[j_cand][2]
-                    break
-            if ref_z is not None and 0.8 <= ref_z <= 4.5:
+            torso_zs = []
+            for j_cand in (0, 1, 2, 3, 4, 8, 12, 16):
+                if j_cand in stereo_depths:
+                    _, _, cand_z, cand_conf = stereo_depths[j_cand]
+                    if cand_conf >= 0.55 and 0.8 <= cand_z <= 4.5:
+                        torso_zs.append(float(cand_z))
+            if torso_zs:
+                ref_z = float(np.median(torso_zs))
                 if self.stereo_baseline_z is None:
                     self.stereo_baseline_z = ref_z
                 else:
-                    self.stereo_baseline_z = 0.85 * self.stereo_baseline_z + 0.15 * ref_z
+                    # Physical human walk speed clamp (~2.1 m/s at 60 FPS -> max 0.035m per frame)
+                    dz = max(-0.035, min(0.035, ref_z - self.stereo_baseline_z))
+                    self.stereo_baseline_z = self.stereo_baseline_z + 0.12 * dz
+                baseline_z = self.stereo_baseline_z
+            elif self.stereo_baseline_z is not None:
                 baseline_z = self.stereo_baseline_z
 
         for idx, j in enumerate(joints):
@@ -440,26 +447,27 @@ class SkeletonCalibrator:
             k_y = -(y - origin_y) * scale + hip_h
             k_z = baseline_z + (z - origin_z) * scale * depth_gain
 
-            # Optional joint-level metric grounding if stereo triangulation is confident
-            has_stereo_z = False
-            if stereo_depths and idx in stereo_depths:
+            # Optional limb-level metric grounding (clamped to anatomical reach ±0.55m around torso)
+            if idx != 3 and stereo_depths and idx in stereo_depths:
                 s_x, s_y, s_z, s_conf = stereo_depths[idx]
-                if s_conf > 0.4 and 0.8 <= s_z <= 4.5:
-                    blend_w = min(0.6, s_conf * 0.7)
-                    k_z = (1.0 - blend_w) * k_z + blend_w * s_z
-                    has_stereo_z = True
+                if s_conf >= 0.60 and 0.8 <= s_z <= 4.5:
+                    s_z_clamped = float(np.clip(s_z, baseline_z - 0.55, baseline_z + 0.55))
+                    blend_w = min(0.30, s_conf * 0.35)
+                    k_z = (1.0 - blend_w) * k_z + blend_w * s_z_clamped
 
-            # Stabilize monocular Head(3) Z depth: Just Dance PC sizes its built-in face framing
-            # avatar box inversely to Head.z. Monocular world_lm.z breathes heavily when seated or
-            # moving arms in front of torso, causing constant face zoom-in/zoom-out oscillation.
-            if idx == 3 and not has_stereo_z:
-                raw_head_dz = float(np.clip((z - origin_z) * scale * (depth_gain * 0.20), -0.10, 0.10))
+            # ALWAYS stabilize Head(3) Z depth (both monocular AND Stereo Vision):
+            # Just Dance PC sizes its built-in face-framing avatar box inversely to Head.z.
+            # Unfiltered stereo disparity or monocular breathing causes constant face zoom-in/zoom-out.
+            if idx == 3:
+                raw_head_dz = float(np.clip((z - origin_z) * scale * (depth_gain * 0.15), -0.08, 0.08))
                 target_head_z = baseline_z + raw_head_dz
                 if self._head_z_ema is None:
                     self._head_z_ema = target_head_z
                 else:
-                    if abs(target_head_z - self._head_z_ema) > 0.020:
-                        self._head_z_ema = 0.92 * self._head_z_ema + 0.08 * target_head_z
+                    diff_h = target_head_z - self._head_z_ema
+                    if abs(diff_h) > 0.025:
+                        clamped_step = max(-0.015, min(0.015, diff_h))
+                        self._head_z_ema = self._head_z_ema + 0.08 * clamped_step
                 k_z = self._head_z_ema
 
             out.append((k_x, k_y, k_z, conf))

@@ -413,6 +413,107 @@ class TrackingOverlay:
 
         return frame
 
+    @staticmethod
+    def _draw_rotate_phone_icon(frame: np.ndarray, cx: int, cy: int, now: float) -> None:
+        """
+        Draws a crisp anti-aliased vector icon showing a smartphone rotating from
+        vertical (portrait) to horizontal (landscape) with a curved arrow.
+        """
+        # 1. Vertical phone (starting ghost outline on the left)
+        vx0, vy0 = cx - 15, cy - 11
+        vx1, vy1 = cx - 3, cy + 10
+        ghost_col = (155, 168, 185)
+        cv2.rectangle(frame, (vx0, vy0), (vx1, vy1), ghost_col, 1, cv2.LINE_AA)
+        # Small home bar / indicator on bottom of vertical phone
+        cv2.line(frame, (vx0 + 4, vy1 - 3), (vx1 - 4, vy1 - 3), ghost_col, 1, cv2.LINE_AA)
+
+        # 2. Target horizontal phone (bright highlighted landscape outline on the right-bottom)
+        hx0, hy0 = cx - 6, cy - 1
+        hx1, hy1 = cx + 16, cy + 11
+        # Subtle dark fill so it stands out cleanly over the ghost outline
+        cv2.rectangle(frame, (hx0 + 1, hy0 + 1), (hx1 - 1, hy1 - 1), (28, 36, 48), -1)
+        cv2.rectangle(frame, (hx0, hy0), (hx1, hy1), COLOR_TEXT_WHITE, 2, cv2.LINE_AA)
+        # Landscape side home/camera bar
+        cv2.line(frame, (hx1 - 3, hy0 + 3), (hx1 - 3, hy1 - 3), COLOR_STATUS_WAIT, 1, cv2.LINE_AA)
+
+        # 3. Curved clockwise rotation arrow from vertical top to horizontal top
+        pulse = 0.75 + 0.25 * math.sin(now * 4.5)
+        arrow_col = (
+            int(40 * pulse + 20),
+            int(175 * pulse + 40),
+            min(255, int(235 * pulse + 20)),
+        )
+        arc_cx, arc_cy = cx + 1, cy - 2
+        cv2.ellipse(
+            frame,
+            (arc_cx, arc_cy),
+            (10, 8),
+            0,
+            255,
+            345,
+            arrow_col,
+            2,
+            cv2.LINE_AA,
+        )
+        # Arrowhead pointing clockwise onto the horizontal phone
+        tip_x, tip_y = cx + 11, cy - 4
+        cv2.line(frame, (tip_x, tip_y), (tip_x - 4, tip_y - 2), arrow_col, 2, cv2.LINE_AA)
+        cv2.line(frame, (tip_x, tip_y), (tip_x + 1, tip_y - 5), arrow_col, 2, cv2.LINE_AA)
+
+    def _draw_phone_orientation_pill(self, frame: np.ndarray, bot_y: int, now: float) -> None:
+        """
+        Renders a floating notification pill above the controls bar prompting the user
+        to rotate their smartphone horizontally when portrait orientation is detected.
+        """
+        fh, fw = frame.shape[:2]
+        notif_h = 44
+        notif_w = min(fw - 24, 344)
+        notif_x = (fw - notif_w) // 2
+        notif_y = max(66, bot_y - notif_h - 8)
+
+        draw_rounded_glass_pill(
+            frame,
+            notif_x,
+            notif_y,
+            notif_w,
+            notif_h,
+            radius=12,
+            bg_color=(20, 24, 34),
+            alpha=0.86,
+            border_color=COLOR_STATUS_WAIT,
+            border_thickness=1,
+        )
+
+        # Left icon: vertical -> horizontal phone rotation
+        icon_cx = notif_x + 28
+        icon_cy = notif_y + notif_h // 2
+        self._draw_rotate_phone_icon(frame, icon_cx, icon_cy, now)
+
+        # Right notification text (English)
+        text_x = notif_x + 54
+        title_scale = 0.42 if notif_w >= 300 else 0.36
+        sub_scale = 0.31 if notif_w >= 300 else 0.27
+        cv2.putText(
+            frame,
+            "Rotate your phone horizontally",
+            (text_x, notif_y + 19),
+            cv2.FONT_HERSHEY_DUPLEX,
+            title_scale,
+            COLOR_TEXT_WHITE,
+            1,
+            cv2.LINE_AA,
+        )
+        cv2.putText(
+            frame,
+            "Landscape mode recommended for tracking",
+            (text_x, notif_y + 35),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            sub_scale,
+            COLOR_TEXT_DIM,
+            1,
+            cv2.LINE_AA,
+        )
+
     def draw_hud(
         self,
         frame: np.ndarray,
@@ -425,6 +526,8 @@ class TrackingOverlay:
         calibration_tier: str = "full_body",
         max_players: int = 1,
         tracked_mask: Optional[int] = None,
+        phone_portrait_warning: bool = False,
+        kinect_emu_status: Optional[Dict[str, Any]] = None,
     ) -> np.ndarray:
         """
         Renders the modern PlayStation-inspired floating glass pill HUD.
@@ -455,15 +558,29 @@ class TrackingOverlay:
         if self.hud_mode == 0:
             draw_rounded_glass_pill(frame, right_x, right_y, right_w, right_h, radius=12, bg_color=COLOR_GLASS_BG, alpha=0.74, border_color=COLOR_GLASS_BORDER)
 
-            # Green pulse for IPC Active
+            # IPC / Game Hook diagnostic status in Top-Right Pill
+            emu_err = str((kinect_emu_status or {}).get("last_error_code") or "")
+            emu_conn = bool((kinect_emu_status or {}).get("connected", False))
+            if emu_err == "ACCESS_DENIED":
+                ipc_dot_color = COLOR_STATUS_WAIT
+                bridge_text = "GAME: Run as Administrator!"
+            elif emu_err in ("LOADLIB_RETURNED_NULL", "PROXY_NOT_LOADED", "REMOTE_THREAD_FAIL"):
+                ipc_dot_color = COLOR_STATUS_WAIT
+                bridge_text = "GAME: Check Antivirus/AV!"
+            elif emu_conn:
+                ipc_dot_color = COLOR_STATUS_OK
+                bridge_text = "IPC: 2P Active • Game OK" if max_players >= 2 else "IPC: Active • Game Linked"
+            else:
+                ipc_dot_color = COLOR_STATUS_OK
+                bridge_text = "IPC: JDP2 & JMI2 Active" if max_players >= 2 else "IPC: JDP1 & JMI1 Active"
+
             ipc_dot_x, ipc_dot_y = right_x + 18, right_y + 22
-            cv2.circle(frame, (ipc_dot_x, ipc_dot_y), 4, COLOR_STATUS_OK, -1, cv2.LINE_AA)
-            cv2.circle(frame, (ipc_dot_x, ipc_dot_y), 6, COLOR_STATUS_OK, 1, cv2.LINE_AA)
+            cv2.circle(frame, (ipc_dot_x, ipc_dot_y), 4, ipc_dot_color, -1, cv2.LINE_AA)
+            cv2.circle(frame, (ipc_dot_x, ipc_dot_y), 6, ipc_dot_color, 1, cv2.LINE_AA)
 
             fps_text = f"CAM: {cam_fps:.0f} FPS  |  AI: {track_fps:.0f} FPS"
             cv2.putText(frame, fps_text, (right_x + 32, right_y + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.40, COLOR_NEON_CYAN, 1, cv2.LINE_AA)
-            bridge_text = "IPC: JDP2 & JMI2 Active" if max_players >= 2 else "IPC: JDP1 & JMI1 Active"
-            cv2.putText(frame, bridge_text, (right_x + 32, right_y + 36), cv2.FONT_HERSHEY_SIMPLEX, 0.35, COLOR_STATUS_OK, 1, cv2.LINE_AA)
+            cv2.putText(frame, bridge_text, (right_x + 32, right_y + 36), cv2.FONT_HERSHEY_SIMPLEX, 0.35, ipc_dot_color, 1, cv2.LINE_AA)
 
         # =====================================================================
         # RIGHT PILL (BELOW FPS): DANCER TRACKING STATUS (Visible in Full & Minimalist)
@@ -513,8 +630,10 @@ class TrackingOverlay:
         cv2.putText(frame, status_text, (status_x + 34, status_y + 20), cv2.FONT_HERSHEY_DUPLEX, 0.42, COLOR_TEXT_WHITE, 1, cv2.LINE_AA)
         cv2.putText(frame, status_sub, (status_x + 34, status_y + 36), cv2.FONT_HERSHEY_SIMPLEX, 0.33, COLOR_TEXT_DIM, 1, cv2.LINE_AA)
 
-        # In Minimalist Mode (hud_mode == 1), only the status badge is shown
+        # In Minimalist Mode (hud_mode == 1), only the status badge (and phone rotate alert if portrait) is shown
         if self.hud_mode == 1:
+            if phone_portrait_warning:
+                self._draw_phone_orientation_pill(frame, fh - 6, now)
             return frame
 
         # =====================================================================
@@ -548,6 +667,12 @@ class TrackingOverlay:
         t_sz = cv2.getTextSize(controls_text, cv2.FONT_HERSHEY_SIMPLEX, 0.36, 1)[0]
         tx = bot_x + (bot_w - t_sz[0]) // 2
         cv2.putText(frame, controls_text, (tx, bot_y + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (225, 230, 240), 1, cv2.LINE_AA)
+
+        # =====================================================================
+        # PHONE CAMERA PORTRAIT NOTIFICATION PILL (Directly above controls bar)
+        # =====================================================================
+        if phone_portrait_warning:
+            self._draw_phone_orientation_pill(frame, bot_y, now)
 
         return frame
 

@@ -269,7 +269,7 @@ class StereoDepthEngine:
             corr = cv2.matchTemplate(search_strip, patch, cv2.TM_CCOEFF_NORMED)
             _, max_val, _, max_loc = cv2.minMaxLoc(corr)
 
-            if max_val < 0.35:
+            if max_val < 0.50:
                 continue
 
             mx, my = max_loc[0], max_loc[1]

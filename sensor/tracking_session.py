@@ -476,28 +476,18 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None, prewar
                 kinect_frame, kinect_mask = display_frame, display_mask
 
             # Update Shared Memory for Just Dance PC (JDP1, JDP2 664B, JMI1 & JMI2 player index mask)
+            # Always stream Kinect skeletons in camera modes (never allow stale vphone flag from DS4 mode to wipe Kinect!)
             players_3d = [
                 pf.kinect_joints if (pf is not None and pf.tracked) else None
                 for pf in multi_res.players
             ]
             if is_tracked and multi_res.tracked_mask > 0:
-                if vphone.enabled and max_players == 1:
-                    bridge.pose.write_empty()
-                    bridge.pose_v2.write_empty()
-                    bridge.image.write_image_and_mask(
-                        kinect_frame,
-                        kinect_mask,
-                        tracked=True,
-                        tracked_mask=multi_res.tracked_mask,
-                        is_player_index_mask=True,
-                    )
-                else:
-                    bridge.write_multi(
-                        players_3d,
-                        kinect_frame,
-                        kinect_mask,
-                        tracked_mask=multi_res.tracked_mask,
-                    )
+                bridge.write_multi(
+                    players_3d,
+                    kinect_frame,
+                    kinect_mask,
+                    tracked_mask=multi_res.tracked_mask,
+                )
             else:
                 bridge.write_empty()
 
@@ -577,6 +567,7 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None, prewar
             if not overlay.pip_mode:
                 primary_calib = primary_p.is_calibrated if primary_p else tracker.calibrator.is_calibrated
                 primary_tier = primary_p.calibration_tier if primary_p else tracker.calibrator.calibration_tier
+                emu_st = local_kinect_emulator.get_status() if local_kinect_emulator is not None else None
                 display_frame = overlay.draw_hud(
                     display_frame,
                     camera_info_str=mode_label,
@@ -588,6 +579,8 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None, prewar
                     calibration_tier=primary_tier,
                     max_players=max_players,
                     tracked_mask=multi_res.tracked_mask,
+                    phone_portrait_warning=(mode == "phone_cam" and fh > fw),
+                    kinect_emu_status=emu_st,
                 )
 
                 # Render modern gesture radial progress ring & success pulse

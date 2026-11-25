@@ -112,7 +112,7 @@ A suíte cobre 19 áreas fundamentais (19/19 PASSED):
 | `test_session_logger` | `sensor/session_logger.py` | Rotação/limpeza automática de sessão anterior, diagnóstico de sistema (SO, CPU, RAM), mapeamento de controles, streaming CSV assíncrono e exception hooks. |
 | `test_person_lock_subsystem` | `sensor/person_lock.py` & `sensor/pose_filters.py` | Predição inercial em micro-quedas (coasting 3D/2D + translação de máscara + LERP de reentrada), trava de identidade por histograma HSV do tronco e continuidade espacial, fallback anti-giro 360° e zoom adaptativo no `FaceFollowPTZ`, e chaves modulares de bypass. |
 | `test_arm_raise_gesture` | `sensor/gesture_detector.py` | Máquina de estados do gesto de braço levantado (`[ENTER]`), progresso percentual, disparo e cooldown. |
-| `test_phone_camera_webapp` | `sensor/phone_camera.py` | Gerador QR Code ISO/IEC 18004 puro em Python, certificado TLS X.509 autoassinado, autenticação de token, streaming WebSocket JPEG e modo Standby térmico. |
+| `test_phone_camera_webapp` | `sensor/phone_camera.py` | Gerador QR Code ISO/IEC 18004 puro em Python, certificado TLS X.509 multi-SAN autoassinado, ranking inteligente de interfaces LAN (anti-VPN/virtual), diagnóstico de Windows Firewall, autenticação de token, streaming WebSocket JPEG e modo Standby térmico. |
 | `test_multi_player_tracking` | `sensor/player_slot.py` & `pose_tracker.py` | Rastreamento de 2 jogadores (2P Duo), contrato binário `JDP2` (664B) e `JMI2` (máscara indexada 1 e 2), singleton `get_kinect_bridge()`, memória de identidade anti-swap em valsas/cruzamentos, gesto `[ENTER]` de P2, cores P1 Azul / P2 Laranja Claro e controles 2P na UI Qt 6. |
 
 ### Adicionando Novos Testes

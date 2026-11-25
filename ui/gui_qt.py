@@ -126,6 +126,7 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin, UIDeviceReadoutMixin):
     cameras_refreshed_signal = Signal(list)
     tracking_finished_signal = Signal(bool, str)
     model_download_signal = Signal(str, int, str)
+    phone_firewall_signal = Signal(bool, str)
 
     def __init__(self, parent=None, *args, auto_discover=True, controller: Optional[SensorAppController] = None, **kwargs):
         if parent is not None and not isinstance(parent, QWidget):
@@ -150,6 +151,9 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin, UIDeviceReadoutMixin):
         # Stereo Vision is always enabled by default on PlayStation 4 Camera
         if str(self.cfg.get("stereo_mode", "")).strip().lower() in ("", "disabled", "false", "0"):
             self.cfg["stereo_mode"] = "sparse_metric"
+        # Keep Auto-Frame zoom rock-steady (migrates legacy stale True values that caused zoom pumping)
+        if self.cfg.get("face_follow_adaptive_zoom", False):
+            self.cfg["face_follow_adaptive_zoom"] = False
         self.controller = controller or SensorAppController(self.cfg_mgr, parent=self)
 
         # Initialize shared memory bridges immediately on startup so Just Dance connects seamlessly
@@ -185,6 +189,7 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin, UIDeviceReadoutMixin):
         self.cameras_refreshed_signal.connect(self._on_cameras_refreshed)
         self.tracking_finished_signal.connect(self._on_tracking_finished)
         self.model_download_signal.connect(self._on_model_download_progress)
+        self.phone_firewall_signal.connect(self._on_phone_firewall_finished)
 
         # Initial mode setup (already calls _update_pscam_status for camera modes)
         initial_mode = self.cfg.get("camera_mode", "pscam")
@@ -1318,7 +1323,86 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin, UIDeviceReadoutMixin):
     def _ensure_phone_cam_server_started(self):
         return self.controller.devices.ensure_phone_cam_server_started()
 
-    def _refresh_phone_cam_qr(self, _checked: bool = False, rotate_token: bool = False):
+    def _refresh_phone_cam_ip_selector(self):
+        if not hasattr(self, "cb_phone_cam_ip"):
+            return
+        try:
+            items, active_ip = self.controller.devices.list_phone_cam_ips()
+            self.cb_phone_cam_ip.blockSignals(True)
+            self.cb_phone_cam_ip.clear()
+            sel_idx = 0
+            for idx, item in enumerate(items):
+                ip_val = item.get("ip", "")
+                label = item.get("label", ip_val)
+                self.cb_phone_cam_ip.addItem(label, ip_val)
+                if ip_val == active_ip:
+                    sel_idx = idx
+            if self.cb_phone_cam_ip.count() > 0:
+                self.cb_phone_cam_ip.setCurrentIndex(sel_idx)
+            self.cb_phone_cam_ip.blockSignals(False)
+        except Exception:
+            try:
+                self.cb_phone_cam_ip.blockSignals(False)
+            except Exception:
+                pass
+
+    def _refresh_phone_cam_firewall_button(self):
+        if not hasattr(self, "btn_phone_firewall"):
+            return
+        try:
+            fw = self.controller.devices.get_phone_cam_firewall_status()
+            port = fw.get("port", 8443)
+            if fw.get("port_rule_allowed"):
+                self.btn_phone_firewall.setText("Firewall OK ✓")
+                self.btn_phone_firewall.setStyleSheet(
+                    f"background-color: #ECFDF5; color: #047857; border: 1px solid #6EE7B7; "
+                    f"border-radius: 6px; padding: 0 10px; font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold;"
+                )
+                self.btn_phone_firewall.setToolTip(
+                    f"Windows Firewall allows inbound TCP port {port} on Private & Public Wi-Fi. Click to re-apply rule."
+                )
+            else:
+                self.btn_phone_firewall.setText("Allow Firewall")
+                self.btn_phone_firewall.setStyleSheet(
+                    f"background-color: #FEF3C7; color: #92400E; border: 1px solid #F59E0B; "
+                    f"border-radius: 6px; padding: 0 10px; font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold;"
+                )
+                self.btn_phone_firewall.setToolTip(
+                    f"Windows Firewall rule for TCP port {port} not found. Click to allow Private & Public Wi-Fi and prevent ERR_CONNECTION_TIMED_OUT."
+                )
+        except Exception:
+            pass
+
+    def _on_phone_cam_ip_changed(self, _index: int = 0):
+        if not hasattr(self, "cb_phone_cam_ip"):
+            return
+        selected_ip = self.cb_phone_cam_ip.currentData()
+        if selected_ip:
+            self.controller.devices.set_phone_cam_ip(str(selected_ip))
+            self._refresh_phone_cam_qr(rotate_token=False, refresh_adapters=False)
+
+    def _on_allow_phone_cam_firewall(self):
+        if hasattr(self, "btn_phone_firewall"):
+            self.btn_phone_firewall.setEnabled(False)
+            self.btn_phone_firewall.setText("Allowing...")
+        self.controller.devices.allow_phone_cam_firewall_async(
+            callback=lambda ok, msg: self.phone_firewall_signal.emit(bool(ok), str(msg))
+        )
+
+    @Slot(bool, str)
+    def _on_phone_firewall_finished(self, ok: bool, msg: str):
+        if hasattr(self, "btn_phone_firewall"):
+            self.btn_phone_firewall.setEnabled(True)
+        self._refresh_phone_cam_firewall_button()
+        if ok:
+            QMessageBox.information(self, "Windows Firewall Updated", msg)
+        else:
+            QMessageBox.warning(self, "Windows Firewall", msg)
+
+    def _refresh_phone_cam_qr(self, _checked: bool = False, rotate_token: bool = False, refresh_adapters: bool = True):
+        if refresh_adapters:
+            self._refresh_phone_cam_ip_selector()
+        self._refresh_phone_cam_firewall_button()
         pil_qr, url = self.controller.devices.render_pairing_qr_image(rotate_token=rotate_token)
         if hasattr(self, "lbl_phone_cam_url"):
             self.lbl_phone_cam_url.setText(url)
@@ -1393,10 +1477,10 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin, UIDeviceReadoutMixin):
     def _on_vphone_reconnect_clicked(self):
         self._apply_vphone_settings_to_controller()
         self._save_settings()
-        if not self.chk_vphone_enabled.isChecked():
+        self.controller.devices.set_vphone_enabled(True)
+        if hasattr(self, "chk_vphone_enabled"):
             self.chk_vphone_enabled.setChecked(True)
-        else:
-            self.controller.devices.request_vphone_reconnect()
+        self.controller.devices.request_vphone_reconnect()
         self._update_vphone_ui_readout()
 
     def _on_vphone_discover_clicked(self):

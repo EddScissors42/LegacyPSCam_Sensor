@@ -15,7 +15,7 @@ import socket
 import ssl
 import tempfile
 from pathlib import Path
-from typing import Tuple
+from typing import Iterable, List, Optional, Tuple
 
 # Pre-generated dedicated local development RSA-2048 prime pair (p, q) for fast (<1ms)
 # pure-Python dynamic X.509v3 certificate signing with arbitrary LAN IP SANs.
@@ -112,7 +112,10 @@ class SelfSignedTLSManager:
     """
 
     @staticmethod
-    def build_self_signed_pem(lan_ip: str = "127.0.0.1") -> Tuple[str, str]:
+    def build_self_signed_pem(
+        lan_ip: str = "127.0.0.1",
+        extra_ips: Optional[Iterable[str]] = None,
+    ) -> Tuple[str, str]:
         p = _LOCAL_RSA_P
         q = _LOCAL_RSA_Q
         n = p * q
@@ -149,17 +152,25 @@ class SelfSignedTLSManager:
         pub_key_der = _asn1_seq(_asn1_int(n), _asn1_int(e))
         spki = _asn1_seq(alg_rsa, _asn1_bitstring(pub_key_der))
 
-        # SubjectAltName: DNS:localhost, IP:127.0.0.1, IP:<lan_ip>
+        # SubjectAltName: DNS:localhost, IP:127.0.0.1, plus all unique local LAN IPv4 addresses
         san_items = [
             _asn1_tag(0x82, b"localhost"),
             _asn1_tag(0x87, socket.inet_aton("127.0.0.1")),
         ]
-        try:
-            ip_bytes = ipaddress.IPv4Address(lan_ip).packed
-            if lan_ip != "127.0.0.1":
+        unique_ips: List[str] = []
+        candidates = [lan_ip]
+        if extra_ips:
+            candidates.extend(extra_ips)
+        for cand_ip in candidates:
+            ip_str = str(cand_ip or "").strip()
+            if not ip_str or ip_str == "127.0.0.1" or ip_str in unique_ips:
+                continue
+            try:
+                ip_bytes = ipaddress.IPv4Address(ip_str).packed
                 san_items.append(_asn1_tag(0x87, ip_bytes))
-        except Exception:
-            pass
+                unique_ips.append(ip_str)
+            except Exception:
+                pass
 
         san_ext = _asn1_seq(
             _asn1_oid((2, 5, 29, 17)),
@@ -171,7 +182,8 @@ class SelfSignedTLSManager:
         )
         extensions = _asn1_tag(0xA3, _asn1_seq(bc_ext, san_ext))
 
-        serial_num = int(hashlib.sha256(lan_ip.encode("utf-8")).hexdigest()[:15], 16) | 1
+        serial_seed = "|".join([lan_ip] + sorted(unique_ips))
+        serial_num = int(hashlib.sha256(serial_seed.encode("utf-8")).hexdigest()[:15], 16) | 1
         tbs_der = _asn1_seq(
             _asn1_tag(0xA0, _asn1_int(2)),  # v3
             _asn1_int(serial_num),
@@ -200,8 +212,12 @@ class SelfSignedTLSManager:
         return cert_pem, key_pem
 
     @classmethod
-    def create_ssl_context(cls, lan_ip: str = "127.0.0.1") -> ssl.SSLContext:
-        cert_pem, key_pem = cls.build_self_signed_pem(lan_ip)
+    def create_ssl_context(
+        cls,
+        lan_ip: str = "127.0.0.1",
+        extra_ips: Optional[Iterable[str]] = None,
+    ) -> ssl.SSLContext:
+        cert_pem, key_pem = cls.build_self_signed_pem(lan_ip, extra_ips=extra_ips)
         tmp_dir = Path(tempfile.gettempdir()) / "legacy_pscam_tls"
         tmp_dir.mkdir(parents=True, exist_ok=True)
         cert_path = tmp_dir / "phone_cam_cert.pem"

@@ -58,10 +58,28 @@
   video.mirrored { transform: scaleX(-1); }
   .hud-pill {
     position: absolute; top: 10px; left: 10px;
-    background: rgba(7, 11, 20, 0.78); backdrop-filter: blur(6px);
+    background: rgba(7, 11, 20, 0.86);
     padding: 5px 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.12);
     font-size: 11px; font-weight: 600; color: #E2E8F0;
   }
+  .rotate-pill {
+    display: none;
+    width: 100%; max-width: 460px;
+    align-items: center; gap: 12px;
+    padding: 10px 14px;
+    margin-bottom: 12px;
+    border-radius: 12px;
+    background: rgba(245, 158, 11, 0.14);
+    border: 1px solid rgba(245, 158, 11, 0.55);
+  }
+  .rotate-pill.visible { display: flex; }
+  .rotate-icon-wrap {
+    flex-shrink: 0;
+    width: 38px; height: 30px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .rotate-title { font-size: 13px; font-weight: 700; color: #FEF3C7; line-height: 1.25; }
+  .rotate-sub { font-size: 11px; color: #FCD34D; opacity: 0.9; margin-top: 2px; }
   .controls {
     width: 100%; max-width: 460px;
     display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
@@ -109,6 +127,23 @@
     <div class="hud-pill" id="statsPill">Standby • Waiting for PC</div>
   </div>
 
+  <div class="rotate-pill" id="rotateBanner" role="status" aria-live="polite">
+    <div class="rotate-icon-wrap" aria-hidden="true">
+      <svg viewBox="0 0 36 28" width="36" height="28" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="2" y="3" width="12" height="21" rx="2.5" stroke="#94A3B8" stroke-width="1.6" stroke-dasharray="2.5 1.8" opacity="0.8"/>
+        <line x1="6" y1="21" x2="10" y2="21" stroke="#94A3B8" stroke-width="1.4" stroke-linecap="round" opacity="0.8"/>
+        <path d="M16.5 4.5 C21.5 4.5 25 7 26.5 11" stroke="#F59E0B" stroke-width="1.8" stroke-linecap="round"/>
+        <path d="M23.4 10.1 L26.8 11.5 L27.6 8.0" stroke="#F59E0B" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+        <rect x="13" y="13" width="21" height="12" rx="2.5" fill="rgba(245, 158, 11, 0.15)" stroke="#F8FAFC" stroke-width="1.8"/>
+        <line x1="30.5" y1="17.2" x2="30.5" y2="20.8" stroke="#F59E0B" stroke-width="1.6" stroke-linecap="round"/>
+      </svg>
+    </div>
+    <div>
+      <div class="rotate-title">Rotate your phone horizontally</div>
+      <div class="rotate-sub">Landscape mode recommended for full-body tracking</div>
+    </div>
+  </div>
+
   <div class="controls">
     <button id="btnLensFront" class="primary" onclick="setCameraLens('user')">Front Camera</button>
     <button id="btnLensRear" onclick="setCameraLens('environment')">Rear Camera</button>
@@ -151,7 +186,7 @@ let wakeLock = null;
 const previewWrap = document.getElementById("previewWrap");
 const videoEl = document.getElementById("camVideo");
 const canvasEl = document.getElementById("captureCanvas");
-const ctx = canvasEl.getContext("2d", { alpha: false, desynchronized: true });
+const ctx = canvasEl.getContext("2d", { alpha: false, willReadFrequently: true });
 const statusBadge = document.getElementById("statusBadge");
 const statusText = document.getElementById("statusText");
 const statsPill = document.getElementById("statsPill");
@@ -214,17 +249,38 @@ async function startCamera() {
     } catch (e) {}
   }
 
-  // 2. Build progressive fallback constraints (from ideal quality down to permissive fallback)
+  // 2. Build progressive fallback constraints:
+  // First try frameRate min:24 to prevent Android Camera2 HAL from dropping AE shutter to 5-10 FPS indoors!
   const candidateConstraints = [];
+  const maxCapW = Math.max(1280, targetW);
+  const maxCapH = Math.max(720, targetH);
+  const minFps = Math.min(24, targetFps);
 
   if (targetDeviceId) {
     candidateConstraints.push({
       audio: false,
       video: {
         deviceId: { exact: targetDeviceId },
-        width: { ideal: targetW },
-        height: { ideal: targetH },
+        width: { ideal: targetW, max: maxCapW },
+        height: { ideal: targetH, max: maxCapH },
+        frameRate: { min: minFps, ideal: targetFps }
+      }
+    });
+    candidateConstraints.push({
+      audio: false,
+      video: {
+        deviceId: { exact: targetDeviceId },
+        width: { ideal: targetW, max: maxCapW },
+        height: { ideal: targetH, max: maxCapH },
         frameRate: { ideal: targetFps }
+      }
+    });
+    candidateConstraints.push({
+      audio: false,
+      video: {
+        deviceId: { exact: targetDeviceId },
+        width: { ideal: targetW, max: maxCapW },
+        height: { ideal: targetH, max: maxCapH }
       }
     });
     candidateConstraints.push({
@@ -235,13 +291,24 @@ async function startCamera() {
     });
   }
 
-  // Ideal facingMode + resolution + FPS (NO restrictive 'max' boundary!)
+  // Ideal facingMode + bounded resolution + locked min FPS (beats Android indoor 5 FPS AE drop)
   candidateConstraints.push({
     audio: false,
     video: {
       facingMode: { ideal: facingMode },
-      width: { ideal: targetW },
-      height: { ideal: targetH },
+      width: { ideal: targetW, max: maxCapW },
+      height: { ideal: targetH, max: maxCapH },
+      frameRate: { min: minFps, ideal: targetFps }
+    }
+  });
+
+  // Ideal facingMode + bounded resolution + ideal FPS
+  candidateConstraints.push({
+    audio: false,
+    video: {
+      facingMode: { ideal: facingMode },
+      width: { ideal: targetW, max: maxCapW },
+      height: { ideal: targetH, max: maxCapH },
       frameRate: { ideal: targetFps }
     }
   });
@@ -345,6 +412,10 @@ async function startCamera() {
     `Connected to PC via Secure TLS (WSS). Active Lens: ${facingMode === "user" ? "Front Camera" : "Rear Camera"}.`;
   requestWakeLock();
   sendHello();
+  if (streamingActive) {
+    lastCaptureTs = 0;
+    scheduleNextCapture(0);
+  }
 }
 
 function updateLensButtons() {
@@ -386,6 +457,10 @@ function stopCaptureLoop() {
   if (captureTimer) {
     clearTimeout(captureTimer);
     captureTimer = null;
+  }
+  if (videoFrameCallbackId !== null && videoEl && typeof videoEl.cancelVideoFrameCallback === "function") {
+    try { videoEl.cancelVideoFrameCallback(videoFrameCallbackId); } catch (e) {}
+    videoFrameCallbackId = null;
   }
   encodingInProgress = false;
 }
@@ -457,27 +532,76 @@ function sendEdgeMetricsPacket(metricsPayload) {
   }));
 }
 
+const MAX_WS_BUFFERED = 128 * 1024; // 128 KB backpressure window (prevents Android Chrome Mojo IPC stalls)
 let encodingInProgress = false;
+let videoFrameCallbackId = null;
+let lastCaptureTs = 0;
+let avgEncodeMs = 15;
+let avgDrawMs = 3;
+let camFrameCount = 0;
+let displayCamFps = 0;
+
+function canUseVideoFrameCallback() {
+  return !!(videoEl && typeof videoEl.requestVideoFrameCallback === "function");
+}
+
 function scheduleNextCapture(delayMs) {
   stopCaptureLoop();
   if (!streamingActive || manualDisconnect || document.hidden) return;
-  captureTimer = setTimeout(captureTick, Math.max(10, delayMs));
+  if (canUseVideoFrameCallback()) {
+    videoFrameCallbackId = videoEl.requestVideoFrameCallback(onVideoFrame);
+  } else {
+    captureTimer = setTimeout(captureTick, Math.max(0, delayMs));
+  }
+}
+
+function onVideoFrame(now) {
+  videoFrameCallbackId = null;
+  if (manualDisconnect || document.hidden || !streamingActive) return;
+  camFrameCount++;
+  // Re-arm immediately for the next hardware camera frame
+  videoFrameCallbackId = videoEl.requestVideoFrameCallback(onVideoFrame);
+  processCaptureFrame(now);
 }
 
 function captureTick() {
   captureTimer = null;
   if (manualDisconnect || document.hidden || !streamingActive) return;
-  if (!ws || ws.readyState !== WebSocket.OPEN) return;
-  if (processingMode !== "pc_video") return;
+  const targetInterval = Math.max(14, Math.floor(1000 / Math.max(15, targetFps)));
+  const t0 = performance.now();
+  const started = processCaptureFrame(t0, () => {
+    const elapsed = performance.now() - t0;
+    if (!canUseVideoFrameCallback() && streamingActive && !manualDisconnect && !document.hidden) {
+      captureTimer = setTimeout(captureTick, Math.max(0, targetInterval - elapsed));
+    }
+  });
+  if (!started && !canUseVideoFrameCallback()) {
+    captureTimer = setTimeout(captureTick, 6);
+  }
+}
 
-  const targetInterval = Math.max(16, Math.floor(1000 / Math.max(15, targetFps)));
-  if (encodingInProgress || ws.bufferedAmount > 0 || videoEl.readyState < 2 || !videoEl.videoWidth) {
-    scheduleNextCapture(targetInterval);
-    return;
+function processCaptureFrame(now, onDone) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+  if (processingMode !== "pc_video") return false;
+  if (encodingInProgress || videoEl.readyState < 2 || !videoEl.videoWidth) return false;
+
+  const targetInterval = Math.max(14, Math.floor(1000 / Math.max(15, targetFps)));
+  // Respect target FPS cap with 2ms tolerance to avoid beat-frequency frame drops
+  if (lastCaptureTs > 0 && (now - lastCaptureTs) < (targetInterval - 2)) {
+    return false;
   }
 
+  // Backpressure guard: allow 1-2 frames in flight, drop only if Wi-Fi queue is genuinely congested
+  if (ws.bufferedAmount > MAX_WS_BUFFERED) {
+    jpegQuality = Math.max(0.38, +(jpegQuality - 0.03).toFixed(2));
+    return false;
+  }
+
+  lastCaptureTs = now;
   const t0 = performance.now();
-  const [outW, outH] = computeScaledDimensions(videoEl.videoWidth, videoEl.videoHeight);
+  const srcW = videoEl.videoWidth;
+  const srcH = videoEl.videoHeight;
+  const [outW, outH] = computeScaledDimensions(srcW, srcH);
   if (canvasEl.width !== outW || canvasEl.height !== outH) {
     canvasEl.width = outW;
     canvasEl.height = outH;
@@ -487,22 +611,39 @@ function captureTick() {
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = "low";
   ctx.drawImage(videoEl, 0, 0, outW, outH);
+  const drawMs = performance.now() - t0;
+  avgDrawMs = avgDrawMs * 0.8 + drawMs * 0.2;
+
   canvasEl.toBlob(blob => {
     encodingInProgress = false;
-    if (blob && streamingActive && !manualDisconnect && !document.hidden && ws && ws.readyState === WebSocket.OPEN && ws.bufferedAmount === 0) {
+    const encodeMs = performance.now() - t0;
+    avgEncodeMs = avgEncodeMs * 0.8 + encodeMs * 0.2;
+
+    // Adaptive JPEG quality: keep frame rate smooth on budget Android CPUs & 2.4 GHz Wi-Fi
+    if (avgEncodeMs > targetInterval * 0.85) {
+      jpegQuality = Math.max(0.38, +(jpegQuality - 0.02).toFixed(2));
+    } else if (avgEncodeMs < targetInterval * 0.45 && ws.bufferedAmount < 32768) {
+      jpegQuality = Math.min(0.55, +(jpegQuality + 0.01).toFixed(2));
+    }
+
+    if (blob && streamingActive && !manualDisconnect && !document.hidden && ws && ws.readyState === WebSocket.OPEN && ws.bufferedAmount <= MAX_WS_BUFFERED * 2) {
       ws.send(blob);
       sentFrames++;
-      const now = performance.now();
-      if (now - lastFpsTick >= 1000) {
-        displayFps = Math.round((sentFrames * 1000) / (now - lastFpsTick));
+      const tickNow = performance.now();
+      if (tickNow - lastFpsTick >= 1000) {
+        const dt = tickNow - lastFpsTick;
+        displayFps = Math.round((sentFrames * 1000) / dt);
+        displayCamFps = Math.round((camFrameCount * 1000) / dt);
         sentFrames = 0;
-        lastFpsTick = now;
-        statsPill.textContent = `${outW}x${outH} • ${displayFps} FPS`;
+        camFrameCount = 0;
+        lastFpsTick = tickNow;
+        const camTag = canUseVideoFrameCallback() ? ` cam:${displayCamFps}` : "";
+        statsPill.textContent = `${outW}x${outH} • ${displayFps} FPS (${srcW}x${srcH}${camTag} d:${Math.round(avgDrawMs)}ms e:${Math.round(avgEncodeMs)}ms)`;
       }
     }
-    const elapsed = performance.now() - t0;
-    scheduleNextCapture(Math.max(10, targetInterval - elapsed));
+    if (typeof onDone === "function") onDone();
   }, "image/jpeg", jpegQuality);
+  return true;
 }
 
 function updateStreamingState(active) {
@@ -622,8 +763,35 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 
+function isPhoneVertical() {
+  if (videoEl && videoEl.videoWidth > 0 && videoEl.videoHeight > 0) {
+    return videoEl.videoHeight > videoEl.videoWidth;
+  }
+  if (window.screen && window.screen.orientation && typeof window.screen.orientation.type === "string") {
+    return window.screen.orientation.type.startsWith("portrait");
+  }
+  return window.innerHeight > window.innerWidth;
+}
+
+function updateOrientationBanner() {
+  const banner = document.getElementById("rotateBanner");
+  if (!banner) return;
+  banner.classList.toggle("visible", isPhoneVertical());
+}
+
+window.addEventListener("resize", updateOrientationBanner);
+window.addEventListener("orientationchange", () => setTimeout(() => { updateOrientationBanner(); sendHello(); }, 150));
+if (window.screen && window.screen.orientation && typeof window.screen.orientation.addEventListener === "function") {
+  window.screen.orientation.addEventListener("change", () => setTimeout(() => { updateOrientationBanner(); sendHello(); }, 150));
+}
+if (videoEl) {
+  videoEl.addEventListener("loadedmetadata", updateOrientationBanner);
+  videoEl.addEventListener("resize", () => { updateOrientationBanner(); sendHello(); });
+}
+
 document.getElementById("deviceLabel").textContent = detectDeviceName();
-startCamera().then(() => { if (!manualDisconnect) connectWebSocket(); });
+updateOrientationBanner();
+startCamera().then(() => { updateOrientationBanner(); if (!manualDisconnect) connectWebSocket(); });
 </script>
 </body>
 </html>

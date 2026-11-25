@@ -50,6 +50,35 @@ class DeviceController:
             srv.rotate_session_token()
         return srv.get_connect_url()
 
+    def list_phone_cam_ips(self) -> Tuple[list, str]:
+        """Returns (ranked_interfaces, active_ip) for the Phone Camera QR selector."""
+        srv = self.ensure_phone_cam_server_started()
+        items = srv.list_local_lan_ips()
+        active_ip = srv.get_active_ip()
+        return items, active_ip
+
+    def set_phone_cam_ip(self, ip: str) -> str:
+        """Selects which local LAN IPv4 address should be used for Phone Camera QR pairing."""
+        srv = self.ensure_phone_cam_server_started()
+        return srv.set_preferred_ip(ip)
+
+    def get_phone_cam_firewall_status(self) -> Dict[str, Any]:
+        """Checks whether Windows Defender Firewall already allows inbound TCP for Phone Camera."""
+        srv = self.ensure_phone_cam_server_started()
+        return srv.check_windows_firewall_rule(srv.actual_port)
+
+    def allow_phone_cam_firewall_async(self, callback: Optional[Callable[[bool, str], None]] = None):
+        """Adds the Windows Defender Firewall inbound rule on a background thread (never blocks Qt UI)."""
+        srv = self.ensure_phone_cam_server_started()
+        port = srv.actual_port
+
+        def worker():
+            ok, msg = srv.ensure_windows_firewall_rule(port)
+            if callback:
+                callback(ok, msg)
+
+        threading.Thread(target=worker, daemon=True, name="PhoneCamFirewallThread").start()
+
     def render_pairing_qr_image(self, rotate_token: bool = False):
         """Generates PIL Image of pairing QR code."""
         import sensor
@@ -101,6 +130,11 @@ class DeviceController:
             "info_text": info_txt,
             "device_name": srv.client_device_name,
             "client_ip": srv.client_ip,
+            "client_lens": srv.client_lens,
+            "width": srv.actual_w,
+            "height": srv.actual_h,
+            "fps": srv.measured_fps,
+            "target_fps": srv.target_fps,
             "streaming_active": srv.streaming_active,
         }
         return res

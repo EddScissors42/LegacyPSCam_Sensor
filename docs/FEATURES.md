@@ -598,6 +598,7 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
   - Ajustados os critérios anatômicos de proporção (`aspect >= 0.28`, checagem em pixels reais) e amortecimento anisotrópico vertical (`dy * 0.38`) na trava de identidade, impedindo perda de tracking durante agachamentos rápidos em coreografias intensas.
 - **Stereo Vision Ativado por Padrão na PS4 Camera:**
   - O motor estéreo sub-pixel (`PyrLK`, < 0.5 ms) foi promovido a comportamento padrão automático da PlayStation 4 Camera e removido como checkbox manual da UI, agora com suporte simétrico tanto ao **Olho Direito** quanto ao **Olho Esquerdo** selecionado como lente principal.
+  - **Estabilização Anti-Zoom em `Head.z` & Mediana de Tronco:** O aterramento estéreo utiliza mediana robusta dos joints do tronco (`s_conf >= 0.55`, piso NCC `>= 0.50`), limitador físico de velocidade (`±0.035m/frame`), clamping anatômico de braços (`±0.55m`) e EMA permanente em `Head(3)`, eliminando qualquer oscilação de *zoom in / zoom out* no enquadramento facial do Just Dance com Auto-Frame ativo.
 - **Refinamentos de UI:**
   - Rodapé inferior direito simplificado para exibir exclusivamente a versão e o estágio (`v0.10.0 (Alpha)`).
   - Opção de 2 jogadores claramente identificada como **`2 Players [Experimental]`** na aba **Tracking**.
@@ -606,6 +607,35 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
   - **Poda Cirúrgica de Binários Mortos (`legacy_pscam_sensor.spec`):** Remove `~92 MB` de DLLs/módulos não utilizados (`opencv_videoio_ffmpeg`, `opengl32sw.dll`, `Qt6Quick`/`Qt6Qml`/`Qt6Pdf`/`Qt6OpenGL`/`Qt6Network`, `PIL._avif`, `_sounddevice_data`), somando `~101 MB` a menos extraídos na abertura.
   - **Splash Screen Instantâneo (`assets/icons/splash.png`):** Exibe tela minimalista Crisp White + PlayStation Blue (`"Hold on... and warm up!"` em DM Sans) em `< 0.3s` no `--onefile`, encerrada automaticamente via `pyi_splash.close()` ao pintar a janela principal.
   - **Identidade Nativa & Release Duplo:** Processo e executável unificados como `LegacyPSCam.exe` com ícone próprio multi-resolução (`app_icon.ico`, barra de tarefas e janelas OpenCV), além de publicação paralela da versão `--onedir` (`LegacyPSCam-Portable-Windows.zip`, abertura `< 1s`) no GitHub Releases.
+
+### 41. Reestruturação de UI: Scoring Bridge no DualShock 4 e Aba Experimental Limpa (v0.10.1 Alpha)
+- **Scoring Bridge (Just Dance Controller App mode):**
+  - A interface de Celular Virtual foi migrada da aba Experimental para a aba **DualShock 4 (Controller Settings)**, consolidada em uma nova pílula visual dedicada.
+  - O componente exibe estritamente os 4 controles essenciais para a ponte de pontuação com o Just Dance:
+    1. **Status de Conexão com o Jogo:** Indicador em tempo real (Desconectado, Conectando ou Conectado ao servidor WebSocket local).
+    2. **Botão "Reconnect Game":** Reconexão rápida ao servidor do jogo (`127.0.0.1:8080`).
+    3. **Botão "Auto-Find":** Busca automática por broadcast UDP para localizar instâncias do Just Dance na rede.
+    4. **Botão "Skip Finish":** Atalho para contornar a tela de introdução do tutorial de celular no Just Dance 2022, transferido para dentro da pílula.
+  - A descrição original detalhada do Virtual Phone foi preservada no cabeçalho da pílula.
+- **Limpeza do Bloco Controller Hardware:**
+  - O botão `Skip Finish` foi removido da linha de ações do hardware (`Controller Hardware`), mantendo aquela área focada exclusivamente nas ações físicas do gamepad (`Test Rumble Vibration` e `Reconnect Controller`).
+- **Aba Experimental Esvaziada:**
+  - A aba `Experimental` permanece ativa na navegação superior (`page_exp`), porém agora se mantém limpa como um placeholder (`"No experimental features available at this time."`), sem elementos funcionais poluindo o painel.
+- **Otimização de Alto FPS para Android no Phone Camera WebApp (`assets/webapp/mobile_webapp.html` & `sensor/phone_camera.py`):**
+  - Substituída a verificação estrita `ws.bufferedAmount > 0` (que causava travamentos e descarte de frames devido ao IPC assíncrono do Chrome no Android) por uma janela de backpressure de `128 KB`, permitindo 1–2 frames em voo sem engasgar o fluxo Wi-Fi.
+  - Adotado `video.requestVideoFrameCallback` (sincronizado diretamente aos frames de hardware da câmera, eliminando o *sleep* forçado de `10ms` por frame).
+  - Adicionado controle adaptativo de qualidade JPEG (`0.38`–`0.55`), limites máximos nas constraints `getUserMedia` para impedir captura em 1080p/4K em drivers Android Camera2, remoção de `backdrop-filter: blur` sobre o `<video>` (que quebrava hardware overlay em GPUs Mali) e unmasking XOR in-place sem cópias extras no servidor Python.
+  - **Notificação Reativa de Orientação Horizontal (`Rotate your phone horizontally`):** Pílula de aviso com ícone vetorial de rotação (vertical → horizontal) exibida automaticamente acima da barra de controles tanto na janela de rastreamento do PC (`sensor/tracking_overlay.py`) quanto no WebApp móvel (`assets/webapp/mobile_webapp.html`) sempre que o celular estiver na vertical, ocultando-se instantaneamente assim que o aparelho for virado para paisagem.
+  - **Resiliência de Conexão Wi-Fi / Anti-`ERR_CONNECTION_TIMED_OUT` (`sensor/phone_camera.py`, `sensor/tls_manager.py`, `ui/pages.py`, `ui/gui_qt.py`):**
+    - Enumeração nativa Win32 (`iphlpapi.GetAdaptersAddresses`) que prioriza adaptadores físicos Wi-Fi/Ethernet (`192.168.x.x` / `10.x.x.x`) acima de túneis VPN e interfaces virtuais (Radmin VPN, Tailscale, Hamachi, WireGuard, OpenVPN, WSL, Hyper-V, VirtualBox, VMware).
+    - Certificado TLS X.509v3 com **multi-IP SubjectAltName (SAN)** abrangendo todos os IPs locais detectados, combinado com seletor manual de adaptador/IP diretamente no card do QR Code.
+    - Diagnóstico instantâneo de regras do Windows Defender Firewall via Registry (`winreg`, sem admin) e botão **`Allow Firewall`** com elevação UAC sob demanda para liberar a porta TCP do Phone Camera em redes **Private e Public**, resolvendo bloqueios silenciosos que causavam `ERR_CONNECTION_TIMED_OUT`.
+    - Timeout inicial do handshake ampliado (`3s → 10s`), log estruturado de erros de conexão no `session.log` e correção do readout de lente/resolução/FPS no `DeviceController`.
+- **Blindagem do Emulador Kinect para Windows 10 (`sensor/kinect_emulator.py` & `sensor/tracking_session.py`):**
+  - Enumeração estrita de módulos 32-bit (`LIST_MODULES_32BIT = 0x01` + validação de espaço de endereço `< 4 GB` e magic `PE32 0x010B`), eliminando falhas silenciosas de `NO_LOADLIB` quando módulos WoW64 64-bit aparecem na enumeração do Windows 10.
+  - Staging automático de `Legacy10.dll` para `%APPDATA%\LegacyPSCam_Sensor\tools\` em builds `--onefile`, evitando bloqueios do Windows Defender ao carregar DLLs de `%TEMP%\_MEI*`.
+  - Leitura dinâmica da tabela `OriginalFirstThunk` (ILT) por ordinal e nome, checagem de `GetExitCodeThread` do `LoadLibraryW`, polling mais rápido (`100ms`) para capturar o boot do jogo, suporte a aliases (`JustDance2017.exe`, `LegacyOffline.exe`) e feedback visual de diagnóstico no HUD (`GAME: Run as Administrator!`, `GAME: Check Antivirus/AV!`, `IPC: Active • Game Linked`).
+  - Proteção no modo câmera para que um flag residual `virtual_phone_enabled` do modo DualShock 4 nunca zere o esqueleto Kinect na memória compartilhada.
 
 ---
 

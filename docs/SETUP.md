@@ -129,7 +129,21 @@ Para utilizar o controle DualShock 4 ou controles compatíveis (Nível A) como c
 
 ---
 
-## 6. Como Jogar no Just Dance PC
+## 6. Pareamento do Phone Camera via Wi-Fi (QR Code & Firewall do Windows)
+
+Para usar qualquer smartphone Android ou iOS como câmera de rastreamento sem instalar aplicativo:
+
+1. Conecte o celular na **mesma rede Wi-Fi local** do PC (desative dados móveis 4G/5G, evite Wi-Fi Convidado/Guest e desative VPNs no PC ou celular).
+2. Na barra lateral do **Legacy PSCam Sensor**, selecione **Phone Camera**.
+3. Confira o adaptador/IP selecionado no menu suspenso acima da URL (escolha o IP do seu **Wi-Fi** ou **Ethernet**, evitando adaptadores VPN/Virtuais como Radmin, Tailscale, WSL ou VirtualBox).
+4. **Se ocorrer `ERR_CONNECTION_TIMED_OUT` ao ler o QR Code:**
+   - Clique no botão **`Allow Firewall`** ao lado do seletor de IP e confirme a elevação UAC do Windows. Isso cria automaticamente a regra de entrada TCP (porta `8443`, perfis **Private e Public**) no Windows Defender Firewall.
+   - Caso o erro persista, verifique no roteador se a opção **AP Isolation / Isolamento de Clientes** está desativada.
+5. Escaneie o QR Code com a câmera do celular, aceite o aviso de certificado local HTTPS (*Avançado → Prosseguir*) e permita o acesso à câmera.
+
+---
+
+## 7. Como Jogar no Just Dance PC
 
 1. Com o rastreador ativo (janela com esqueleto e contadores de FPS visível), abra o **Just Dance PC**.
 2. Na tela de seleção de controle do jogo, escolha a opção **Kinect Sensor**.
@@ -139,7 +153,7 @@ Para utilizar o controle DualShock 4 ou controles compatíveis (Nível A) como c
 
 ---
 
-## 7. Armazenamento Centralizado no AppData e Modo Portátil
+## 8. Armazenamento Centralizado no AppData e Modo Portátil
 
 O **Legacy PSCam Sensor** armazena todas as configurações e arquivos de log no diretório de dados do usuário:
 

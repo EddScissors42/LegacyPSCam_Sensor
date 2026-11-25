@@ -465,17 +465,39 @@ class UIPagesMixin:
         instr_col.setSpacing(8)
 
         lbl_steps = QLabel(
-            "<b>1. Same Wi-Fi Network:</b> Connect your Android or iPhone to the same local network as this PC.<br><br>"
-            "<b>2. Scan QR Code:</b> Open your phone's Camera app and point it at the QR Code (or open the URL below in Safari or Chrome).<br><br>"
-            "<b>3. Allow Camera Access:</b> On the local HTTPS security prompt, tap <b>Advanced → Proceed</b> (or <b>Show Details → Visit this website</b>) and grant camera permission.",
+            "<b>1. Same Wi-Fi Network:</b> Connect your Android or iPhone to the same local Wi-Fi as this PC (disable VPN & avoid Guest Wi-Fi).<br>"
+            "<b>2. Scan QR Code:</b> Point your phone's Camera at the QR Code (or open the URL below in Safari / Chrome).<br>"
+            "<b>3. Allow Access:</b> Tap <b>Advanced → Proceed</b> on the local HTTPS prompt and grant camera permission.<br>"
+            "<span style='color:#64748B;'>Getting <b>ERR_CONNECTION_TIMED_OUT</b>? Click <b>Allow Firewall</b> below or pick your Wi-Fi/Ethernet IP.</span>",
             self.phone_cam_qr_card
         )
         lbl_steps.setWordWrap(True)
         lbl_steps.setStyleSheet(
-            f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['text_main']}; background: transparent; border: none; line-height: 135%;"
+            f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['text_main']}; background: transparent; border: none; line-height: 132%;"
         )
         instr_col.addWidget(lbl_steps)
         instr_col.addStretch()
+
+        net_bar = QHBoxLayout()
+        net_bar.setSpacing(8)
+
+        self.cb_phone_cam_ip = QComboBox(self.phone_cam_qr_card)
+        self.cb_phone_cam_ip.setFixedHeight(30)
+        self.cb_phone_cam_ip.setToolTip("Select the Wi-Fi or Ethernet LAN IP of this PC (avoid VPN/Virtual adapters)")
+        self.cb_phone_cam_ip.currentIndexChanged.connect(self._on_phone_cam_ip_changed)
+        net_bar.addWidget(self.cb_phone_cam_ip, stretch=1)
+
+        self.btn_phone_firewall = QPushButton("Allow Firewall", self.phone_cam_qr_card)
+        self.btn_phone_firewall.setProperty("class", "btn_secondary")
+        self.btn_phone_firewall.setFixedHeight(30)
+        self.btn_phone_firewall.setToolTip(
+            "Add a Windows Defender Firewall inbound rule for Phone Camera (Private & Public Wi-Fi) to fix ERR_CONNECTION_TIMED_OUT"
+        )
+        self.btn_phone_firewall.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_phone_firewall.clicked.connect(self._on_allow_phone_cam_firewall)
+        net_bar.addWidget(self.btn_phone_firewall)
+
+        instr_col.addLayout(net_bar)
 
         url_bar = QHBoxLayout()
         url_bar.setSpacing(8)
@@ -950,7 +972,7 @@ class UIPagesMixin:
         self._update_calib_cards_ui()
 
     def _build_exp_view(self):
-        """Constructs Page 2: Experimental Features."""
+        """Constructs Page 2: Experimental Features (Empty placeholder per user request)."""
         self.page_exp = QWidget()
         layout = QVBoxLayout(self.page_exp)
         layout.setContentsMargins(0, 4, 6, 0)
@@ -968,358 +990,50 @@ class UIPagesMixin:
         )
         exp_layout.addWidget(lbl_title)
 
-        # Warning Callout Box
-        warn_box = QFrame(exp_card)
-        warn_box.setStyleSheet("""
-            QFrame {
-                background-color: #FEF3C7;
-                border: 1px solid #FCD34D;
-                border-radius: 8px;
-            }
-        """)
-        warn_layout = QHBoxLayout(warn_box)
-        warn_layout.setContentsMargins(12, 10, 12, 10)
-        warn_layout.setSpacing(10)
-
-        lbl_warn_icon = QLabel("[!]", warn_box)
-        lbl_warn_icon.setStyleSheet("font-family: monospace; font-size: 14px; font-weight: bold; color: #92400E; background: transparent; border: none;")
-        warn_layout.addWidget(lbl_warn_icon, alignment=Qt.AlignmentFlag.AlignTop)
-
-        lbl_warn_text = QLabel(
-            "CAUTION: Features here are under constant testing and development. "
-            "They may not work as intended or may fail to function entirely, which could affect your gameplay experience.",
-            warn_box
+        lbl_empty = QLabel("No experimental features available at this time.", exp_card)
+        lbl_empty.setStyleSheet(
+            f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
         )
-        lbl_warn_text.setWordWrap(True)
-        lbl_warn_text.setStyleSheet(
-            f"font-family: '{self.font_body}'; font-size: 11px; font-weight: 500; color: #92400E; background: transparent; border: none;"
-        )
-        warn_layout.addWidget(lbl_warn_text, stretch=1)
-        exp_layout.addWidget(warn_box)
+        exp_layout.addWidget(lbl_empty)
+        exp_layout.addStretch()
 
-        # Auto-Frame Feature Box
-        self.auto_frame_box = QFrame(exp_card)
-        self.auto_frame_box.setStyleSheet(f"""
-            QFrame {{
-                background-color: {PALETTE["input_bg"]};
-                border: 1px solid {PALETTE["border_subtle"]};
-                border-radius: 8px;
-            }}
-        """)
-        af_layout = QVBoxLayout(self.auto_frame_box)
-        af_layout.setContentsMargins(14, 12, 14, 12)
-        af_layout.setSpacing(6)
+        layout.addWidget(exp_card)
+        layout.addStretch()
 
+        # Hidden backward-compatibility widgets preserved for internal logic and tests
+        self.auto_frame_box = QFrame(self.page_exp)
+        self.auto_frame_box.setVisible(False)
         self.chk_face = QCheckBox("Auto-Frame player's face in Just Dance (Digital PTZ)", self.auto_frame_box)
-        self.chk_face.setChecked(self.cfg.get("face_follow_enabled", True))
-        self.chk_face.stateChanged.connect(self._on_display_options_changed)
-        af_layout.addWidget(self.chk_face)
+        self.chk_face.setChecked(self.cfg.get("face_follow_enabled", False))
+        self.chk_face.setVisible(False)
 
-        lbl_desc = QLabel(
-            "Dynamically tracks and frames the dancer's face and upper torso using real-time landmark tracking. "
-            "Smoothly pans and crops the game video stream sent to Just Dance PC while keeping 3D skeletal tracking unaffected.",
-            self.auto_frame_box
-        )
-        lbl_desc.setWordWrap(True)
-        lbl_desc.setStyleSheet(
-            f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
-        )
-        af_layout.addWidget(lbl_desc)
-
-        exp_layout.addWidget(self.auto_frame_box)
-
-        # Virtual Phone Controller Feature Box (Single Block)
-        vphone_box = QFrame(exp_card)
-        vphone_box.setStyleSheet(f"""
-            QFrame {{
-                background-color: {PALETTE["input_bg"]};
-                border: 1px solid {PALETTE["border_subtle"]};
-                border-radius: 8px;
-            }}
-        """)
-        vp_layout = QVBoxLayout(vphone_box)
-        vp_layout.setContentsMargins(14, 12, 14, 12)
-        vp_layout.setSpacing(8)
-
-        self.chk_vphone_enabled = QCheckBox("Virtual Phone Controller (JD Controller via Camera)", vphone_box)
-        self.chk_vphone_enabled.setStyleSheet(
-            f"font-family: '{self.font_heading}'; font-size: 13px; font-weight: bold; color: {PALETTE['text_main']};"
-        )
+        self.chk_vphone_enabled = QCheckBox("Virtual Phone Controller", self)
         self.chk_vphone_enabled.setChecked(bool(self.cfg.get("virtual_phone_enabled", False)))
-        self.chk_vphone_enabled.stateChanged.connect(self._on_vphone_toggle_changed)
-        vp_layout.addWidget(self.chk_vphone_enabled)
+        self.chk_vphone_enabled.setVisible(False)
 
-        self.lbl_vp_desc = QLabel(
-            "Emulates a smartphone connected to Just Dance via WebSocket/TLS (/smartphone) and converts your hand motion "
-            "in the camera into 3D accelerometer commands for songs that only support hand controllers.",
-            vphone_box
-        )
-        self.lbl_vp_desc.setWordWrap(True)
-        self.lbl_vp_desc.setStyleSheet(
-            f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
-        )
-        vp_layout.addWidget(self.lbl_vp_desc)
-
-        # Status & Controls Container (Hidden when Virtual Phone is disabled)
-        self.vphone_details_frame = QFrame(vphone_box)
-        self.vphone_details_frame.setObjectName("vphone_details_frame")
-        self.vphone_details_frame.setStyleSheet(f"""
-            QFrame#vphone_details_frame {{
-                background-color: {PALETTE["bg_card"]};
-                border: 1px solid {PALETTE["border_subtle"]};
-                border-radius: 8px;
-            }}
-        """)
-        vp_det_layout = QVBoxLayout(self.vphone_details_frame)
-        vp_det_layout.setContentsMargins(14, 12, 14, 12)
-        vp_det_layout.setSpacing(10)
-
-        # Status readout
-        self.lbl_vphone_status = QLabel("Status: Disabled", self.vphone_details_frame)
-        self.lbl_vphone_status.setStyleSheet(
-            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['text_muted']}; background: transparent; border: none;"
-        )
-        vp_det_layout.addWidget(self.lbl_vphone_status)
-
-        # Live Accel readout (only visible while tracking is active)
-        self.lbl_vphone_accel = QLabel("3D Accelerometer: X: +0.00G | Y: -1.00G | Z: +0.00G (0.0 m/s)", self.vphone_details_frame)
-        self.lbl_vphone_accel.setStyleSheet(
-            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['ps_blue']}; background: transparent; border: none;"
-        )
-        self.lbl_vphone_accel.setVisible(getattr(self, "is_tracking_active", False))
-        vp_det_layout.addWidget(self.lbl_vphone_accel)
-
-        # Hidden Host/Port fields (preserved for logic and persistence without UI clutter)
-        self.txt_vphone_host = QLineEdit(str(self.cfg.get("virtual_phone_host", "127.0.0.1")), self)
-        self.txt_vphone_host.setVisible(False)
-        self.txt_vphone_port = QLineEdit(str(self.cfg.get("virtual_phone_port", 8080)), self)
-        self.txt_vphone_port.setVisible(False)
-
-        # Action buttons row (Reconnect, Auto-Find, Skip Finish, Record Log)
-        btn_row = QHBoxLayout()
-        btn_row.setSpacing(8)
-
-        btn_outline_style = f"""
-            QPushButton {{
-                background-color: #FFFFFF;
-                color: {PALETTE["text_main"]};
-                font-family: '{self.font_heading}', sans-serif;
-                font-size: 11px;
-                font-weight: bold;
-                border: 1px solid {PALETTE["tab_gray_border"]};
-                border-radius: 6px;
-                padding: 6px 14px;
-            }}
-            QPushButton:hover {{
-                background-color: {PALETTE["tab_gray_hover"]};
-                border-color: {PALETTE["ps_blue"]};
-                color: {PALETTE["ps_blue"]};
-            }}
-            QPushButton:pressed {{
-                background-color: {PALETTE["tab_gray_act"]};
-            }}
-            QPushButton:disabled {{
-                background-color: #F8FAFC;
-                color: {PALETTE["text_muted"]};
-                border-color: {PALETTE["border_subtle"]};
-            }}
-        """
-        self._btn_vphone_outline_style = btn_outline_style
-
-        self.btn_vphone_reconnect = QPushButton("Reconnect", self.vphone_details_frame)
-        self.btn_vphone_reconnect.setStyleSheet(btn_outline_style)
-        self.btn_vphone_reconnect.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_vphone_reconnect.clicked.connect(self._on_vphone_reconnect_clicked)
-
-        self.btn_vphone_discover = QPushButton("Auto-Find", self.vphone_details_frame)
-        self.btn_vphone_discover.setStyleSheet(btn_outline_style)
-        self.btn_vphone_discover.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_vphone_discover.clicked.connect(self._on_vphone_discover_clicked)
-        self.btn_vphone_discover.setVisible(True)
-
-        self.btn_vphone_ftue = QPushButton("Skip Finish", self.vphone_details_frame)
-        self.btn_vphone_ftue.setStyleSheet(btn_outline_style)
-        self.btn_vphone_ftue.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_vphone_ftue.setToolTip("Skip phone tutorial prompt in Just Dance PC")
-        self.btn_vphone_ftue.clicked.connect(self._on_skip_finish_clicked)
-
-        self.btn_vphone_log = QPushButton("Record Log", self.vphone_details_frame)
-        self.btn_vphone_log.setStyleSheet(btn_outline_style)
-        self.btn_vphone_log.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_vphone_log.setToolTip("Records accelerometer telemetry (CSV) for analysis and comparison with real phones")
-        self.btn_vphone_log.clicked.connect(self._toggle_vphone_logging)
-
-        btn_row.addWidget(self.btn_vphone_reconnect)
-        btn_row.addWidget(self.btn_vphone_discover)
-        btn_row.addWidget(self.btn_vphone_ftue)
-        btn_row.addWidget(self.btn_vphone_log)
-        btn_row.addStretch()
-        vp_det_layout.addLayout(btn_row)
-
-        # Settings row: Hand Selection
-        settings_row = QHBoxLayout()
-        settings_row.setSpacing(16)
-
-        # Hand block
-        hand_box = QVBoxLayout()
-        hand_box.setSpacing(4)
-        lbl_hand = QLabel("TRACKED HAND", self.vphone_details_frame)
-        lbl_hand.setStyleSheet(
-            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['text_main']}; background: transparent; border: none;"
-        )
-        self.cb_vphone_hand = QComboBox(self.vphone_details_frame)
-        self.cb_vphone_hand.addItems(["Right Hand (Default)", "Left Hand"])
-        saved_hand = str(self.cfg.get("virtual_phone_hand", "right")).lower()
-        self.cb_vphone_hand.setCurrentIndex(1 if saved_hand == "left" else 0)
-        self.cb_vphone_hand.setStyleSheet(f"""
-            QComboBox {{
-                background-color: #FFFFFF;
-                color: {PALETTE['text_main']};
-                font-family: '{self.font_body}', sans-serif;
-                border: 1px solid {PALETTE['tab_gray_border']};
-                border-radius: 6px;
-                padding: 6px 12px;
-                font-size: 11px;
-                font-weight: 500;
-                min-width: 160px;
-            }}
-            QComboBox:hover {{
-                border-color: {PALETTE['ps_blue']};
-            }}
-        """)
-        self.cb_vphone_hand.currentIndexChanged.connect(self._on_vphone_config_changed)
-        hand_box.addWidget(lbl_hand)
-        hand_box.addWidget(self.cb_vphone_hand)
-
-        settings_row.addLayout(hand_box, stretch=1)
-        vp_det_layout.addLayout(settings_row)
-
-        vp_layout.addWidget(self.vphone_details_frame)
-        self.vphone_details_frame.setVisible(self.chk_vphone_enabled.isChecked())
-        exp_layout.addWidget(vphone_box)
-
-        # =====================================================================
-        # Dedicated Telemetry Benchmark Feature Box (Preserved but Disabled & Hidden from UI)
-        # =====================================================================
-        self.benchmark_box = QFrame(exp_card)
+        self.benchmark_box = QFrame(self.page_exp)
         self.benchmark_box.setVisible(False)
         self.benchmark_box.setEnabled(False)
-        self.benchmark_box.setStyleSheet(f"""
-            QFrame {{
-                background-color: {PALETTE["input_bg"]};
-                border: 1px solid {PALETTE["border_subtle"]};
-                border-radius: 8px;
-            }}
-        """)
-        bm_layout = QVBoxLayout(self.benchmark_box)
-        bm_layout.setContentsMargins(14, 12, 14, 12)
-        bm_layout.setSpacing(8)
-
-        self.chk_benchmark_enabled = QCheckBox("Telemetry Benchmark (Auto-Capture & Compare)", self.benchmark_box)
-        self.chk_benchmark_enabled.setStyleSheet(
-            f"font-family: '{self.font_heading}'; font-size: 13px; font-weight: bold; color: {PALETTE['text_main']};"
-        )
-        is_bm_enabled = bool(self.cfg.get("benchmark_auto_record", self.cfg.get("virtual_phone_auto_record", False)))
-        self.chk_benchmark_enabled.stateChanged.connect(self._on_benchmark_toggle_changed)
-        self.chk_benchmark_enabled.setChecked(is_bm_enabled)
-        if is_bm_enabled:
-            self.vphone.set_auto_record(True)
-        bm_layout.addWidget(self.chk_benchmark_enabled)
-
-        lbl_bm_desc = QLabel(
-            "Monitors Just Dance 2020-2022 dance sessions in real-time. When enabled, it continuously watches "
-            "for song starts and automatically records 3D accelerometer telemetry to benchmark and compare "
-            "Camera tracking against physical DualShock 4 hardware IMU data.",
-            self.benchmark_box
-        )
-        lbl_bm_desc.setWordWrap(True)
-        lbl_bm_desc.setStyleSheet(
-            f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
-        )
-        bm_layout.addWidget(lbl_bm_desc)
-
-        # Benchmark Details & Controls Container
-        self.benchmark_details_frame = QFrame(self.benchmark_box)
-        self.benchmark_details_frame.setObjectName("benchmark_details_frame")
-        self.benchmark_details_frame.setStyleSheet(f"""
-            QFrame#benchmark_details_frame {{
-                background-color: {PALETTE["bg_card"]};
-                border: 1px solid {PALETTE["border_subtle"]};
-                border-radius: 8px;
-            }}
-        """)
-        bm_det_layout = QVBoxLayout(self.benchmark_details_frame)
-        bm_det_layout.setContentsMargins(14, 12, 14, 12)
-        bm_det_layout.setSpacing(10)
-
-        # Active Song status readout
-        self.lbl_benchmark_song = QLabel("Active Song: None (Watching for Just Dance song start...)", self.benchmark_details_frame)
-        self.lbl_benchmark_song.setStyleSheet(
-            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['text_muted']}; background: transparent; border: none;"
-        )
-        bm_det_layout.addWidget(self.lbl_benchmark_song)
-
-        # Action Buttons Row
-        bm_btn_row = QHBoxLayout()
-        bm_btn_row.setSpacing(8)
-
-        self.btn_open_benchmark = QPushButton("Benchmark & Compare Telemetry", self.benchmark_details_frame)
-        self.btn_open_benchmark.setStyleSheet(f"""
-            QPushButton {{
-                background-color: #FFFFFF;
-                color: {PALETTE["ps_blue"]};
-                font-family: '{self.font_heading}', sans-serif;
-                font-size: 11px;
-                font-weight: bold;
-                border: 1px solid {PALETTE["ps_blue"]};
-                border-radius: 6px;
-                padding: 6px 14px;
-            }}
-            QPushButton:hover {{
-                background-color: {PALETTE["tab_gray_hover"]};
-            }}
-            QPushButton:pressed {{
-                background-color: {PALETTE["tab_gray_act"]};
-            }}
-        """)
-        self.btn_open_benchmark.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_open_benchmark.setToolTip("Compare acceleration telemetry between Camera and DualShock 4 for this song")
-        self.btn_open_benchmark.clicked.connect(self._open_telemetry_benchmark_dialog)
-        bm_btn_row.addWidget(self.btn_open_benchmark)
-
-        self.btn_open_logs_dir = QPushButton("Open Logs Folder", self.benchmark_details_frame)
-        self.btn_open_logs_dir.setStyleSheet(btn_outline_style)
-        self.btn_open_logs_dir.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_open_logs_dir.setToolTip("Open folder containing recorded CSV telemetry logs")
-        self.btn_open_logs_dir.clicked.connect(self._open_logs_folder)
-        bm_btn_row.addWidget(self.btn_open_logs_dir)
-
-        bm_btn_row.addStretch()
-        bm_det_layout.addLayout(bm_btn_row)
-
-        # Real-time adaptive calibration checkbox
-        self.chk_benchmark_adaptive = QCheckBox("Real-time adaptive calibration (auto-adjust sensitivity from in-game scoring)", self.benchmark_details_frame)
-        self.chk_benchmark_adaptive.setChecked(bool(self.cfg.get("virtual_phone_adaptive", False)))
-        self.chk_benchmark_adaptive.stateChanged.connect(self._on_benchmark_adaptive_changed)
-        self.chk_benchmark_adaptive.setStyleSheet(f"font-size: 11px; font-weight: 500; color: {PALETTE['text_main']};")
-        bm_det_layout.addWidget(self.chk_benchmark_adaptive)
-
-        bm_layout.addWidget(self.benchmark_details_frame)
-        self.benchmark_details_frame.setVisible(False)
-        self.benchmark_box.setVisible(False)
+        self.chk_benchmark_enabled = QCheckBox("Telemetry Benchmark", self.benchmark_box)
+        self.chk_benchmark_enabled.setVisible(False)
+        self.lbl_benchmark_song = QLabel("Active Song: None", self.benchmark_box)
+        self.lbl_benchmark_song.setVisible(False)
+        self.btn_open_benchmark = QPushButton("Benchmark", self.benchmark_box)
+        self.btn_open_benchmark.setVisible(False)
+        self.btn_open_logs_dir = QPushButton("Open Logs Folder", self.benchmark_box)
+        self.btn_open_logs_dir.setVisible(False)
+        self.chk_benchmark_adaptive = QCheckBox("Adaptive", self.benchmark_box)
+        self.chk_benchmark_adaptive.setVisible(False)
 
         # Compatibility aliases
         self.lbl_vphone_song = self.lbl_benchmark_song
         self.btn_vphone_benchmark = self.btn_open_benchmark
         self.chk_vphone_auto_record = self.chk_benchmark_enabled
         self.chk_vphone_adaptive = self.chk_benchmark_adaptive
-        layout.addWidget(exp_card)
-        layout.addStretch()
 
         self.scroll_exp = self._create_scroll_page(self.page_exp)
         self.stacked_view.addWidget(self.scroll_exp)
         self._update_exp_view_for_mode(self.cfg.get("camera_mode", "pscam"))
-        self._update_vphone_ui_readout()
 
     def _build_ds4_view(self):
         """Constructs Page 3: DualShock 4 [EXPERIMENTAL] Controller Settings."""
@@ -1695,31 +1409,8 @@ class UIPagesMixin:
         self.btn_ds4_reconnect.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_ds4_reconnect.clicked.connect(self._reconnect_ds4)
 
-        self.btn_ds4_skip_finish = QPushButton("Skip Finish", self.ds4_info_frame)
-        self.btn_ds4_skip_finish.setFixedHeight(36)
-        self.btn_ds4_skip_finish.setStyleSheet(f"""
-            QPushButton {{
-                background-color: #FFFFFF;
-                color: #0F172A;
-                font-family: '{self.font_heading}', sans-serif;
-                font-size: 11px;
-                font-weight: bold;
-                border: 1px solid {PALETTE["tab_gray_border"]};
-                border-radius: 6px;
-                padding: 6px 16px;
-            }}
-            QPushButton:hover {{
-                border-color: {PALETTE["ps_blue"]};
-                background-color: #F8FAFC;
-            }}
-        """)
-        self.btn_ds4_skip_finish.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_ds4_skip_finish.setToolTip("Skip tutorial finish step for Just Dance phone controller")
-        self.btn_ds4_skip_finish.clicked.connect(self._on_skip_finish_clicked)
-
         actions_row.addWidget(self.btn_ds4_rumble)
         actions_row.addWidget(self.btn_ds4_reconnect)
-        actions_row.addWidget(self.btn_ds4_skip_finish)
         actions_row.addStretch()
         ds4_info_layout.addLayout(actions_row)
 
@@ -1742,6 +1433,136 @@ class UIPagesMixin:
 
         ds4_layout.addWidget(self.ds4_info_frame)
 
+        # =====================================================================
+        # Scoring Bridge (Just Dance Controller App mode) Block
+        # =====================================================================
+        self.scoring_bridge_box = QFrame(ds4_card)
+        self.scoring_bridge_box.setObjectName("settingBlockScoringBridge")
+        self.scoring_bridge_box.setStyleSheet(f"""
+            QFrame#settingBlockScoringBridge {{
+                background-color: #FFFFFF;
+                border: 1px solid {PALETTE["border_subtle"]};
+                border-radius: 10px;
+            }}
+            QFrame#settingBlockScoringBridge:hover {{
+                border-color: {PALETTE["input_border"]};
+            }}
+        """)
+        sb_layout = QVBoxLayout(self.scoring_bridge_box)
+        sb_layout.setContentsMargins(14, 12, 14, 12)
+        sb_layout.setSpacing(8)
+
+        lbl_sb_title = QLabel("SCORING BRIDGE (JUST DANCE CONTROLLER APP MODE)", self.scoring_bridge_box)
+        lbl_sb_title.setStyleSheet(
+            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent; border: none;"
+        )
+        sb_layout.addWidget(lbl_sb_title)
+
+        self.lbl_vp_desc = QLabel(
+            "Emulates a smartphone connected to Just Dance via WebSocket/TLS (/smartphone) and converts your hand motion "
+            "in the camera into 3D accelerometer commands for songs that only support hand controllers.",
+            self.scoring_bridge_box
+        )
+        self.lbl_vp_desc.setWordWrap(True)
+        self.lbl_vp_desc.setStyleSheet(
+            f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
+        )
+        sb_layout.addWidget(self.lbl_vp_desc)
+
+        # Status badge container
+        sb_status_box = QFrame(self.scoring_bridge_box)
+        sb_status_box.setFixedHeight(32)
+        sb_status_box.setStyleSheet(f"""
+            QFrame {{
+                background-color: #F8FAFC;
+                border: 1px solid {PALETTE["border_subtle"]};
+                border-radius: 6px;
+                padding: 0px 8px;
+            }}
+        """)
+        sb_st_layout = QHBoxLayout(sb_status_box)
+        sb_st_layout.setContentsMargins(8, 0, 8, 0)
+
+        self.lbl_vphone_status = QLabel("Status: Disconnected", sb_status_box)
+        self.lbl_vphone_status.setStyleSheet(
+            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['text_muted']}; background: transparent; border: none;"
+        )
+        sb_st_layout.addWidget(self.lbl_vphone_status)
+        sb_layout.addWidget(sb_status_box)
+
+        # Action buttons row: Reconnect Game, Auto-Find, Skip Finish
+        btn_sb_outline_style = f"""
+            QPushButton {{
+                background-color: #FFFFFF;
+                color: {PALETTE["text_main"]};
+                font-family: '{self.font_heading}', sans-serif;
+                font-size: 11px;
+                font-weight: bold;
+                border: 1px solid {PALETTE["tab_gray_border"]};
+                border-radius: 6px;
+                padding: 6px 14px;
+            }}
+            QPushButton:hover {{
+                background-color: {PALETTE["tab_gray_hover"]};
+                border-color: {PALETTE["ps_blue"]};
+                color: {PALETTE["ps_blue"]};
+            }}
+            QPushButton:pressed {{
+                background-color: {PALETTE["tab_gray_act"]};
+            }}
+            QPushButton:disabled {{
+                background-color: #F8FAFC;
+                color: {PALETTE["text_muted"]};
+                border-color: {PALETTE["border_subtle"]};
+            }}
+        """
+        self._btn_vphone_outline_style = btn_sb_outline_style
+
+        sb_btn_row = QHBoxLayout()
+        sb_btn_row.setSpacing(8)
+
+        self.btn_vphone_reconnect = QPushButton("Reconnect Game", self.scoring_bridge_box)
+        self.btn_vphone_reconnect.setFixedHeight(34)
+        self.btn_vphone_reconnect.setStyleSheet(btn_sb_outline_style)
+        self.btn_vphone_reconnect.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_vphone_reconnect.clicked.connect(self._on_vphone_reconnect_clicked)
+
+        self.btn_vphone_discover = QPushButton("Auto-Find", self.scoring_bridge_box)
+        self.btn_vphone_discover.setFixedHeight(34)
+        self.btn_vphone_discover.setStyleSheet(btn_sb_outline_style)
+        self.btn_vphone_discover.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_vphone_discover.clicked.connect(self._on_vphone_discover_clicked)
+
+        self.btn_vphone_ftue = QPushButton("Skip Finish", self.scoring_bridge_box)
+        self.btn_vphone_ftue.setFixedHeight(34)
+        self.btn_vphone_ftue.setStyleSheet(btn_sb_outline_style)
+        self.btn_vphone_ftue.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_vphone_ftue.setToolTip("Skip phone tutorial prompt in Just Dance PC")
+        self.btn_vphone_ftue.clicked.connect(self._on_skip_finish_clicked)
+
+        sb_btn_row.addWidget(self.btn_vphone_reconnect)
+        sb_btn_row.addWidget(self.btn_vphone_discover)
+        sb_btn_row.addWidget(self.btn_vphone_ftue)
+        sb_btn_row.addStretch()
+        sb_layout.addLayout(sb_btn_row)
+
+        ds4_layout.addWidget(self.scoring_bridge_box)
+
+        # Aliases and hidden controls
+        self.vphone_details_frame = self.scoring_bridge_box
+        self.btn_ds4_skip_finish = self.btn_vphone_ftue
+        self.txt_vphone_host = QLineEdit(str(self.cfg.get("virtual_phone_host", "127.0.0.1")), self)
+        self.txt_vphone_host.setVisible(False)
+        self.txt_vphone_port = QLineEdit(str(self.cfg.get("virtual_phone_port", 8080)), self)
+        self.txt_vphone_port.setVisible(False)
+        self.cb_vphone_hand = QComboBox(self)
+        self.cb_vphone_hand.addItems(["Right Hand (Default)", "Left Hand"])
+        self.cb_vphone_hand.setVisible(False)
+        self.lbl_vphone_accel = QLabel("", self)
+        self.lbl_vphone_accel.setVisible(False)
+        self.btn_vphone_log = QPushButton("Record Log", self)
+        self.btn_vphone_log.setVisible(False)
+
         # Initial visibility: disconnected balloon shown, details hidden until connected
         self.ds4_disconnected_box.setVisible(True)
         self.ds4_info_frame.setVisible(False)
@@ -1750,3 +1571,4 @@ class UIPagesMixin:
 
         self.scroll_ds4 = self._create_scroll_page(self.page_ds4)
         self.stacked_view.addWidget(self.scroll_ds4)
+        self._update_vphone_ui_readout()
