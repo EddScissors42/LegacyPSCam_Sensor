@@ -585,9 +585,10 @@ class PersonLockController:
             self.coasting.update_config(self.cfg)
             self.identity.update_config(self.cfg)
 
-    def reset(self) -> None:
+    def reset(self, preserve_identity: bool = False) -> None:
         self.coasting.reset()
-        self.identity.reset()
+        if not preserve_identity:
+            self.identity.reset()
 
     def apply_pre_inference_roi(self, infer_rgb: Optional[np.ndarray]) -> Optional[np.ndarray]:
         # Never darken peripheral regions while coasting/re-acquiring after a missed frame

@@ -156,6 +156,7 @@ class ArmRaiseGestureDetector:
                 "triggered": False,
                 "player_idx": None,
                 "feedback_active": (now - self.last_trigger_time < self.feedback_duration),
+                "hand_pos": None,
             }
 
         in_cooldown = (now - self.last_trigger_time < self.cooldown_seconds)
@@ -174,10 +175,14 @@ class ArmRaiseGestureDetector:
         progress = 0.0
 
         if arm_up and not in_cooldown:
+            player_switched = (
+                self.active_player_idx is not None
+                and self.active_player_idx != raising_player
+            )
             self.active_player_idx = raising_player
             if current_hand_pos:
                 self.last_hand_pos = current_hand_pos
-            if self.start_time is None:
+            if self.start_time is None or player_switched:
                 self.start_time = now
                 self.triggered = False
             else:

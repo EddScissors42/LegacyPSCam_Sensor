@@ -11,8 +11,9 @@ O sistema é baseado em uma **arquitetura modular em pacotes**, onde cada etapa 
 ```
 LegacyPSCam_Sensor/
 ├── main.py                     # Ponto de entrada (CLI dispatcher e inicializador)
-├── test_suite.py               # Suíte de testes automatizados (19/19 suítes integradas)
-├── config.json                 # Gerenciamento e persistência das configurações locais
+├── test_suite.py               # Suíte de testes automatizados isolados (19/19 suítes integradas + tests/)
+├── tests/                      # Suíte modular unittest (vphone_protocol, tracking_math, controllers_and_cli)
+├── config.json                 # Template local de configurações (persistência real em %APPDATA%)
 ├── THIRD_PARTY_NOTICES.md      # Avisos de direitos autorais, licenças e separação de IP do firmware
 ├── driver/
 │   └── legacy_pscam_device.inf # Pacote INF associando o WinUSB.sys nativo da Microsoft à PS4 Camera
@@ -31,7 +32,8 @@ LegacyPSCam_Sensor/
 │   ├── stereo_matcher.py       # Motor de Visão Estéreo (Retificação, Triangulação Esparsa 3D e Máscara Densa)
 │   ├── pose_tracker.py         # Motor MediaPipe Pose (1P & 2P) e máscara anatômica 320x240
 │   ├── model_manager.py        # Gerenciador persistente de modelos .task em %APPDATA%\models (SHA-256 + download sob demanda)
-│   ├── player_slot.py          # Estado por jogador (PlayerSlotState), memória de identidade anti-swap e máscara indexada
+│   ├── player_reid.py          # Memória de identidade anti-swap (AppearanceSignature, LongTermIdentityProfile, MultiPlayerAssociator) e Pose NMS
+│   ├── player_slot.py          # Estado por jogador (PlayerSlotState), pipeline 20 joints e compositor de máscara indexada (com re-exports de player_reid)
 │   ├── pose_filters.py         # Filtros cinemáticos (HandAnchor, AdaptiveSmoother, SkeletonCalibrator, Smart Body PTZ)
 │   ├── person_lock.py          # Subsistema modular Person Lock-In (InertialCoastingFilter, DancerIdentityLock)
 │   ├── gesture_detector.py     # Reconhecimento de gesto de braço levantado (ENTER em 1P e 2P)
@@ -53,7 +55,7 @@ LegacyPSCam_Sensor/
 │   ├── pages.py                # Construtores declarativos das 4 páginas Qt 6 (UIPagesMixin)
 │   ├── styles.py               # Construtor centralizado da folha de estilos QSS (PlayStation Blue / Crisp White)
 │   ├── device_readout_mixin.py # Mixin de apresentação de readouts ao vivo (DS4, Virtual Phone, Phone Camera)
-│   ├── widgets.py              # Componentes Qt 6 reutilizáveis (SlidingStackedWidget, DeviceNavCard, CalibPresetCard)
+│   ├── widgets.py              # Componentes Qt 6 reutilizáveis (SlidingStackedWidget, DeviceNavCard, CalibPresetCard, SettingBlock)
 │   ├── benchmark_dialog.py     # Diálogo e gráfico 2D QPainter de benchmark comparativo (Câmera vs DS4)
 │   ├── theme.py                # Paleta de cores, tipografia e presets (Competitive Lite AI recomendado por padrão)
 │   ├── icons.py                # Gerador e renderizador de ícones vetoriais e supersampled
@@ -143,11 +145,11 @@ flowchart TD
 ## 📦 Responsabilidades dos Módulos
 
 ### 1. `main.py` — Despachante e Ponto de Entrada
-- **Responsabilidade:** Inicialização da aplicação, parsing de parâmetros da linha de comando (`--start`, `--mode`, `--camera`) e carregamento da GUI ou da sessão de rastreamento direto.
-- **Relações:** Instancia `ConfigManager` e aciona `ui.launch_app()` ou `tracking_session.py`.
+- **Responsabilidade:** Inicialização da aplicação, parsing de parâmetros da linha de comando (`--version`, `--portable`, `--start`, `--mode`, `--camera`) e carregamento da GUI (com aplicação de `cli_overrides`) ou da sessão de rastreamento direto.
+- **Relações:** Instancia `ConfigManager` e aciona `ui.launch_app(cli_overrides=...)` ou `tracking_session.py`.
 
 ### 2. `gui_qt.py` e `pages.py` — Interface do Usuário (Painel de Controle PlayStation em Qt 6)
-- **Responsabilidade:** Interface visual moderna desenvolvida em **PySide6 (Qt 6)**, dividida entre o controlador principal de janela/eventos (`gui_qt.py`) e os construtores declarativos das 4 páginas de navegação (`pages.py` / `UIPagesMixin`). Conta com animações fluidas de transição entre abas (`SlidingStackedWidget`), layout dividido com barra lateral estilizada de seleção de dispositivo (PlayStation 4 Camera, Webcam Padrão, DualShock 4 e Phone Camera), abas superiores centralizadas ("Video Settings", "Calibration", "Controller Settings", "Experimental"), paleta oficial PlayStation Blue (`#00439C`), cards com sombras suaves e ícones vetoriais anti-aliased. Permite selecionar perfis de rastreamento (**Equilibrado**, **Competitivo**, **Ultra Estável**), conta com calibração automática, pílula dedicada de Scoring Bridge integrada em Controller Settings (DualShock 4) e aba Experimental limpa reservada para futuras adições.
+- **Responsabilidade:** Interface visual moderna desenvolvida em **PySide6 (Qt 6)**, dividida entre o controlador principal de janela/eventos (`gui_qt.py`), os construtores declarativos das 4 páginas de navegação (`pages.py` / `UIPagesMixin`) e os componentes reutilizáveis (`widgets.py`, incluindo `SettingBlock`). Conta com animações fluidas de transição entre abas (`SlidingStackedWidget`), layout dividido com barra lateral estilizada de seleção de dispositivo (PlayStation 4 Camera, Webcam Padrão, DualShock 4 e Phone Camera), abas superiores centralizadas ("Video Settings", "Tracking", "Controller Settings", "Experimental"), paleta oficial PlayStation Blue (`#00439C`), cards com sombras suaves e ícones vetoriais anti-aliased. Permite selecionar entre os 2 perfis de rastreamento (**Competitive — Lite AI recomendado** e **Balanced — Full AI**), conta com calibração automática, pílula dedicada de Scoring Bridge integrada em Controller Settings (DualShock 4) e aba Experimental contextual por modo.
 - **Ciclo de Vida do Driver e Hotplug Reativo:** Monitora a cada 1.0 segundo o hardware PnP e o ciclo de vida da PS4 Camera (`NOT_INSTALLED`, `DISCONNECTED`, `DRIVER_STOPPED`, `BOOTLOADER_UPLOADING`, `WAITING_VCAM`, `READY`).
 - **Threading Não-Bloqueante:** Tanto a enumeração de câmeras do OpenCV quanto a sessão de rastreamento executam em threads assíncronas dedicadas, mantendo a janela do Qt 6 totalmente fluida a 60 FPS e sem congelamentos na UI.
 
@@ -165,7 +167,7 @@ flowchart TD
 - **Garantia de Monotonicidade:** Força que `timestamp_ms` seja estritamente incremental a cada frame (`timestamp_ms = max(now_ms, last_ms + 1)`), prevenindo quebras em 60 FPS estáveis.
 - **Sintetizador de Membros Inferiores:** Quando o jogador está diante de uma mesa ou notebook e a câmera não enquadra quadris ou pernas, sintetiza quadris com confiança >= 0.45 (`TRACKED`) e pernas naturais eretas com confiança 0.35 (`INFERRED`), impedindo que o `Kinect10.dll` perca o jogador.
 - **`HandAnchorFilter`:** Detecta quando a mão perde confiança e extrapola a posição ao longo do vetor anatômico do antebraço (`cotovelo -> pulso`), garantindo que giros de mão não percam pontos nas coreografias.
-- **`AdaptiveSmoother` Independente de FPS (`dt`-Normalized 3D & 2D):** Filtro de Média Móvel Exponencial (EMA) com velocidade 3D e 2D normalizada pelo delta de tempo (`dt` relativo à referência de `1/30s`). Suaviza tanto o esqueleto 3D enviado ao Just Dance PC (`apply`) quanto o esqueleto 2D renderizado na janela de preview (`apply_pixel`), garantindo resposta idêntica e livre de jitter em 30 FPS e 60 FPS.
+- **`AdaptiveSmoother` Independente de FPS (`dt`-Compensated Continuous EMA 3D & 2D):** Filtro de Média Móvel Exponencial (EMA) com velocidade 3D/2D normalizada pelo delta de tempo (`dt` relativo à referência de `1/30s`) e fator de decaimento compensado continuamente (`eff_alpha = 1 - (1 - alpha_ref) ** (dt / REF_DT)`). Suaviza tanto o esqueleto 3D enviado ao Just Dance PC (`apply`) quanto o esqueleto 2D renderizado na janela de preview (`apply_pixel`), preservando exatamente a mesma constante física de suavização em 30, 60 e 120 FPS.
 - **`SkeletonCalibrator` Multi-Tier:** Opera em 3 níveis adaptativos:
   1. *Tier 1 (Corpo Inteiro / `full_body`):* Cabeça a tornozelos.
   2. *Tier 2 (Meio Corpo / `flexible_torso`):* Cabeça a quadris com proporção áurea.
@@ -180,7 +182,7 @@ flowchart TD
   1. Abre a câmera via `LatestFrameCamera`.
   2. Inicializa o `PoseTracker` e o `KinectBridge`.
   3. No loop principal, aguarda apenas frames novos da câmera (`camera.read(only_new=True)`), processa o frame bruto na IA, grava os 20 joints e a máscara de imagem no `KinectBridge`, gera o frame espelhado com overlay visual (silhueta, contorno e esqueleto) e bombeia eventos de teclado (`cv2.waitKey(1)`).
-  4. Trata atalhos: `[C]` Recalibrar, `[M]` Alternar espelhamento, `[H]` Ocultar HUD, `[Q/ESC]` Sair.
+  4. Trata atalhos: `[C]` Recalibrar, `[O]` Rotacionar câmera, `[H]` Ciclar HUD, `[P]` Alternar modo Picture-in-Picture (Always-On-Top), `[Q/ESC]` Sair.
   5. Fecha e desaloca os recursos de forma limpa ao encerrar.
 
 ### 6. `tracking_overlay.py` — Renderizador de HUD, Silhueta, Esqueleto e Efeitos Gamificados
@@ -241,12 +243,12 @@ flowchart TD
   2. **Injeção de DLL Proxy Dinâmica:** Injeta remotamente `tools/Legacy10.dll` (32 bits) através de `VirtualAllocEx`, `WriteProcessMemory` e `CreateRemoteThread(LoadLibraryW)`, com diagnóstico explícito de `ERROR_ACCESS_DENIED (5)` caso o jogo esteja rodando como Administrador e o sensor não.
   3. **Sobrescrita Atômica da IAT (Import Address Table):** Localiza e atualiza os 8 ponteiros IAT (`16, 5, 6, 21, 22, 9, 17, 26`) para rotear as chamadas das funções do Kinect para a `Legacy10.dll`, que consome os canais `JDP2`/`JMI2` (1 e 2 jogadores) do Legacy PSCam Sensor.
 
-### 14. `player_slot.py` — Pipeline Multi-Jogador (1P/2P) & Memória Re-ID Anti-Swap
-- **Responsabilidade:** Gerenciamento isolado dos slots de dançarinos (`PlayerSlotState`), associação estável (`MultiPlayerAssociator`) e síntese da máscara de índice (`compose_player_index_mask`):
+### 14. `player_slot.py` e `player_reid.py` — Pipeline Multi-Jogador (1P/2P) & Memória Re-ID Anti-Swap
+- **Responsabilidade:** Separação modular entre o estado cinemático/máscara por slot (`player_slot.py`: `PlayerSlotState`, `PlayerFrame`, `MultiPoseFrame`, `compose_player_index_mask`) e o motor de re-identificação/plausibilidade (`player_reid.py`: `AppearanceSignature`, `LongTermIdentityProfile`, `MultiPlayerAssociator`, `is_plausible_human_dancer`, `suppress_duplicate_poses`):
   1. **Isolamento de Slots:** Cada dançarino opera seu próprio pipeline desacoplado com `HandAnchorFilter`, `AdaptiveSmoother`, `SkeletonCalibrator`, `CameraSpaceXTracker` e `PersonLockController`.
-  2. **Oversampling de 4 Poses com Filtro Anatômico (`is_plausible_human_dancer`):** Em modo 2P, o MediaPipe é instanciado com `num_poses=4`. Todos os candidatos propostos passam por um filtro anatômico rigoroso (validação de verticalidade, ombros acima dos quadris, razão de aspecto e score de confiança dos joints-chave), eliminando 100% de falsos-positivos provocados por móveis, casacos ou cadeiras antes da atribuição de slots.
+  2. **Detecção Dinâmica (`num_poses=3` em 2P) com Filtro Anatômico Unificado (`is_plausible_human_dancer`) e Pose NMS (`suppress_duplicate_poses`):** Em modo 2P, o MediaPipe opera com `num_poses=3`. Todos os candidatos passam pela validação anatômica unificada e por supressão de duplicatas baseada em geometria de tronco antes da atribuição de slots, eliminando falsos-positivos e propostas duplicadas.
   3. **Resolução de Inferência Otimizada (640px):** Buffer de inferência pré-redimensionado em 640px de largura, garantindo alta densidade de amostragem e estabilidade nas articulações periféricas (punhos e pés) para ambos os dançarinos.
-  4. **Inércia de Slot & Trava de Aglomeração:** Reduz o custo para manter o slot atual (`CURRENT_SLOT_INERTIA_BONUS = 0.35`) e congela trocas impulsivas de slots durante sobreposições (`is_crowded`), impedindo que movimentos rápidos invertam os jogadores.
+  4. **Inércia Espacial de Slot & Trava de Aglomeração:** Aplica bônus de continuidade espacial (`CURRENT_SLOT_INERTIA_BONUS = 0.22`) e congela atualizações de assinatura visual durante sobreposições (`is_crowded`), impedindo contaminação de cor ou trocas impulsivas durante valsas e cruzamentos.
   5. **Momentum Cinemático Direcional:** Recompensa o vetor de deslocamento $(\vec{v} \cdot \vec{d})$ alinhado com a velocidade física dos dançarinos durante cruzamentos.
   6. **Auditoria de Separação:** Compara as assinaturas visuais multi-região contra as âncoras permanentes (`anchor_sig`) após o término do contato corporal, corrigindo qualquer inversão involuntária.
 

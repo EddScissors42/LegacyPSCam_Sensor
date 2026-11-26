@@ -20,9 +20,11 @@ Features:
 from __future__ import annotations
 
 import atexit
+import csv
 import ctypes
 from ctypes import wintypes
 from datetime import datetime, timezone
+import io
 import math
 import os
 from pathlib import Path
@@ -93,8 +95,9 @@ class SessionLogger:
         self._session_file: Optional[Any] = None
         self._telemetry_file: Optional[Any] = None
 
-        # Telemetry worker queue
+        # Telemetry worker queue & synchronized pending batch (zero row loss on stop)
         self._telemetry_queue: queue.Queue[Optional[str]] = queue.Queue(maxsize=10000)
+        self._telemetry_batch: List[str] = []
         self._telemetry_worker_thread: Optional[threading.Thread] = None
         self._telemetry_active = False
         self._telemetry_start_ts_ms = 0
@@ -431,15 +434,39 @@ class SessionLogger:
         cid = coach_id if coach_id is not None else self.active_coach_id
         btn = btn_override or self.last_button_event
 
-        row = (
-            f"{ts_ms},{rel_s:.3f},{source},{song},{cid},{1 if is_tracked else 0},"
-            f"{ax:.4f},{ay:.4f},{az:.4f},{mag_g:.4f},{speed_mps:.3f},"
-            f"{hx:.3f},{hy:.3f},{hz:.3f},"
-            f"{sx:.3f},{sy:.3f},{sz:.3f},"
-            f"{ex:.3f},{ey:.3f},{ez:.3f},"
-            f"{wx:.3f},{wy:.3f},{wz:.3f},"
-            f"{joints_tracked_count},{cam_fps:.1f},{infer_fps:.1f},{game_feedback},{btn}\n"
-        )
+        buf = io.StringIO()
+        writer = csv.writer(buf, lineterminator="\n")
+        writer.writerow([
+            ts_ms,
+            f"{rel_s:.3f}",
+            source,
+            song,
+            cid,
+            1 if is_tracked else 0,
+            f"{ax:.4f}",
+            f"{ay:.4f}",
+            f"{az:.4f}",
+            f"{mag_g:.4f}",
+            f"{speed_mps:.3f}",
+            f"{hx:.3f}",
+            f"{hy:.3f}",
+            f"{hz:.3f}",
+            f"{sx:.3f}",
+            f"{sy:.3f}",
+            f"{sz:.3f}",
+            f"{ex:.3f}",
+            f"{ey:.3f}",
+            f"{ez:.3f}",
+            f"{wx:.3f}",
+            f"{wy:.3f}",
+            f"{wz:.3f}",
+            joints_tracked_count,
+            f"{cam_fps:.1f}",
+            f"{infer_fps:.1f}",
+            game_feedback,
+            btn,
+        ])
+        row = buf.getvalue()
 
         try:
             self._telemetry_queue.put_nowait(row)
@@ -451,9 +478,19 @@ class SessionLogger:
             except Exception:
                 pass
 
+    def _flush_telemetry_batch_locked(self) -> None:
+        """Flushes pending rows in self._telemetry_batch to disk (caller must hold self._lock)."""
+        if self._telemetry_batch and self._telemetry_file and not self._telemetry_file.closed:
+            try:
+                self._telemetry_file.writelines(self._telemetry_batch)
+                self._telemetry_file.flush()
+                self._telemetry_samples_written += len(self._telemetry_batch)
+            except OSError:
+                pass
+            self._telemetry_batch.clear()
+
     def _telemetry_writer_loop(self) -> None:
-        """Background worker thread draining the telemetry queue to disk."""
-        batch = []
+        """Background worker thread draining the telemetry queue to disk without dropping rows on stop."""
         last_flush = time.perf_counter()
 
         while True:
@@ -461,43 +498,34 @@ class SessionLogger:
                 row = self._telemetry_queue.get(timeout=0.1)
                 if row is None:  # Shutdown sentinel
                     break
-                batch.append(row)
+                with self._lock:
+                    self._telemetry_batch.append(row)
+                    should_flush = len(self._telemetry_batch) >= 64
+                    if should_flush:
+                        self._flush_telemetry_batch_locked()
+                        last_flush = time.perf_counter()
             except queue.Empty:
                 pass
 
             now = time.perf_counter()
-            # Flush batch every 100ms or when 64 rows accumulate
-            if batch and (len(batch) >= 64 or (now - last_flush) >= 0.1):
+            if (now - last_flush) >= 0.1:
                 with self._lock:
-                    if self._telemetry_file and not self._telemetry_file.closed:
-                        try:
-                            self._telemetry_file.writelines(batch)
-                            self._telemetry_file.flush()
-                            self._telemetry_samples_written += len(batch)
-                        except OSError:
-                            pass
-                batch.clear()
+                    if self._telemetry_batch:
+                        self._flush_telemetry_batch_locked()
                 last_flush = now
 
-        # Write remaining batch upon thread exit
-        if batch:
-            with self._lock:
-                if self._telemetry_file and not self._telemetry_file.closed:
-                    try:
-                        self._telemetry_file.writelines(batch)
-                        self._telemetry_file.flush()
-                        self._telemetry_samples_written += len(batch)
-                    except OSError:
-                        pass
+        # Write any remaining buffered rows upon thread exit
+        with self._lock:
+            self._flush_telemetry_batch_locked()
 
     def stop_telemetry_tracking(self, summary_metrics: Optional[Dict[str, Any]] = None) -> None:
-        """Stops telemetry recording, flushes data, and logs summary statistics."""
+        """Stops telemetry recording, flushes BOTH worker batch and queue to disk, and logs summary."""
         with self._lock:
             if not self._telemetry_active:
                 return
             self._telemetry_active = False
 
-        # Drain any pending items in the queue to disk immediately
+        # Drain any pending items in the queue directly into the shared batch under lock
         remaining: List[str] = []
         while True:
             try:
@@ -508,11 +536,11 @@ class SessionLogger:
                 break
 
         with self._lock:
+            if remaining:
+                self._telemetry_batch.extend(remaining)
+            self._flush_telemetry_batch_locked()
             if self._telemetry_file and not self._telemetry_file.closed:
                 try:
-                    if remaining:
-                        self._telemetry_file.writelines(remaining)
-                        self._telemetry_samples_written += len(remaining)
                     self._telemetry_file.flush()
                     self._telemetry_file.close()
                 except OSError:
@@ -549,7 +577,13 @@ class SessionLogger:
                     pass
 
     def close(self) -> None:
-        """Cleanly finalizes all log files and releases background threads."""
+        """Cleanly finalizes all log files, stops background worker, and restores exception hooks."""
+        if self._telemetry_active:
+            try:
+                self.stop_telemetry_tracking()
+            except Exception:
+                pass
+
         with self._lock:
             if not self._initialized:
                 return
@@ -559,11 +593,26 @@ class SessionLogger:
         self.log_event("INFO", "SESSION", f"Application shutting down gracefully (Session Duration: {duration}s)")
         self.flush()
 
-        # Stop telemetry worker
+        # Restore original exception hooks
+        try:
+            sys.excepthook = self._orig_excepthook
+            if self._orig_threading_excepthook is not None and hasattr(threading, "excepthook"):
+                threading.excepthook = self._orig_threading_excepthook
+        except Exception:
+            pass
+
+        # Stop telemetry worker reliably even if queue was full
         if self._telemetry_worker_thread and self._telemetry_worker_thread.is_alive():
             try:
-                self._telemetry_queue.put_nowait(None)
-                self._telemetry_worker_thread.join(timeout=1.0)
+                try:
+                    self._telemetry_queue.put_nowait(None)
+                except queue.Full:
+                    try:
+                        _ = self._telemetry_queue.get_nowait()
+                    except Exception:
+                        pass
+                    self._telemetry_queue.put_nowait(None)
+                self._telemetry_worker_thread.join(timeout=1.5)
             except Exception:
                 pass
 

@@ -1,6 +1,6 @@
 # 🔌 Especificação da API e Protocolos IPC — Legacy PSCam Sensor
 
-Como o **Legacy PSCam Sensor** opera como um simulador de dispositivo de hardware em tempo real para o jogo **Just Dance PC**, sua API principal consiste no **contrato binário de comunicação entre processos (IPC)** via memória compartilhada do Windows, na **interface da DLL proxy do Kinect** e na **interface de linha de comando (CLI)**.
+Como o **Legacy PSCam Sensor** opera como um sensor de movimento corporal em tempo real para o jogo **Just Dance PC**, sua API principal consiste no **contrato binário de comunicação entre processos (IPC)** via memória compartilhada do Windows, na **interface da DLL proxy do Kinect** e na **interface de linha de comando (CLI)**.
 
 ---
 
@@ -86,7 +86,7 @@ O `Kinect10.dll` implementa suporte duplo e busca primeiro o canal **V2 (`JMI2`)
   - `height` (uint32): `480`
   - `timestamp_ms` (uint64): Timestamp Unix em milissegundos
 - **Payload 1 — Frame BGRA (1.228.800 bytes):**
-  - Matriz de 640x480 pixels em formato `BGRA` (4 bytes por pixel), espelhado quando `mirror=True`.
+  - Matriz de 640x480 pixels em formato `BGRA` (4 bytes por pixel), sempre espelhado horizontalmente após a inferência bruta do MediaPipe para alinhamento 1:1 com o esqueleto 3D Kinect.
 - **Payload 2 — Máscara de Jogador (76.800 bytes):**
   - Matriz de 320x240 pixels em formato `uint8`. **Atenção:** O `Kinect10.dll` testa estritamente `byte >= 0x40` (64 em decimal) para classificar o pixel como Jogador 1. Pixels do corpo utilizam valor **`255`**; fundo contém valor **`0`**.
 
@@ -160,7 +160,7 @@ O projeto opera através dos canais da Ponte de Memória Compartilhada do Window
 
 ### 2.1 Sincronização de Timer de Alta Resolução (1 ms) no Python
 - O agendador padrão do Windows possui resolução de tick de 15,625 ms, o que pode degradar sleeps de 33 ms (~30 FPS) para 3 ticks (46,875 ms = **21,33 FPS**).
-- Ao ativar `winmm.timeBeginPeriod(1)` e `ntdll.NtSetTimerResolution(10000, 1, ...)` no [tracking_session.py](file:///C:/Users/reydn/OneDrive/Documents/Projetos/LegacyPSCam_Sensor/sensor/tracking_session.py), a precisão global do agendador durante a sessão vai para 1,0 ms, garantindo cadência estável de 30/60 FPS sem tocar em binários do jogo.
+- Ao ativar `winmm.timeBeginPeriod(1)` e `ntdll.NtSetTimerResolution(10000, 1, ...)` em `sensor/tracking_session.py`, a precisão global do agendador durante a sessão vai para 1,0 ms (e é restaurada simetricamente com `NtSetTimerResolution(10000, 0, ...)` e `timeEndPeriod(1)` ao encerrar ou falhar a inicialização), garantindo cadência estável de 30/60 FPS sem tocar em binários do jogo.
 
 ---
 
@@ -169,17 +169,19 @@ O projeto opera através dos canais da Ponte de Memória Compartilhada do Window
 O arquivo `main.py` aceita os seguintes parâmetros de execução:
 
 ```powershell
-python main.py [--start] [--mode {pscam,webcam,phone_cam,ds4}] [--camera <int>]
+python main.py [--version] [--portable] [--start] [--mode {pscam,webcam,phone_cam,ds4}] [--camera <int>]
 ```
 
 ### Argumentos:
+- `--version`: Exibe o nome e a versão atual do aplicativo e encerra.
+- `--portable`: Ativa o modo portátil, armazenando `config.json` e `logs/` ao lado do executável/script em vez de `%APPDATA%\LegacyPSCam_Sensor\`.
 - `--start`: Pula a exibição da interface gráfica Qt 6 e inicia o rastreamento imediatamente com a última configuração salva.
-- `--mode {pscam,webcam,phone_cam,ds4}`: Força o modo de entrada:
+- `--mode {pscam,webcam,phone_cam,ds4}`: Força o modo de entrada (aplicado tanto no modo `--start` quanto ao abrir a GUI):
   - `pscam`: Seleciona as otimizações para a PlayStation 4 Camera (60 FPS, YUY2/NV12, Stereo Vision padrão).
   - `webcam`: Seleciona as otimizações para webcams convencionais (30/60 FPS DirectShow).
   - `phone_cam`: Seleciona o modo Smartphone Camera via Wi-Fi WebApp (QR Code + TLS/WSS).
   - `ds4`: Inicia o modo de controle sem fio/USB DualShock 4 (IMU 500+ Hz via Virtual Phone).
-- `--camera <int>`: Define o índice numérico do dispositivo de vídeo a ser aberto pelo OpenCV (`0`, `1`, etc.).
+- `--camera <int>`: Define o índice numérico do dispositivo de vídeo a ser aberto pelo OpenCV (`0`, `1`, etc.), aplicado tanto no modo `--start` quanto na GUI.
 
 ---
 
@@ -223,8 +225,8 @@ Para desenvolvedores que importam os módulos internamente:
 ### `sensor.gesture_detector` — Reconhecimento de Gestos Corporais
 - `check_arm_raised(px_joints) -> bool`: Avalia os 20 joints 2D do jogador (`px_joints`), retornando `True` caso o pulso e a mão esquerda ou direita estejam confortavelmente elevados acima do nível da cabeça ou ombros.
 - `dispatch_enter_keystroke() -> None`: Dispara de forma assíncrona (thread desacoplada) o evento físico de teclado `VK_RETURN` (`0x0D`, scan code `0x1C`) para o processo do Just Dance PC via `ctypes.windll.user32.keybd_event`.
-- `ArmRaiseGestureDetector(enabled=True, hold_seconds=2.0, cooldown_seconds=2.5)`:
-  - `update(px_joints, is_tracked, vphone=None, now=None) -> dict`: Gerencia a máquina de estados do gesto, calcula o progresso percentual acumulado durante a sustentação da pose, aciona o envio de `Enter` e `VALID` do Celular Virtual ao completar o tempo estipulado (`hold_seconds`), e gerencia o período de cooldown para evitar disparos repetitivos.
+- `ArmRaiseGestureDetector(enabled=True, hold_seconds=2.0, cooldown_seconds=2.5, dispatch_keystroke=True)`:
+  - `update(px_joints, is_tracked, vphone=None, now=None) -> dict` / `update_multi(players_px_joints, is_tracked=True, vphone=None, now=None) -> dict`: Gerencia a máquina de estados do gesto em 1P e 2P (reiniciando o temporizador ao alternar de jogador ativo entre P1 e P2), retorna schema consistente incluindo `"hand_pos"`, aciona `Enter` / `VALID` ao completar `hold_seconds` e aplica cooldown.
 
 ### `pose_tracker.PoseTracker`
 - `PoseTracker(model_path=None, detection_confidence=0.5, smoothing_alpha=0.55, target_height_m=1.75, cfg=None, model_variant=None)`: Construtor do motor de IA (`model_variant` aceita `"lite"` ou `"full"`, com fallback automático de `"heavy"` legado para `"full"`).
@@ -243,7 +245,7 @@ Para desenvolvedores que importam os módulos internamente:
 - `KinectSharedMemory.write_pose(joints, tracked: bool = True)`: Grava as 20 articulações no formato binário `<IIIIQ` + `<ffff` * 20.
 
 ### `kinect_shared_memory.KinectImageSharedMemory`
-- `KinectImageSharedMemory(tagname: str = "Local\\LegacyWebcamKinectImage")`: Inicializa o buffer de imagem de 1.305.632 bytes.
+- `KinectImageSharedMemory(tagname: str = "Local\\LegacyWebcamKinectImage", tagname_v2: Optional[str] = None)`: Inicializa os buffers de imagem/máscara `JMI1` e `JMI2` (1.305.632 bytes cada), respeitando `tagname` customizados para isolamento em testes e protegidos por `threading.RLock`.
 - `KinectImageSharedMemory.write_image_and_mask(frame_bgr, mask_binary, tracked: bool = True)`: Converte e grava o frame BGRA 640x480 e a máscara de profundidade 320x240 para o HUD do jogo.
 
 ---
@@ -260,10 +262,9 @@ As preferências do usuário são persistidas em `config.json` via `ConfigManage
   "ps4_eye": "right",
   "pscam_preset": "1280x800 @ 60 FPS",
   "webcam_preset": "640x480 @ 30 FPS",
-  "mirror_horizontal": true,
-  "tracking_preset": "balanced",
-  "pose_model": "full",
-  "smoothing_alpha": 0.55,
+  "tracking_preset": "competitive",
+  "pose_model": "lite",
+  "smoothing_alpha": 0.75,
   "detection_confidence": 0.5,
   "target_height_m": 1.75,
   "auto_calibrate": true,
@@ -274,26 +275,26 @@ As preferências do usuário são persistidas em `config.json` via `ConfigManage
 
 - `ps4_camera_backend`: Backend de captura para a PlayStation 4 Camera (`"native"` para WinUSB direto, `"pscam4win"` para fallback legado).
 - `ps4_eye`: Sensor óptico ativo da PlayStation 4 Camera (`"right"` como padrão para o Olho Direito, `"left"` para o Olho Esquerdo).
-- `tracking_preset`: Perfil ativo selecionado no menu (`"balanced"`, `"competitive"`, `"stable"` ou `"custom"`).
+- `tracking_preset`: Perfil ativo selecionado no menu (`"competitive"`, `"balanced"` ou `"custom"`).
 - `smoothing_alpha`: Coeficiente de suavização EMA (0.20 a 0.85).
 - `detection_confidence`: Limiar mínimo de confiança da IA MediaPipe (0.30 a 0.80).
 - `target_height_m`: Escala métrica alvo interna (1.75m) mantida constante pelo `SkeletonCalibrator`.
 
 ---
 
-## 6. Interface de Linha de Comando (CLI)
-
-O ponto de entrada `main.py` aceita argumentos de linha de comando para controle direto:
+## 6. Resumo de Argumentos CLI (`main.py`)
 
 ```powershell
-python main.py [-h] [--start] [--mode {pscam,webcam,phone_cam,ds4}] [--camera CAMERA]
+python main.py [-h] [--version] [--portable] [--start] [--mode {pscam,webcam,phone_cam,ds4}] [--camera CAMERA]
 ```
 
 | Argumento | Opções | Padrão | Descrição |
 |---|---|---|---|
+| `--version` | Flag booleana | `False` | Imprime a versão atual do aplicativo e encerra. |
+| `--portable` | Flag booleana | `False` | Armazena `config.json` e `logs/` ao lado do executável em vez de `%APPDATA%`. |
 | `--start` | Flag booleana | `False` | Inicia a sessão de rastreamento diretamente sem abrir a interface gráfica. |
-| `--mode` | `pscam`, `webcam`, `phone_cam`, `ds4` | Configurado em `config.json` | Força o modo de sensor/controle a ser utilizado. |
-| `--camera` | Inteiro (`0`, `1`, ...) | Configurado em `config.json` | Força o índice da câmera de captura no OpenCV. |
+| `--mode` | `pscam`, `webcam`, `phone_cam`, `ds4` | Configurado em `config.json` | Força o modo de sensor/controle (aplicado em `--start` e na GUI). |
+| `--camera` | Inteiro (`0`, `1`, ...) | Configurado em `config.json` | Força o índice da câmera de captura no OpenCV (aplicado em `--start` e na GUI). |
 
 ---
 
@@ -305,7 +306,7 @@ O pacote `ui` expõe uma interface modular baseada exclusivamente em **PySide6 (
 - `ui.LegacySensorQtGUI`: Janela principal baseada em PySide6 / Qt 6, com detecção de hotplug por sinais Qt e balão contextual de estado de hardware.
 - `ui.LegacySensorGUI`: Alias padrão para `LegacySensorQtGUI`.
 - `ui.pages`: Exporta `UIPagesMixin` com os construtores declarativos das 4 páginas (`_build_video_view`, `_build_calib_view`, `_build_exp_view`, `_build_ds4_view`).
-- `ui.widgets`: Exporta `pil_to_qpixmap`, `SlidingStackedWidget`, `DeviceNavCard` e `CalibPresetCard`.
+- `ui.widgets`: Exporta `pil_to_qpixmap`, `SlidingStackedWidget`, `DeviceNavCard`, `CalibPresetCard` e `SettingBlock`.
 - `ui.benchmark_dialog`: Exporta `TelemetryBenchmarkChart` e `TelemetryBenchmarkDialog`.
 - `ui.HAS_QT -> bool`: Booleano que indica se o PySide6 está instalado e operacional.
 
@@ -366,7 +367,7 @@ Módulo nativo Windows HID (zero dependências) para leitura de alta taxa (500+ 
 O módulo `sensor.virtual_phone` gerencia a comunicação com o Just Dance através do protocolo WebSocket `/smartphone` (v1/v2):
 
 ### Funções de Auto-Detecção de Processo e Música Ativa
-- `find_just_dance_pids() -> List[int]`: Enumera os processos em execução via `CreateToolhelp32Snapshot` Win32 buscando instâncias de `jd2022.exe`, `jd2021.exe`, `jd2020.exe`, `jd2019.exe`, `jd2018.exe`, `jd2017.exe`, `justdance.exe` (latência ~0.5ms).
+- `find_just_dance_pids() -> List[int]`: Enumera os processos em execução via `CreateToolhelp32Snapshot` Win32 buscando instâncias de `Legacy.exe`, `justdance.exe` e variantes `jd20*`/`jd21*`/`jd22*` (latência ~0.5ms).
 - `detect_active_song_from_game_process() -> str`: Varre páginas de dados privadas (`MEM_COMMIT`, ignorando `MEM_IMAGE` e páginas executáveis) do processo Just Dance com um buffer reutilizável pré-alocado de 1 MB para localizar a stream ativa `/map/<MapName>/...webm`. Converte o identificador do mapa (ex: `SmalltownBoy`) no título formatado da música (`Smalltown Boy`).
 - `VirtualPhoneController.current_song`: Propriedade que retorna o nome da música ativa, executando a busca em memória sob demanda apenas quando a gravação de telemetria ou benchmark automático estiverem ativos (`auto_record_enabled` ou `_logging_enabled`), com intervalo mínimo de 2.5s.
 
@@ -390,7 +391,7 @@ O pacote `sensor.stereo_matcher` implementa o pipeline óptico de visão estére
 
 ### 10.2 Classes Principais
 - `StereoCalibrator(baseline_m=0.0852)`:
-  - `update_resolution(w, h)`: Computa matrizes intrínsecas $K_1, K_2$, rotação $R$, translação $T = [B, 0, 0]^T$ e look-up tables `cv2.initUndistortRectifyMap`.
+  - `update_resolution(w, h)`: Computa matrizes intrínsecas $K_1, K_2$, rotação $R$, translação $T = [-B, 0, 0]^T$ e look-up tables `cv2.initUndistortRectifyMap`.
   - `rectify(left, right, force_remap=False) -> (rect_left, rect_right)`: Em geometria rígida de fábrica sem distorção (`is_identity=True`), retorna os frames diretamente em $<0.001\text{ ms}$ (zero-copy), eliminando remapeamento bilinear redundante. Quando calibração customizada estiver presente ou `force_remap=True`, executa `cv2.remap` em $<0.8\text{ ms}$.
 - `StereoDepthEngine(baseline_m=0.0852)`:
   - `triangulate_sparse_joints(rect_left, rect_right, joints_2d, search_radius_px=48, patch_half_size=6, vertical_tol_px=4) -> Dict[joint_id, (X, Y, Z, conf)]`:

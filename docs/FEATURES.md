@@ -42,7 +42,7 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
 
 ## 🔍 Detalhamento das Funcionalidades Implementadas
 
-### 1. Simulador do Kinect v1 para Just Dance PC
+### 1. Sensor de Movimento Corporal Compatível com Kinect v1 (IPC Bridge)
 - **Como funciona:** O jogo Just Dance PC espera receber os dados das 20 articulações do corpo no sistema de coordenadas métricas do sensor Kinect v1 original da Microsoft.
 - **Implementação:** O `pose_tracker.py` calcula os pontos-chave (como o centro dos quadris na média entre quadril esquerdo e direito, a coluna na média entre ombros e quadris, e o centro dos ombros) e entrega um vetor de 20 tuplas `(X, Y, Z, Confiança)`.
 - **Eixos Mapeados:**
@@ -127,10 +127,9 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
 ### 9. Perfis de Rastreamento Simplificados e Calibração Automática de Altura
 - **Problema resolvido:** Sliders técnicos manuais (como fator EMA e confiança da rede neural) geravam dúvidas em jogadores casuais, e o slider de altura corporal causava confusão já que a normalização para o padrão métrico do Just Dance (1,75 m) é dinâmica e automática.
 - **Implementação:**
-  - **3 Perfis Simplificados em Cartões Interativos:**
-    1. ⭐ **Equilibrado (`balanced`)**: EMA 0.55 / Confiança 0.50 (Padrão recomendado para a maioria das músicas).
-    2. ⚡ **Competitivo (`competitive`)**: EMA 0.75 / Confiança 0.45 (Resposta ultrarrápida para coreografias velozes/extremas).
-    3. 🛡️ **Ultra Estável (`stable`)**: EMA 0.35 / Confiança 0.40 (Máxima filtragem de ruído para ambientes com pouca luz).
+  - **2 Perfis Simplificados em Cartões Interativos:**
+    1. ⚡ **Competitivo (`competitive` — Lite AI, Padrão Recomendado)**: EMA 0.75 / Confiança 0.50 (Resposta ultrarrápida e 60 FPS estáveis em 1P e 2P).
+    2. ⭐ **Equilibrado (`balanced` — Full AI)**: EMA 0.55 / Confiança 0.50 (Maior precisão esquelética sob demanda via `ModelManager`).
   - **Calibração de Altura Automática:** O slider manual de altura foi completamente removido da UI, substituído por um informativo visual claro explicando que o `SkeletonCalibrator` já calcula e redimensiona dinamicamente as proporções corporais a cada quadro para a escala padrão de 1,75 m do Just Dance.
   - **Gaveta Retrátil de Ajustes Avançados:** Permite que usuários avançados expandam os sliders milimétricos de EMA e Confiança quando desejado, com detecção automática do perfil "Personalizado".
 
@@ -157,7 +156,7 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
   - Ao mesmo tempo, o agendador padrão do Windows possui resolução de tick de 15,625 ms. Como `Sleep(33)` da DLL ultrapassa 2 ticks (31,25 ms), o Windows adormecia a thread por 3 ticks inteiros (`15,625 * 3 = 46,875 ms`), reduzindo a taxa real para apenas **21,33 FPS**.
 - **Solução Implementada:**
   - **Preservação da DLL Original a 30 FPS (`0x21` / 33 ms):** Mantém a compatibilidade perfeita do motor de pontuação do Just Dance PC, sem erros de "X".
-  - **Temporizador de Alta Resolução de 1 ms no Python (`set_high_resolution_timer`):** No [tracking_session.py](file:///C:/Users/reydn/OneDrive/Documents/Projetos/LegacyPSCam_Sensor/sensor/tracking_session.py), ativamos `winmm.timeBeginPeriod(1)` e `ntdll.NtSetTimerResolution(10000, 1, ...)`. Com resolução de 1,0 ms no Windows, o `Sleep(33)` acorda exatamente a cada **33,6 ms**, elevando a taxa de 21 FPS para **30 FPS cravados**, que é o teto máximo e ótimo da engine do Just Dance.
+  - **Temporizador de Alta Resolução de 1 ms no Python (`set_high_resolution_timer`):** No [tracking_session.py](../sensor/tracking_session.py), ativamos `winmm.timeBeginPeriod(1)` e `ntdll.NtSetTimerResolution(10000, 1, ...)`. Com resolução de 1,0 ms no Windows, o `Sleep(33)` acorda exatamente a cada **33,6 ms**, elevando a taxa de 21 FPS para **30 FPS cravados**, que é o teto máximo e ótimo da engine do Just Dance.
 
 ### 12. Seleção Dinâmica de Dançarinos nos 6 Slots com Ancoragem de Quadril (1.0m)
 - **Problema resolvido:** O jogo Just Dance PC travava o jogador automaticamente no Slot 4 (Dançarino Roxo), e passos laterais pelo ambiente físico não alteravam a seleção para outros slots (Slots 1 a 6).
@@ -475,7 +474,7 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
   - Funciona em qualquer navegador moderno Android (Chrome) ou iOS (Safari) sem necessidade de instalar aplicativos ou arquivos APK/IPK.
   - **Controles no Navegador Mobile:**
     - Botões dedicados lado a lado para seleção direta de câmera: **Front Camera** e **Rear Camera** (com destaque visual `primary` azul para a lente atualmente ativa).
-    - Botão **Dim Screen** posicionado abaixo das duas opções de câmera, ativando tela preta e reduzindo renderização GPU do vídeo mantendo o stream WebSocket ativo.
+    - Botão **Cool Mode** (substituindo o antigo *Dim Screen*) posicionado abaixo das duas opções de câmera, ativado por padrão no Android com Auto-Dim em 15s e economia térmica de rede/GPU mantendo o stream WebSocket ativo.
   - **Segurança de Pareamento & Anti-Reconexão Fantasma:**
     - Token criptográfico por sessão (`?t=<token>`) embutido no QR Code e rotacionado automaticamente a cada inicialização, clique em **Disconnect** ou atualização do QR Code (`↻`). Links antigos ou pré-carregamentos em segundo plano do Safari recebem `403 Forbidden` (sem ligar a câmera).
     - Handlers `pagehide`, `beforeunload` e `visibilitychange` encerram imediatamente as faixas da câmera e o WebSocket ao fechar a aba ou trocar de aplicativo no iOS/Android.
@@ -489,9 +488,9 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
   - Transmissão de vídeo via WebSocket binário JPEG em modo `pc_video` (inferência no PC) e contrato estruturado para recepção de métricas diretas no modo `phone_edge`.
 
 ### 34. Suporte a 2 Jogadores (2P Duo), Memória Anti-Swap para Valsas/Cruzamentos & Lite AI Padrão (v0.9.0 Alpha)
-- **Motor Multi-Jogador Desacoplado (`sensor/player_slot.py` & `sensor/pose_tracker.py`):**
+- **Motor Multi-Jogador Desacoplado (`sensor/player_slot.py`, `sensor/player_reid.py` & `sensor/pose_tracker.py`):**
   - Suporta nativamente **1 Jogador (Solo)** e **2 Jogadores (Duo)**.
-  - **Oversampling de 4 Poses com Filtro Anatômico (`is_plausible_human_dancer`):** Em modo 2P, o detector MediaPipe opera com `num_poses=4` para propor múltiplos candidatos. Cada candidato é inspecionado por um filtro anatômico rigoroso que valida verticalidade, ombros acima dos quadris, largura e altura mínimas e score de confiança dos joints-chave, rejeitando instantaneamente cadeiras, casacos, almofadas ou móveis de fundo antes de ordenar os candidatos e atribuir os slots.
+  - **Detecção 2P (`num_poses=3`) com Filtro Anatômico Unificado (`is_plausible_human_dancer`) & Pose NMS:** Em modo 2P, o detector MediaPipe opera com `num_poses=3` para propor candidatos extras sem sobrecarregar a CPU. Cada candidato passa pela validação anatômica e pela supressão de duplicatas (`suppress_duplicate_poses`) antes da atribuição de slots, rejeitando móveis ou propostas duplicadas.
   - **Resolução de Inferência 640px (`INFER_MAX_W_2P = 640`):** Buffer de inferência em 640px de largura (ganho de 78% em densidade de amostragem em relação a 480px), mantendo braços e pernas nítidos a até 3 metros da câmera sem sobrecarregar a CPU.
   - Cada jogador possui sua própria instância isolada `PlayerSlotState` (`HandAnchorFilter`, `AdaptiveSmoother`, `SkeletonCalibrator`, `CameraSpaceXTracker`, `PersonLockController`, suavização temporal de segmentação `_seg_prob_ema` e `LongTermIdentityProfile`).
 - **Memória de Identidade Anti-Swap (`LongTermIdentityProfile` & `MultiPlayerAssociator`):**
@@ -499,7 +498,7 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
     1. **Assinatura Visual Multi-Região Avançada (`AppearanceSignature`):** Combina histograma HSV 16x8 da camisa/torso (35%), perfil de luminosidade V da camisa (20%), histograma HSV 12x6 da calça/pernas (15%), perfil de luminosidade V da calça (10%), razão de contraste de brilho tronco/pernas (10%) e proporção relativa de altura corporal (10%). Permite discriminar dançarinos com precisão mesmo quando ambos vestem roupas escuras ou neutras.
     2. **Memória Âncora Permanente (`anchor_sig`) vs. Assinatura Viva (`live_sig`):** Consolida a identidade nos primeiros 25 quadros limpos e separados e mantém a âncora protegida durante toda a música (resetável com `[C] Recalibrate`).
     3. **Guarda de Proximidade / Valsa (`is_crowded`) & Trava de Aglomeração:** Congela instantaneamente o aprendizado de cor quando as caixas delimitadoras se aproximam (`dist < 0.22` ou `IoU > 0.08`), impedindo contaminação da memória. Trava trocas impulsivas de slot enquanto os dançarinos permanecerem sobrepostos.
-    4. **Inércia de Slot (`CURRENT_SLOT_INERTIA_BONUS = 0.35`) & Momentum Cinemático Direcional:** Aplica desconto de custo para preservar o slot anterior e calcula o alinhamento vetorial da velocidade $(\vec{v} \cdot \vec{d})$, guiando os dançarinos com segurança através de cruzamentos em alta velocidade.
+    4. **Inércia Espacial de Slot (`CURRENT_SLOT_INERTIA_BONUS = 0.22`) & Momentum Cinemático Direcional:** Aplica desconto de custo para preservar a continuidade espacial do slot anterior e calcula o alinhamento vetorial da velocidade $(\vec{v} \cdot \vec{d})$, guiando os dançarinos com segurança através de cruzamentos em alta velocidade.
     5. **Auditoria Re-ID Pós-Separação:** Quando os dançarinos se separam novamente após um cruzamento, audita os dois slots contra suas `anchor_sig` permanentes e desfaz automaticamente qualquer inversão de slot.
     6. **Memória de Reentrada (até 15s):** Se um jogador sair temporariamente do quadro e voltar pelo lado oposto, reassume automaticamente seu slot original.
 - **Composição de Máscara Indexada (`compose_player_index_mask` & `JMI2`) e Singleton `get_kinect_bridge()`:**
@@ -521,7 +520,7 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
     - **Pílula Superior Esquerda:** Branding da aplicação ("LEGACY PSCAM") e modelo/resolução da câmera.
     - **Pílula Superior Direita:** Métricas em tempo real de FPS da câmera, FPS do pipeline de tracking e integridade da ponte IPC (`Kinect JDP1/JMI1`).
     - **Pílula Lateral Direita (Abaixo de FPS):** Status do dançarino (`DANCER ACTIVE` / `SEARCHING DANCER...`), nível de calibração (`FULL BODY` / `HALF BODY`) e indicador de slots ativos (`P1` em Azul e `P2` em Laranja Claro), empilhado verticalmente logo abaixo do bloco de FPS para eliminar qualquer compressão horizontal em resoluções 4:3 (como 640x480) e manter o centro superior 100% livre.
-    - **Pílula Inferior Central:** Badges compactos dos atalhos de teclado (`[C] Calibrar • [M] Espelho • [H] HUD • [P] PiP • [Q/ESC] Sair`), liberando completamente os cantos inferiores da tela para que os pés dos dançarinos fiquem 100% visíveis em corpo inteiro.
+    - **Pílula Inferior Central:** Badges compactos dos atalhos de teclado (`[C] Calibrar • [H] HUD • [P] PiP • [Q/ESC] Sair`), liberando completamente os cantos inferiores da tela para que os pés dos dançarinos fiquem 100% visíveis em corpo inteiro.
 - **Modo Picture-in-Picture Always-On-Top (`[P]`):**
   - Ao pressionar `P` na janela de tracking, a janela redimensiona automaticamente para uma minijanela compacta (`320x240` em 4:3 ou `320x200` em 16:10) que permanece sempre no topo (`HWND_TOPMOST`) acima do Just Dance PC.
   - Exibe apenas a imagem normal da câmera junto com a silhueta neural fiel do jogador e as linhas do esqueleto, ocultando todas as pílulas e textos informativos do HUD. Pressionar `P` novamente restaura o tamanho normal e desativa o `Always-On-Top`.
@@ -652,6 +651,35 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
     - `InertialCoastingFilter` utiliza amortecimento exponencial normalizado ao `dt` real (`250 ms` padrão, piso conservador de `320 ms` sob picos de CPU para nunca enviar poses congeladas longas ao avaliador rítmico do Just Dance).
     - `PersonLockController.apply_pre_inference_roi()` desativa automaticamente o escurecimento periférico durante coasting para que o MediaPipe enxergue o quadro inteiro na reaquisição, e `DancerIdentityLock` adapta o raio de salto ao `dt` e libera travas obsoletas em até 18 frames.
   - **Preview Otimizado Sob Gameplay em Tela Cheia:** `draw_player_silhouette()` otimizado com blur pré-upscale, `CHAIN_APPROX_SIMPLE` e `cv2.copyTo` SIMD, buffer de prévia limitado a `800px` de largura e pausa automática da renderização OpenCV quando a janela está minimizada (`IsIconic`).
+- **Estabilização Crítica Fase 1 — Rastreamento, Estéreo, Hardware USB/DS4, Emulador e IPC:**
+  - **Remoção do Toggle Legado `mirror_horizontal` / `[M]`:** A inferência do MediaPipe permanece sempre no frame bruto não-espelhado, enquanto o preview e o IPC Kinect são sempre espelhados horizontalmente (garantindo alinhamento 1:1 com o esqueleto 3D Kinect e `FaceFollowPTZ` e eliminando o atalho obsoleto `[M] Mirror`).
+  - **Precisão Anatômica e 2P 60 FPS (`sensor/player_slot.py`, `sensor/person_lock.py`, `sensor/pose_tracker.py`):** Corrigida a inversão esquerda/direita na síntese de pernas em modo *upper-body* (`hips_visible=False`), preservado o `DancerIdentityLock` em `reset_transient()` para manter o gate anti-impostor de 18 frames ativo, condicionado o recorte *Anti-Swallow* 2P a `is_crowded=True` (economizando até 4 construções de máscara/frame quando jogadores estão separados) e trocado o relógio de timestamp do MediaPipe para `time.perf_counter()` monotônico sem fallback inválido para `world_landmarks`.
+  - **Precisão de Visão Estéreo (`sensor/stereo_matcher.py`):** Corrigida a janela epipolar do olho direito (desbloqueando profundidades > 3 m), ativada escala automática de `search_radius_px` por resolução (permitindo medir dançarinos próximos ~0.65–1.0 m em `1280x800`) e corrigido o sinal da translação `T = [-B, 0, 0]` em `cv2.stereoRectify`.
+  - **DualShock 4, WinUSB PS4 Camera & Driver/Firmware (`sensor/ds4_controller.py`, `sensor/ps4_backend/`):** Escala IMU (`LSB/G`) travada durante janela inicial de repouso (impedindo que golpes rápidos > 1.46 G cortem a força G pela metade), assinaturas Win32 64-bit completas e fechamento seguro de handle após `join()` da thread HID; drenagem obrigatória de URBs isócronos pós-`CancelIoEx` com validação de limites antes de `memmove` em `frame_streamer.py`; detecção real de `WAIT_TIMEOUT` no `pnputil.exe` (`driver_installer.py`) e serialização por lock no upload de firmware OV580 (`firmware_manager.py`).
+  - **Emulador Kinect, FrameBus, IPC e CLI (`sensor/kinect_emulator.py`, `sensor/camera_manager.py`, `sensor/kinect_shared_memory.py`, `sensor/virtual_phone.py`, `main.py`):** Match exato de executáveis no scanner de processos, validação PE32 (`MZ`/`PE\0\0`/`SizeOfImage`) + leitura prévia antes do fallback legado `0x9CD250`, proteção contra UAF de `VirtualFreeEx` em timeout de `LoadLibraryW`, seqlock completo + checagem de limites `VirtualQuery` no `FrameBusReader`, suporte real a `tagname` customizado + `RLock` + recuperação de paridade seqlock no `KinectBridge`, correção de `import re` e `self.accelerometer.hand` em `VirtualPhoneController`, suporte à flag `--portable` e repasse de `--mode`/`--camera` para a GUI em `main.py`.
+- **Estabilização Térmica Android, Segurança TLS/WSS, Fluidez Qt 6 & Integridade (Fase 2):**
+  - **Correção Anti-Superaquecimento Android no Phone Camera WebApp (`assets/webapp/mobile_webapp.html`):**
+    - Removida a flag `willReadFrequently: true` do canvas 2D (restaurando aceleração GPU no Chrome Android e eliminando readback GPU→CPU por frame).
+    - Constraints de `getUserMedia` estritas ao preset alvo na 1ª tentativa (negociando VGA `640x480` nativo no Android Camera2 HAL em vez de 720p HD no ISP).
+    - **Cool Mode (Eco Thermal)** substituindo o botão `Dim Screen` e ativo por padrão no Android: teto de encode `480x360`, JPEG `0.34–0.44` (~55–65% menos TX Wi-Fi/TLS), **Auto-Dim automático após 15 s de streaming** com redução do `<video>` para `2×2 px` (poupando o compositor SurfaceFlinger) e **Governador Térmico Adaptativo** (`targetFps -> 24 -> 20 -> 15 FPS`) ao detectar lentidão de encode.
+    - **Standby Frio com Desligamento Real da Câmera:** Reduz imediatamente o sensor para ~10 FPS ao entrar em Standby e desliga fisicamente o `MediaStream` após 25 s ociosos (exibindo *"Camera Sleeping • Cool Standby"*), reabrindo automaticamente ao iniciar o tracking no PC.
+    - Eliminados vazamentos de `MediaStream` em chamadas concorrentes de `startCamera()`, congelamentos de `encodingInProgress`, perda de `WakeLock` ao voltar para a aba e desconexões durante troca de lente (heartbeat inteligente).
+  - **Segurança TLS Única por Instalação & `PhoneCameraServer` (`sensor/tls_manager.py`, `sensor/phone_camera.py`):**
+    - Removidos primos RSA-2048 estáticos do código-fonte; cada instalação gera sua própria chave RSA-2048 persistida atomicamente em `%APPDATA%\LegacyPSCam_Sensor\tls\device_key.pem`, com certificados de validade dinâmica de 365 dias, `KeyUsage`, `ExtendedKeyUsage (serverAuth)` e `TLSv1.2+`.
+    - Adicionados `_ws_send_lock` contra escrita concorrente no `SSLSocket`, semáforo de limite de conexões (8), redirecionamento `301` HTTP→HTTPS em clientes LAN, preservação de bytes pipelined, remontagem RFC 6455 de frames fragmentados e proteção contra JSON malformado.
+  - **Fluidez da UI Qt 6 & Concorrência (`ui/controllers/*`, `ui/gui_qt.py`, `ui/device_readout_mixin.py`, `ui/widgets.py`):**
+    - Probe HID do DualShock 4, validação pré-tracking (`validate_pre_tracking_async`) e verificação SHA-256 de modelos movidos para fora da thread principal Qt; unificado `DeviceController.is_connecting_ds4` (eliminando deadlock de reconexão); `SessionController.cleanup()` aguarda `TrackingSessionThread.join()`; `CameraController` usa geração de cancelamento `_warmup_gen`; `SlidingStackedWidget` libera animações com `DeleteWhenStopped` e evita dessincronização em cliques rápidos; cache de QSS no timer de 150 ms e mensagens de erro contextuais por modo.
+  - **Integridade de Telemetria & Modelos (`sensor/session_logger.py`, `sensor/model_manager.py`):**
+    - Telemetria CSV com `csv.writer` (suporte seguro a vírgulas/aspas em nomes de músicas), drenagem sincronizada do batch sem perda de linhas ao parar e restauração dos `excepthook` no `close()`.
+    - `ModelManager.download_model()` valida SHA-256 estrito por padrão (`strict_hash=True`), com cache de validação por `(path, mtime_ns, size)`, staging protegido por lock e `User-Agent` sincronizado com `version.py`.
+- **Engenharia, Refatoração Modular, CI/CD & Documentação (Fase 3):**
+  - **Refatoração Re-ID & Precisão Cinemática (`sensor/player_reid.py`, `sensor/player_slot.py`, `sensor/pose_filters.py`, `sensor/gesture_detector.py`, `sensor/vphone_protocol.py`):**
+    - Extração limpa do subsistema de Re-ID, plausibilidade anatômica unificada e Pose NMS para `sensor/player_reid.py` (com 100% de re-exports retrocompatíveis em `player_slot.py` e lazy exports completos em `sensor/__init__.py`).
+    - Compensação contínua de `dt` no `AdaptiveSmoother` (`eff_alpha = 1 - (1 - alpha_ref) ** (dt / REF_DT)`) para manter a mesma constante física de suavização em 30, 60 e 120 FPS (3D e 2D).
+    - Isolamento de cronômetro 2P no `ArmRaiseGestureDetector` (troca P1→P2 reinicia o hold) + chave `"hand_pos"` consistente em todos os retornos.
+    - Hardening do cliente WebSocket UbiArt (`MAX_WS_PAYLOAD_BYTES = 2 MB`, truncamento de `_send_pong` <= 125 B antes do cabeçalho RFC 6455, inclusão de `Legacy.exe` em `find_just_dance_pids` e guarda contra `RegionSize == 0`/overflow em `detect_active_song_from_game_process`).
+  - **Polimento Qt 6 (`ui/widgets.py`, `ui/pages.py`):** Componente reutilizável `SettingBlock`, conversão de blocos de texto com `wordWrap` de altura fixa para `setMinimumHeight`, remoção de propriedades CSS `line-height` inválidas no Qt e correção da descrição do bloco **DS4 Scoring Bridge**.
+  - **Testes Isolados, Build Reprodutível & CI/CD (`test_suite.py`, `tests/`, `legacy_pscam_sensor.spec`, `.github/workflows/ci.yml`, `release.yml`):** Isolamento hermético de `%APPDATA%` e porta efêmera `0` durante os testes, nova suíte modular `unittest` sob `tests/`, `.spec` independente de `cwd` com splash em `build/splash.png` e poda de `__pycache__`/`licenses/NOTICE`, CI automático em `push`/`PR` e pipeline de release com validação de tag, `STAGE` dinâmico, smoke test dos executáveis e `SHA256SUMS.txt`.
 
 ---
 

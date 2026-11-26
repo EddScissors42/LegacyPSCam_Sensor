@@ -3,6 +3,7 @@ Main Application Controller (Facade) for Legacy PSCam Sensor.
 Unifies Camera, Device and Session controllers into a clean, single-point API
 for the PySide6 / Qt 6 user interface.
 """
+import threading
 import time
 from typing import Optional, Callable, Tuple
 from PySide6.QtCore import QObject, Signal, Slot
@@ -140,6 +141,25 @@ class SensorAppController(QObject):
                 "Please connect a camera before starting tracking.",
             )
         return True, "", ""
+
+    def validate_pre_tracking_async(
+        self,
+        mode: Optional[str] = None,
+        callback: Optional[Callable[[bool, str, str], None]] = None,
+    ) -> None:
+        """Runs hardware pre-tracking validation off the Qt main thread to keep UI non-blocking."""
+        def _worker():
+            try:
+                ok, title, msg = self.validate_pre_tracking(mode)
+            except Exception as e:
+                ok, title, msg = False, "Device Initialization Error", str(e)
+            if callback:
+                try:
+                    callback(ok, title, msg)
+                except Exception:
+                    pass
+
+        threading.Thread(target=_worker, daemon=True, name="PreTrackingValidateThread").start()
 
     def start_tracking(self, on_finished: Optional[Callable[[bool, str], None]] = None) -> bool:
         """Adopts pre-warmed camera and launches tracking session asynchronously."""

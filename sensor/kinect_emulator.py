@@ -86,6 +86,8 @@ _SELF_PROCESS_EXCLUDES = (
     "legacysensor",
 )
 
+_ALL_TARGET_PROCESS_NAMES = frozenset(TARGET_PROCESS_NAMES) | frozenset(TARGET_PROCESS_ALIASES)
+
 
 class KinectEmulatorDaemon:
     """
@@ -437,10 +439,20 @@ class KinectEmulatorDaemon:
         finally:
             self._k32.CloseHandle(h)
 
+    @staticmethod
+    def is_target_process_name(exe_name: str) -> bool:
+        """Exact case-insensitive executable name match against supported Just Dance Legacy targets."""
+        if not exe_name:
+            return False
+        exe_lower = exe_name.rsplit("\\", 1)[-1].rsplit("/", 1)[-1].lower()
+        if exe_lower not in _ALL_TARGET_PROCESS_NAMES:
+            return False
+        return not any(excl in exe_lower for excl in _SELF_PROCESS_EXCLUDES)
+
     def _scan_for_game_process(self) -> Optional[Dict[str, Any]]:
         """
         Scans active processes for target Just Dance Legacy executables using a lightweight
-        Win32 Toolhelp32 kernel snapshot (< 0.5ms).
+        Win32 Toolhelp32 kernel snapshot (< 0.5ms) with exact executable name matching.
         """
         invalid_handle = ctypes.c_void_p(-1).value
         h_snap = self._k32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
@@ -454,16 +466,12 @@ class KinectEmulatorDaemon:
                 return None
 
             self_pid = os.getpid()
-            all_targets = tuple(TARGET_PROCESS_NAMES) + TARGET_PROCESS_ALIASES
             while True:
                 pid = int(pe.th32ProcessID)
                 if pid > 4 and pid != self_pid:
                     exe_name = pe.szExeFile
-                    exe_lower = exe_name.lower()
-                    if not any(excl in exe_lower for excl in _SELF_PROCESS_EXCLUDES):
-                        for target_name in all_targets:
-                            if exe_lower == target_name or target_name in exe_lower:
-                                return {"pid": pid, "name": exe_name}
+                    if self.is_target_process_name(exe_name):
+                        return {"pid": pid, "name": exe_name}
                 if not self._k32.Process32NextW(h_snap, ctypes.byref(pe)):
                     break
         finally:
@@ -553,6 +561,8 @@ class KinectEmulatorDaemon:
                     return False
 
                 remote_hmod = 0
+                thread_created = False
+                thread_finished = False
                 try:
                     written_path = ctypes.c_size_t(0)
                     if not self._k32.WriteProcessMemory(
@@ -569,15 +579,28 @@ class KinectEmulatorDaemon:
                             f"CreateRemoteThread failed on {exe_name} (PID {pid}), Win32 error {ctypes.get_last_error()}.",
                         )
                         return False
-
-                    self._k32.WaitForSingleObject(h_thread, 4000)
-                    exit_code = wintypes.DWORD(0)
-                    if self._k32.GetExitCodeThread(h_thread, ctypes.byref(exit_code)):
-                        if exit_code.value not in (0, 259):  # 259 = STILL_ACTIVE
-                            remote_hmod = int(exit_code.value)
-                    self._k32.CloseHandle(h_thread)
+                    thread_created = True
+                    try:
+                        WAIT_OBJECT_0 = 0x00000000
+                        wait_res = self._k32.WaitForSingleObject(h_thread, 4000)
+                        thread_finished = (wait_res == WAIT_OBJECT_0)
+                        if thread_finished:
+                            exit_code = wintypes.DWORD(0)
+                            if self._k32.GetExitCodeThread(h_thread, ctypes.byref(exit_code)):
+                                if exit_code.value not in (0, 259):  # 259 = STILL_ACTIVE
+                                    remote_hmod = int(exit_code.value)
+                        else:
+                            self._log_diag_once(
+                                pid,
+                                "LOADLIB_TIMEOUT",
+                                f"LoadLibraryW remote thread timed out in {exe_name} (PID {pid}); retaining remote path string to avoid UAF.",
+                            )
+                    finally:
+                        self._k32.CloseHandle(h_thread)
                 finally:
-                    self._k32.VirtualFreeEx(h_proc, ctypes.c_void_p(remote_str), 0, MEM_RELEASE)
+                    # Only free remote string if thread never started or cleanly finished
+                    if not thread_created or thread_finished:
+                        self._k32.VirtualFreeEx(h_proc, ctypes.c_void_p(remote_str), 0, MEM_RELEASE)
 
                 # Re-enumerate 32-bit modules to locate the injected proxy DLL base address
                 if self._psapi.EnumProcessModulesEx(
@@ -616,7 +639,22 @@ class KinectEmulatorDaemon:
 
             ilt_rva, iat_rva = self._find_kinect_iat_descriptor(h_proc, exe_base)
             if not iat_rva:
-                iat_rva = 0x9CD250
+                fallback_rva = 0x9CD250
+                fallback_bytes = len(KINECT_ORDINALS_ORDER) * 4
+                if self.is_target_process_name(exe_name) and self._validate_fallback_iat_rva(
+                    h_proc, exe_base, fallback_rva, fallback_bytes
+                ):
+                    iat_rva = fallback_rva
+                    print(
+                        f"[KINECT-EMU] Using validated legacy IAT fallback RVA {hex(fallback_rva)} for {exe_name} (PID {pid})"
+                    )
+                else:
+                    self._log_diag_once(
+                        pid,
+                        "NO_KINECT_IAT",
+                        f"Kinect10.dll import descriptor not found and legacy fallback RVA {hex(fallback_rva)} failed PE32 bounds validation in {exe_name} (PID {pid}).",
+                    )
+                    return False
             iat_addr = exe_base + iat_rva
 
             # Prefer dynamic ILT (OriginalFirstThunk) matching so any ordinal order or named import works
@@ -659,22 +697,50 @@ class KinectEmulatorDaemon:
         finally:
             self._k32.CloseHandle(h_proc)
 
-    def _find_remote_export(self, h_proc, mod_base: int, func_name: bytes) -> Optional[int]:
-        """Reads a 32-bit remote PE module's export directory to find an exported function address."""
+    def _read_remote_pe32_header(self, h_proc, mod_base: int) -> Optional[bytes]:
+        """Reads and validates a 32-bit remote PE module's DOS + NT headers (returns 256-byte NT header)."""
         dos_hdr = ctypes.create_string_buffer(64)
         if not self._k32.ReadProcessMemory(h_proc, ctypes.c_void_p(mod_base), dos_hdr, 64, None):
             return None
-        e_lfanew = int.from_bytes(dos_hdr[0x3C:0x40], "little")
+        if dos_hdr.raw[:2] != b"MZ":
+            return None
+        e_lfanew = int.from_bytes(dos_hdr.raw[0x3C:0x40], "little")
+        if e_lfanew == 0 or e_lfanew > 0x100000:
+            return None
 
         nt_hdr = ctypes.create_string_buffer(256)
         if not self._k32.ReadProcessMemory(h_proc, ctypes.c_void_p(mod_base + e_lfanew), nt_hdr, 256, None):
             return None
-
-        opt_magic = int.from_bytes(nt_hdr[0x18:0x1A], "little")
+        if nt_hdr.raw[:4] != b"PE\x00\x00":
+            return None
+        opt_magic = int.from_bytes(nt_hdr.raw[0x18:0x1A], "little")
         if opt_magic != PE32_MAGIC:
             return None
+        return nt_hdr.raw
 
-        exp_dir_rva = int.from_bytes(nt_hdr[0x78:0x7C], "little")
+    def _validate_fallback_iat_rva(self, h_proc, exe_base: int, rva: int, byte_len: int) -> bool:
+        """
+        Verifies that the legacy hardcoded IAT fallback RVA lies inside a valid PE32 image's
+        SizeOfImage and points to readable committed memory before patching.
+        """
+        if rva <= 0 or byte_len <= 0:
+            return False
+        nt_raw = self._read_remote_pe32_header(h_proc, exe_base)
+        if nt_raw is None:
+            return False
+        size_of_image = int.from_bytes(nt_raw[0x50:0x54], "little")
+        if size_of_image < rva + byte_len:
+            return False
+        probe = ctypes.create_string_buffer(byte_len)
+        return bool(self._k32.ReadProcessMemory(h_proc, ctypes.c_void_p(exe_base + rva), probe, byte_len, None))
+
+    def _find_remote_export(self, h_proc, mod_base: int, func_name: bytes) -> Optional[int]:
+        """Reads a 32-bit remote PE module's export directory to find an exported function address."""
+        nt_raw = self._read_remote_pe32_header(h_proc, mod_base)
+        if nt_raw is None:
+            return None
+
+        exp_dir_rva = int.from_bytes(nt_raw[0x78:0x7C], "little")
         if not exp_dir_rva:
             return None
 
@@ -682,25 +748,36 @@ class KinectEmulatorDaemon:
         if not self._k32.ReadProcessMemory(h_proc, ctypes.c_void_p(mod_base + exp_dir_rva), exp_dir, 40, None):
             return None
 
-        num_funcs = int.from_bytes(exp_dir[0x14:0x18], "little")
-        num_names = int.from_bytes(exp_dir[0x18:0x1C], "little")
-        funcs_rva = int.from_bytes(exp_dir[0x1C:0x20], "little")
-        names_rva = int.from_bytes(exp_dir[0x20:0x24], "little")
-        ordinals_rva = int.from_bytes(exp_dir[0x24:0x28], "little")
+        num_funcs = int.from_bytes(exp_dir.raw[0x14:0x18], "little")
+        num_names = int.from_bytes(exp_dir.raw[0x18:0x1C], "little")
+        funcs_rva = int.from_bytes(exp_dir.raw[0x1C:0x20], "little")
+        names_rva = int.from_bytes(exp_dir.raw[0x20:0x24], "little")
+        ordinals_rva = int.from_bytes(exp_dir.raw[0x24:0x28], "little")
+
+        if num_funcs == 0 or num_funcs > 65536 or num_names == 0 or num_names > 65536:
+            return None
+        if not funcs_rva or not names_rva or not ordinals_rva:
+            return None
 
         names_table = (ctypes.c_uint32 * num_names)()
-        self._k32.ReadProcessMemory(h_proc, ctypes.c_void_p(mod_base + names_rva), names_table, ctypes.sizeof(names_table), None)
+        if not self._k32.ReadProcessMemory(h_proc, ctypes.c_void_p(mod_base + names_rva), names_table, ctypes.sizeof(names_table), None):
+            return None
         ord_table = (ctypes.c_uint16 * num_names)()
-        self._k32.ReadProcessMemory(h_proc, ctypes.c_void_p(mod_base + ordinals_rva), ord_table, ctypes.sizeof(ord_table), None)
+        if not self._k32.ReadProcessMemory(h_proc, ctypes.c_void_p(mod_base + ordinals_rva), ord_table, ctypes.sizeof(ord_table), None):
+            return None
         funcs_table = (ctypes.c_uint32 * num_funcs)()
-        self._k32.ReadProcessMemory(h_proc, ctypes.c_void_p(mod_base + funcs_rva), funcs_table, ctypes.sizeof(funcs_table), None)
+        if not self._k32.ReadProcessMemory(h_proc, ctypes.c_void_p(mod_base + funcs_rva), funcs_table, ctypes.sizeof(funcs_table), None):
+            return None
 
+        name_buf = ctypes.create_string_buffer(64)
         for idx in range(num_names):
-            name_buf = ctypes.create_string_buffer(64)
-            self._k32.ReadProcessMemory(h_proc, ctypes.c_void_p(mod_base + names_table[idx]), name_buf, 64, None)
+            if not self._k32.ReadProcessMemory(h_proc, ctypes.c_void_p(mod_base + names_table[idx]), name_buf, 64, None):
+                continue
             if name_buf.value == func_name:
                 ord_idx = ord_table[idx]
-                return mod_base + funcs_table[ord_idx]
+                if ord_idx < num_funcs and funcs_table[ord_idx] != 0:
+                    return mod_base + funcs_table[ord_idx]
+                return None
 
         return None
 
@@ -708,19 +785,11 @@ class KinectEmulatorDaemon:
         """Maps ordinal -> VA and export_name -> VA for 32-bit Legacy10.dll proxy."""
         by_ord: Dict[int, int] = {}
         by_name: Dict[bytes, int] = {}
-        dos_hdr = ctypes.create_string_buffer(64)
-        if not self._k32.ReadProcessMemory(h_proc, ctypes.c_void_p(mod_base), dos_hdr, 64, None):
-            return by_ord, by_name
-        e_lfanew = int.from_bytes(dos_hdr[0x3C:0x40], "little")
-
-        nt_hdr = ctypes.create_string_buffer(256)
-        if not self._k32.ReadProcessMemory(h_proc, ctypes.c_void_p(mod_base + e_lfanew), nt_hdr, 256, None):
+        nt_raw = self._read_remote_pe32_header(h_proc, mod_base)
+        if nt_raw is None:
             return by_ord, by_name
 
-        if int.from_bytes(nt_hdr[0x18:0x1A], "little") != PE32_MAGIC:
-            return by_ord, by_name
-
-        exp_dir_rva = int.from_bytes(nt_hdr[0x78:0x7C], "little")
+        exp_dir_rva = int.from_bytes(nt_raw[0x78:0x7C], "little")
         if not exp_dir_rva:
             return by_ord, by_name
 
@@ -728,18 +797,19 @@ class KinectEmulatorDaemon:
         if not self._k32.ReadProcessMemory(h_proc, ctypes.c_void_p(mod_base + exp_dir_rva), exp_dir, 40, None):
             return by_ord, by_name
 
-        base_ordinal = int.from_bytes(exp_dir[0x10:0x14], "little")
-        num_funcs = int.from_bytes(exp_dir[0x14:0x18], "little")
-        num_names = int.from_bytes(exp_dir[0x18:0x1C], "little")
-        funcs_rva = int.from_bytes(exp_dir[0x1C:0x20], "little")
-        names_rva = int.from_bytes(exp_dir[0x20:0x24], "little")
-        ords_rva = int.from_bytes(exp_dir[0x24:0x28], "little")
+        base_ordinal = int.from_bytes(exp_dir.raw[0x10:0x14], "little")
+        num_funcs = int.from_bytes(exp_dir.raw[0x14:0x18], "little")
+        num_names = int.from_bytes(exp_dir.raw[0x18:0x1C], "little")
+        funcs_rva = int.from_bytes(exp_dir.raw[0x1C:0x20], "little")
+        names_rva = int.from_bytes(exp_dir.raw[0x20:0x24], "little")
+        ords_rva = int.from_bytes(exp_dir.raw[0x24:0x28], "little")
 
-        if num_funcs == 0 or num_funcs > 4096:
+        if num_funcs == 0 or num_funcs > 4096 or not funcs_rva:
             return by_ord, by_name
 
         funcs_table = (ctypes.c_uint32 * num_funcs)()
-        self._k32.ReadProcessMemory(h_proc, ctypes.c_void_p(mod_base + funcs_rva), funcs_table, ctypes.sizeof(funcs_table), None)
+        if not self._k32.ReadProcessMemory(h_proc, ctypes.c_void_p(mod_base + funcs_rva), funcs_table, ctypes.sizeof(funcs_table), None):
+            return by_ord, by_name
 
         for i in range(num_funcs):
             ord_num = base_ordinal + i
@@ -750,14 +820,16 @@ class KinectEmulatorDaemon:
         if 0 < num_names <= 4096 and names_rva and ords_rva:
             names_table = (ctypes.c_uint32 * num_names)()
             ord_table = (ctypes.c_uint16 * num_names)()
-            self._k32.ReadProcessMemory(h_proc, ctypes.c_void_p(mod_base + names_rva), names_table, ctypes.sizeof(names_table), None)
-            self._k32.ReadProcessMemory(h_proc, ctypes.c_void_p(mod_base + ords_rva), ord_table, ctypes.sizeof(ord_table), None)
-            name_buf = ctypes.create_string_buffer(128)
-            for idx in range(num_names):
-                self._k32.ReadProcessMemory(h_proc, ctypes.c_void_p(mod_base + names_table[idx]), name_buf, 128, None)
-                fn_idx = ord_table[idx]
-                if fn_idx < num_funcs and funcs_table[fn_idx] != 0:
-                    by_name[name_buf.value] = mod_base + funcs_table[fn_idx]
+            ok_n = self._k32.ReadProcessMemory(h_proc, ctypes.c_void_p(mod_base + names_rva), names_table, ctypes.sizeof(names_table), None)
+            ok_o = self._k32.ReadProcessMemory(h_proc, ctypes.c_void_p(mod_base + ords_rva), ord_table, ctypes.sizeof(ord_table), None)
+            if ok_n and ok_o:
+                name_buf = ctypes.create_string_buffer(128)
+                for idx in range(num_names):
+                    if not self._k32.ReadProcessMemory(h_proc, ctypes.c_void_p(mod_base + names_table[idx]), name_buf, 128, None):
+                        continue
+                    fn_idx = ord_table[idx]
+                    if fn_idx < num_funcs and funcs_table[fn_idx] != 0:
+                        by_name[name_buf.value] = mod_base + funcs_table[fn_idx]
 
         return by_ord, by_name
 
@@ -768,38 +840,33 @@ class KinectEmulatorDaemon:
 
     def _find_kinect_iat_descriptor(self, h_proc, exe_base: int) -> Tuple[Optional[int], Optional[int]]:
         """Finds (OriginalFirstThunk, FirstThunk) RVAs for Kinect10.dll in 32-bit game executable."""
-        dos_hdr = ctypes.create_string_buffer(64)
-        if not self._k32.ReadProcessMemory(h_proc, ctypes.c_void_p(exe_base), dos_hdr, 64, None):
-            return None, None
-        e_lfanew = int.from_bytes(dos_hdr[0x3C:0x40], "little")
-
-        nt_hdr = ctypes.create_string_buffer(256)
-        if not self._k32.ReadProcessMemory(h_proc, ctypes.c_void_p(exe_base + e_lfanew), nt_hdr, 256, None):
+        nt_raw = self._read_remote_pe32_header(h_proc, exe_base)
+        if nt_raw is None:
             return None, None
 
-        imp_dir_rva = int.from_bytes(nt_hdr[0x80:0x84], "little")
+        imp_dir_rva = int.from_bytes(nt_raw[0x80:0x84], "little")
         if not imp_dir_rva:
             return None, None
 
         desc_buf = ctypes.create_string_buffer(20)
         curr_rva = imp_dir_rva
 
-        while True:
+        for _ in range(512):
             if not self._k32.ReadProcessMemory(h_proc, ctypes.c_void_p(exe_base + curr_rva), desc_buf, 20, None):
                 break
             if desc_buf.raw == b"\x00" * 20:
                 break
 
-            orig_first_thunk = int.from_bytes(desc_buf[0x00:0x04], "little")
-            name_rva = int.from_bytes(desc_buf[0x0C:0x10], "little")
-            first_thunk = int.from_bytes(desc_buf[0x10:0x14], "little")
+            orig_first_thunk = int.from_bytes(desc_buf.raw[0x00:0x04], "little")
+            name_rva = int.from_bytes(desc_buf.raw[0x0C:0x10], "little")
+            first_thunk = int.from_bytes(desc_buf.raw[0x10:0x14], "little")
 
             if name_rva:
                 name_buf = ctypes.create_string_buffer(32)
-                self._k32.ReadProcessMemory(h_proc, ctypes.c_void_p(exe_base + name_rva), name_buf, 32, None)
-                dll_name = name_buf.value.lower()
-                if b"kinect10" in dll_name or b"legacy10" in dll_name:
-                    return (orig_first_thunk or None), (first_thunk or None)
+                if self._k32.ReadProcessMemory(h_proc, ctypes.c_void_p(exe_base + name_rva), name_buf, 32, None):
+                    dll_name = name_buf.value.lower()
+                    if b"kinect10" in dll_name or b"legacy10" in dll_name:
+                        return (orig_first_thunk or None), (first_thunk or None)
 
             curr_rva += 20
 

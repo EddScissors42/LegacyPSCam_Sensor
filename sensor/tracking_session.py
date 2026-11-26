@@ -131,7 +131,10 @@ def is_window_minimized(hwnd) -> bool:
     if os.name != "nt" or not hwnd:
         return False
     try:
-        return bool(ctypes.windll.user32.IsIconic(hwnd))
+        user32 = ctypes.windll.user32
+        user32.IsIconic.argtypes = [wintypes.HWND]
+        user32.IsIconic.restype = wintypes.BOOL
+        return bool(user32.IsIconic(hwnd))
     except Exception:
         return False
 
@@ -201,11 +204,12 @@ def set_high_resolution_timer(enable=True):
     to guarantee smooth 60 FPS pacing for camera grab, MediaPipe, and IPC DLL.
     """
     try:
+        cur = ctypes.c_ulong()
         if enable:
             ctypes.windll.winmm.timeBeginPeriod(1)
-            cur = ctypes.c_ulong()
             ctypes.windll.ntdll.NtSetTimerResolution(ctypes.c_ulong(10000), 1, ctypes.byref(cur))
         else:
+            ctypes.windll.ntdll.NtSetTimerResolution(ctypes.c_ulong(10000), 0, ctypes.byref(cur))
             ctypes.windll.winmm.timeEndPeriod(1)
     except Exception:
         pass
@@ -240,7 +244,6 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None, prewar
     else:
         preset_str = config.get("webcam_preset", "640x480 @ 30 FPS")
     w, h, target_fps = parse_preset(preset_str)
-    mirror = config.get("mirror_horizontal", True)
     smoothing_alpha = config.get("smoothing_alpha", 0.75)
     det_conf = config.get("detection_confidence", 0.45)
     target_height = config.get("target_height_m", 1.75)
@@ -257,7 +260,7 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None, prewar
     print(f"  Camera: {cam_idx if mode != 'phone_cam' else 'WebApp'} | Resolution: {w}x{h} @ {target_fps} FPS")
     if mode == "pscam":
         print(f"  PS4 Backend: {ps4_backend_mode} | Eye: {ps4_eye}")
-    print(f"  Mirrored: {mirror} | Smoothing: {smoothing_alpha}")
+    print(f"  Smoothing: {smoothing_alpha}")
     print(f"==========================================\n")
 
     # Enable Windows 1ms high-precision timer + disable Windows 11 EcoQoS background throttling
@@ -283,6 +286,20 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None, prewar
         local_kinect_emulator.enabled = True
         local_kinect_emulator.start()
 
+    def _cleanup_early(cam_obj=None):
+        set_realtime_process_qos(False)
+        set_high_resolution_timer(False)
+        if local_kinect_emulator is not None and on_close_callback is None:
+            local_kinect_emulator.stop()
+        if cam_obj is not None:
+            try:
+                cam_obj.release()
+            except Exception:
+                pass
+        bridge.write_empty()
+        if on_close_callback:
+            on_close_callback()
+
     # 2. Initialize Camera Grabber (pristine raw frames to tracker)
     camera = None
     if (
@@ -293,7 +310,6 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None, prewar
             target_w=w,
             target_h=h,
             target_fps=target_fps,
-            mirror=mirror,
             is_pscam=(mode == "pscam"),
             orientation=camera_orientation,
             ps4_eye=ps4_eye,
@@ -316,7 +332,6 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None, prewar
                 target_w=w,
                 target_h=h,
                 target_fps=target_fps,
-                mirror=mirror,
                 is_pscam=(mode == "pscam"),
                 orientation=camera_orientation,
                 ps4_eye=ps4_eye,
@@ -325,9 +340,7 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None, prewar
             )
         except Exception as e:
             print(f"[ERROR] Failed to start camera: {e}")
-            bridge.write_empty()
-            if on_close_callback:
-                on_close_callback()
+            _cleanup_early()
             return False
 
     # 3. Initialize Pose Tracker (lazy-imported so GUI startup & DS4 mode never wait on MediaPipe)
@@ -361,10 +374,7 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None, prewar
             tracker.stereo_mode = "sparse_metric"
     except Exception as e:
         print(f"[ERROR] Failed to start MediaPipe Pose Tracker: {e}")
-        camera.release()
-        bridge.write_empty()
-        if on_close_callback:
-            on_close_callback()
+        _cleanup_early(camera)
         return False
 
     # 4. Initialize Overlay
@@ -449,10 +459,6 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None, prewar
                 elif key in (ord('c'), ord('C')):
                     tracker.recalibrate()
                     print("[INFO] Height/skeleton & identity memory recalibration triggered!")
-                elif key in (ord('m'), ord('M')):
-                    mirror = not mirror
-                    camera.set_mirror(mirror)
-                    print(f"[INFO] Mirroring toggled to: {mirror}")
                 elif key in (ord('h'), ord('H')):
                     overlay.toggle_hud()
                 elif key in (ord('p'), ord('P')):
@@ -525,30 +531,18 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None, prewar
             sx_prev = prev_w / float(max(1, fw))
             sy_prev = prev_h / float(max(1, fh))
 
-            if mirror:
-                display_frame = cv2.flip(work_frame, 1)
-                display_mask = cv2.flip(body_mask, 1) if body_mask is not None else None
-                display_players_px = [
-                    [
-                        (int(round((fw - 1 - p[0]) * sx_prev)), int(round(p[1] * sy_prev)), p[2])
-                        for p in pf.pixel_joints
-                    ]
-                    if (pf is not None and pf.tracked and pf.pixel_joints)
-                    else None
-                    for pf in multi_res.players
+            # Always mirror display & Kinect IPC outputs AFTER un-mirrored MediaPipe inference
+            display_frame = cv2.flip(work_frame, 1)
+            display_mask = cv2.flip(body_mask, 1) if body_mask is not None else None
+            display_players_px = [
+                [
+                    (int(round((fw - 1 - p[0]) * sx_prev)), int(round(p[1] * sy_prev)), p[2])
+                    for p in pf.pixel_joints
                 ]
-            else:
-                display_frame = work_frame.copy()
-                display_mask = body_mask
-                display_players_px = [
-                    [
-                        (int(round(p[0] * sx_prev)), int(round(p[1] * sy_prev)), p[2])
-                        for p in pf.pixel_joints
-                    ]
-                    if (pf is not None and pf.tracked and pf.pixel_joints)
-                    else None
-                    for pf in multi_res.players
-                ]
+                if (pf is not None and pf.tracked and pf.pixel_joints)
+                else None
+                for pf in multi_res.players
+            ]
 
             # Detect arm raised gesture using mirrored/scaled preview coordinates so the radial ring aligns 1:1
             gesture_info = gesture_detector.update_multi(display_players_px, is_tracked=is_tracked, vphone=vphone)
@@ -559,7 +553,7 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None, prewar
             if face_follow_on and is_tracked and tracker.last_norm_landmarks:
                 tracker.face_ptz.update_from_norm(
                     tracker.last_norm_landmarks,
-                    mirrored=mirror,
+                    mirrored=True,
                     kinect_joints=kinect_joints,
                 )
                 kinect_frame, kinect_mask = tracker.face_ptz.apply(display_frame, display_mask)
@@ -689,7 +683,6 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None, prewar
                         cam_fps=cam_fps,
                         track_fps=measured_track_fps,
                         is_calibrated=primary_calib,
-                        is_mirrored=mirror,
                         calibration_tier=primary_tier,
                         max_players=max_players,
                         tracked_mask=multi_res.tracked_mask,
@@ -713,10 +706,6 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None, prewar
             elif key in (ord('c'), ord('C')):
                 tracker.recalibrate()
                 print("[INFO] Height/skeleton & identity memory recalibration triggered!")
-            elif key in (ord('m'), ord('M')):
-                mirror = not mirror
-                camera.set_mirror(mirror)
-                print(f"[INFO] Mirroring toggled to: {mirror}")
             elif key in (ord('h'), ord('H')):
                 overlay.toggle_hud()
             elif key in (ord('p'), ord('P')):
@@ -740,7 +729,7 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None, prewar
         print(f"[ERROR] Exception in tracking loop: {e}\n{tb_str}")
         try:
             from sensor.session_logger import get_session_logger
-            get_session_logger().log("ERROR", "TRACKING", f"Exception in tracking loop: {e}\n{tb_str}")
+            get_session_logger().log_event("ERROR", "TRACKING", f"Exception in tracking loop: {e}\n{tb_str}")
         except Exception:
             pass
     finally:

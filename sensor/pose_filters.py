@@ -191,6 +191,20 @@ class AdaptiveSmoother:
     def update_base_alpha(self, alpha):
         self.base_alpha = float(alpha)
 
+    @classmethod
+    def _dt_adjusted_alpha(cls, alpha_at_ref: float, dt_sec: float) -> float:
+        """
+        Converts a reference-tick (30 Hz) EMA smoothing factor into the mathematically
+        equivalent continuous-time factor for step size `dt_sec`:
+            eff_alpha = 1 - (1 - alpha_ref) ** (dt_sec / REF_DT)
+        At 30 FPS (`dt_sec == REF_DT`), returns `alpha_at_ref` identically.
+        At 60/120 FPS, preserves the exact same physical smoothing time constant.
+        """
+        a = min(0.99, max(0.0, float(alpha_at_ref)))
+        if abs(dt_sec - cls.REF_DT) < 1e-6:
+            return a
+        return 1.0 - (1.0 - a) ** (dt_sec / cls.REF_DT)
+
     def apply(self, joints, dt=None):
         now = time.perf_counter()
         if self.prev_joints is None or len(self.prev_joints) != len(joints):
@@ -223,15 +237,17 @@ class AdaptiveSmoother:
 
             # Ratio of physical speed over threshold
             ratio = min(1.0, max(0.0, norm_speed / self.speed_threshold))
-            alpha = self.base_alpha + ratio * (self.alpha_fast - self.base_alpha)
+            alpha_ref = self.base_alpha + ratio * (self.alpha_fast - self.base_alpha)
 
             # Boost extremities for snappy hand & foot movements
             if i in EXTREMITY_JOINTS:
-                alpha = min(0.96, alpha * 1.25)
+                alpha_ref = min(0.96, alpha_ref * 1.25)
 
-            new_x = prev[0] + alpha * (curr[0] - prev[0])
-            new_y = prev[1] + alpha * (curr[1] - prev[1])
-            new_z = prev[2] + alpha * (curr[2] - prev[2])
+            eff_alpha = self._dt_adjusted_alpha(alpha_ref, dt_sec)
+
+            new_x = prev[0] + eff_alpha * (curr[0] - prev[0])
+            new_y = prev[1] + eff_alpha * (curr[1] - prev[1])
+            new_z = prev[2] + eff_alpha * (curr[2] - prev[2])
             new_conf = curr[3]
             smoothed.append((new_x, new_y, new_z, new_conf))
 
@@ -276,13 +292,15 @@ class AdaptiveSmoother:
             norm_speed = math.hypot(dx, dy) * dt_scale
 
             ratio = min(1.0, max(0.0, norm_speed / px_threshold))
-            alpha = self.base_alpha + ratio * (self.alpha_fast - self.base_alpha)
+            alpha_ref = self.base_alpha + ratio * (self.alpha_fast - self.base_alpha)
 
             if i in EXTREMITY_JOINTS:
-                alpha = min(0.96, alpha * 1.25)
+                alpha_ref = min(0.96, alpha_ref * 1.25)
 
-            nx = prev[0] + alpha * (curr[0] - prev[0])
-            ny = prev[1] + alpha * (curr[1] - prev[1])
+            eff_alpha = self._dt_adjusted_alpha(alpha_ref, dt_sec)
+
+            nx = prev[0] + eff_alpha * (curr[0] - prev[0])
+            ny = prev[1] + eff_alpha * (curr[1] - prev[1])
             nconf = float(curr[2])
             smoothed_float.append((nx, ny, nconf))
             smoothed_int.append((int(round(nx)), int(round(ny)), nconf))

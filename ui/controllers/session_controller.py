@@ -23,6 +23,7 @@ class SessionController:
 
         self.is_tracking_active = False
         self._tracking_stop_event = threading.Event()
+        self._tracking_thread: Optional[threading.Thread] = None
         self.kinect_emulator = None
 
     def start_kinect_emulator(self):
@@ -63,7 +64,9 @@ class SessionController:
                 if on_finished:
                     on_finished(success, err_msg)
 
-        threading.Thread(target=tracking_worker, daemon=True, name="TrackingSessionThread").start()
+        th = threading.Thread(target=tracking_worker, daemon=True, name="TrackingSessionThread")
+        self._tracking_thread = th
+        th.start()
         return True
 
     def stop_tracking(self):
@@ -71,8 +74,15 @@ class SessionController:
         self._tracking_stop_event.set()
 
     def cleanup(self):
-        """Releases all IPC shared memory channels and emulator hooks."""
+        """Releases all IPC shared memory channels and emulator hooks after joining tracking thread."""
         self.stop_tracking()
+        th = self._tracking_thread
+        if th is not None and th.is_alive() and th is not threading.current_thread():
+            try:
+                th.join(timeout=2.5)
+            except Exception:
+                pass
+        self._tracking_thread = None
         if self.kinect_emulator is not None:
             try:
                 self.kinect_emulator.stop()

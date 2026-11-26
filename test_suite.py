@@ -6,6 +6,7 @@ high-frequency monotonic timestamps, overlay, and camera manager.
 """
 import math
 import mmap
+import os
 import struct
 import sys
 import time
@@ -59,6 +60,7 @@ def test_config():
     cfg_mgr = ConfigManager()
     cfg = cfg_mgr.config
     assert "camera_mode" in cfg
+    assert "mirror_horizontal" not in DEFAULT_CONFIG, "Legacy mirror_horizontal toggle must be removed"
     assert "smoothing_alpha" in cfg
     assert "ds4_permissive_mode" in cfg
     assert isinstance(cfg["ds4_permissive_mode"], bool)
@@ -67,6 +69,25 @@ def test_config():
     assert parse_preset("640x480 @ 30 FPS") == (640, 480, 30)
     assert "1280x800 @ 60 FPS" in PRESETS_PSCAM
     assert "640x480 @ 30 FPS" in PRESETS_WEBCAM
+
+    # Verify VirtualPhoneController.set_logging (import re) & JD_PhoneDataCmdSyncEnd (self.accelerometer.hand)
+    from sensor.virtual_phone import VirtualPhoneController
+    with tempfile.TemporaryDirectory() as td:
+        vp = VirtualPhoneController()
+        csv_path = str(Path(td) / "vphone_test.csv")
+        out_path = vp.set_logging(True, custom_path=csv_path, map_name="Rasputin!@#")
+        assert out_path == csv_path and Path(csv_path).exists()
+        vp.set_logging(False)
+
+        class _DummyWS:
+            def __init__(self):
+                self.sent = []
+            def send_text(self, txt):
+                self.sent.append(txt)
+
+        dws = _DummyWS()
+        vp._handle_incoming_message(dws, '{"__class":"JD_PhoneDataCmdSyncEnd","phoneID":7}')
+        assert vp._handshake_complete is True and len(dws.sent) == 1
 
     # Test custom path isolation
     with tempfile.TemporaryDirectory() as td:
@@ -187,7 +208,25 @@ def test_shared_memory():
     mm_img.close()
     mm_img_v2.close()
     kism.close()
-    print("  -> KinectImageSharedMemory (Image/Mask JMI1 & JMI2) PASSED")
+
+    # Verify custom tagname isolation (never silently overwrites production buffer)
+    custom_tag = f"Local\\LegacyTestImg_{os.getpid()}"
+    kism_custom = KinectImageSharedMemory(tagname=custom_tag)
+    try:
+        assert kism_custom.is_connected
+        assert kism_custom.tagname == custom_tag
+        assert kism_custom.tagname_v2 == f"{custom_tag}V2"
+        assert kism_custom.write_image_and_mask(dummy_frame, dummy_mask, tracked=True)
+        mm_custom = mmap.mmap(-1, IMAGE_SHARED_SIZE, tagname=custom_tag)
+        try:
+            mm_custom.seek(0)
+            m_c, _, s_c, tr_c, _, _, _ = struct.unpack(IMAGE_HEADER_FMT, mm_custom.read(32))
+            assert m_c == IMAGE_MAGIC and tr_c == 1 and (s_c % 2 == 0)
+        finally:
+            mm_custom.close()
+    finally:
+        kism_custom.close()
+    print("  -> KinectImageSharedMemory (Image/Mask JMI1 & JMI2 + Custom Tagname) PASSED")
 
     # Test CoachX Bridge (28 bytes, JXC1)
     kcx = KinectCoachXSharedMemory()
@@ -281,19 +320,30 @@ def test_adaptive_smoother():
     res3 = smoother.apply(j3, dt=1.0 / 30.0)
     assert res3[0][0] > 0.6
 
-    # Verify FPS-independent velocity scaling:
-    # A 0.04m displacement at 60 FPS (dt = 1/60s) has the exact same physical speed (2.4 m/s)
-    # as a 0.08m displacement at 30 FPS (dt = 1/30s).
+    # Verify FPS-independent physical smoothing time constant:
+    # Continuous-time EMA: eff_alpha = 1 - (1 - alpha_ref) ** (dt / REF_DT)
+    # 1) On a stationary micro-jitter step (0 -> 0.002m), 2 consecutive ticks at 60 FPS
+    #    must land at the exact same smoothed position as 1 tick at 30 FPS!
     s30 = AdaptiveSmoother(base_alpha=0.50, alpha_fast=0.90, speed_threshold=0.15)
     s60 = AdaptiveSmoother(base_alpha=0.50, alpha_fast=0.90, speed_threshold=0.15)
     s30.apply(j1)
     s60.apply(j1)
-    out30 = s30.apply([(0.08, 0.0, 2.0, 1.0)] * 20, dt=1.0 / 30.0)
-    out60 = s60.apply([(0.04, 0.0, 2.0, 1.0)] * 20, dt=1.0 / 60.0)
-    # Effective alpha (out / target_disp) must be identical between 30 FPS and 60 FPS!
-    alpha_30 = out30[0][0] / 0.08
-    alpha_60 = out60[0][0] / 0.04
-    assert abs(alpha_30 - alpha_60) < 1e-5, f"Expected identical alpha across 30/60 FPS, got {alpha_30} vs {alpha_60}"
+    step_target = [(0.002, 0.0, 2.0, 1.0)] * 20
+    out30 = s30.apply(step_target, dt=1.0 / 30.0)
+    s60.apply(step_target, dt=1.0 / 60.0)
+    out60_2ticks = s60.apply(step_target, dt=1.0 / 60.0)
+    assert abs(out30[0][0] - out60_2ticks[0][0]) < 1e-4, (
+        f"Expected matching 30/60 FPS time constant on stationary step, got {out30[0][0]:.6f} vs {out60_2ticks[0][0]:.6f}"
+    )
+
+    # 2) At 60 FPS, a single step must smooth MORE tightly than a 30 FPS single step
+    #    (preventing smoothing decay from vanishing at high framerates).
+    s60_single = AdaptiveSmoother(base_alpha=0.50, alpha_fast=0.90, speed_threshold=0.15)
+    s60_single.apply(j1)
+    out60_1tick = s60_single.apply(step_target, dt=1.0 / 60.0)
+    assert 0.0 < out60_1tick[0][0] < out30[0][0], (
+        f"Single 60 FPS tick ({out60_1tick[0][0]:.6f}) must smooth more tightly than 30 FPS tick ({out30[0][0]:.6f})"
+    )
 
     # Verify 2D pixel joints EMA smoothing (eliminates stationary jitter, responds fast to big moves)
     px_s = AdaptiveSmoother(base_alpha=0.50, alpha_fast=0.90, speed_threshold=0.15)
@@ -501,6 +551,9 @@ def test_pose_tracker():
             def do_GET(self):
                 if self.path == "/corrupt":
                     body = b"NOT_A_VALID_TASK_FILE"
+                elif self.path == "/tampered":
+                    # Valid ZIP header + size >= min_size_bytes, but tampered trailing byte (wrong SHA-256)
+                    body = real_lite_bytes[:-1] + bytes([real_lite_bytes[-1] ^ 0xFF])
                 else:
                     body = real_lite_bytes
                 self.send_response(200)
@@ -518,9 +571,15 @@ def test_pose_tracker():
         try:
             dl_dir = tmp_mpath / "dl_test"
             bad_res = ModelManager.download_model(
-                "lite", cache_dir=dl_dir, urls=(f"http://127.0.0.1:{port}/corrupt",), strict_hash=True
+                "lite", cache_dir=dl_dir, urls=(f"http://127.0.0.1:{port}/corrupt",)
             )
             assert bad_res is None, "Corrupt model payload must be rejected and discarded"
+
+            # Phase 2 Regression: default strict_hash=True must reject tampered ZIP with mismatched SHA-256
+            tampered_res = ModelManager.download_model(
+                "lite", cache_dir=dl_dir, urls=(f"http://127.0.0.1:{port}/tampered",)
+            )
+            assert tampered_res is None, "Tampered model with wrong SHA-256 must be rejected by default!"
 
             prog_events = []
             ok_res = ModelManager.download_model(
@@ -528,7 +587,6 @@ def test_pose_tracker():
                 cache_dir=dl_dir,
                 urls=(f"http://127.0.0.1:{port}/lite",),
                 progress_cb=lambda done, tot: prog_events.append((done, tot)),
-                strict_hash=True,
             )
             assert ok_res is not None and ok_res.is_file(), "Loopback model download must succeed atomically"
             assert not ok_res.with_suffix(".task.part").exists(), "Temp .part file must be cleaned up"
@@ -737,6 +795,7 @@ def test_project_structure():
     assert hasattr(sensor, "DancerIdentityLock")
     assert hasattr(sensor, "PersonLockController")
     assert (BASE_DIR / "sensor" / "person_lock.py").exists(), "sensor/person_lock.py must exist"
+    assert (BASE_DIR / "sensor" / "player_reid.py").exists(), "sensor/player_reid.py must exist"
     assert (BASE_DIR / "sensor" / "gesture_detector.py").exists(), "sensor/gesture_detector.py must exist"
     assert (BASE_DIR / "sensor" / "qr_encoder.py").exists(), "sensor/qr_encoder.py must exist"
     assert (BASE_DIR / "sensor" / "tls_manager.py").exists(), "sensor/tls_manager.py must exist"
@@ -1294,6 +1353,39 @@ def test_stereo_vision_engine():
     assert 0 in res_left, "Left-eye primary target joint must be triangulated"
     assert abs(res_left[0][2] - expected_z) < 0.15, f"Expected Left-primary Z around {expected_z:.2f}m, got {res_left[0][2]:.2f}m"
 
+    # 3.0c Phase 1 Regression: Right-eye far depth (disparity 4px < patch_half_size=6 at 320x192 -> ~4.58m)
+    # and close depth (~1.0m, disparity 73px > default search_radius_px=48 at 1280x800)
+    far_l = np.ones((192, 320, 3), dtype=np.uint8) * 45
+    far_r = np.ones((192, 320, 3), dtype=np.uint8) * 45
+    fu_r, fv_r, fdisp = 150, 96, 4
+    for r in range(-8, 9):
+        for c in range(-8, 9):
+            pv = int(((r * 19 + c * 29) % 180) + 60)
+            far_r[fv_r + r, fu_r + c] = (pv, 255 - pv, 110)
+            far_l[fv_r + r, fu_r + fdisp + c] = (pv, 255 - pv, 110)
+    engine.reset_calibration()
+    res_far = engine.triangulate_sparse_joints(far_l, far_r, {0: (float(fu_r), float(fv_r), 0.95)}, primary_eye="right")
+    assert 0 in res_far, "Right-eye far depth (disparity < patch_half_size) must not be clipped"
+    exp_far_z = (215.0 * PS4_STEREO_BASELINE_M) / float(fdisp)
+    assert abs(res_far[0][2] - exp_far_z) < 0.35, f"Expected far Z ~{exp_far_z:.2f}m, got {res_far[0][2]:.2f}m"
+
+    close_l = np.ones((800, 1280, 3), dtype=np.uint8) * 45
+    close_r = np.ones((800, 1280, 3), dtype=np.uint8) * 45
+    cu_r, cv_r, cdisp = 550, 400, 73
+    for r in range(-10, 11):
+        for c in range(-10, 11):
+            pv = int(((r * 17 + c * 31) % 180) + 60)
+            close_r[cv_r + r, cu_r + c] = (pv, 255 - pv, 110)
+            close_l[cv_r + r, cu_r + cdisp + c] = (pv, 255 - pv, 110)
+    engine.reset_calibration()
+    # Uses default search_radius_px=48 (auto-scales for 1280x800)
+    res_close = engine.triangulate_sparse_joints(close_l, close_r, {0: (float(cu_r), float(cv_r), 0.95)}, primary_eye="right")
+    assert 0 in res_close, "Close dancer (~1.0m at 1280x800) must triangulate with default search_radius_px"
+    assert 0.85 <= res_close[0][2] <= 1.15, f"Expected close Z ~1.0m, got {res_close[0][2]:.2f}m"
+    # Verify OpenCV stereoRectify baseline translation sign (T = [-B, 0, 0] -> Q[3, 2] > 0)
+    assert engine.calibrator.Q is not None and float(engine.calibrator.Q[3, 2]) > 0.0, "stereoRectify T sign must yield positive 1/B in Q[3,2]"
+    engine.reset_calibration()
+
     # 3.1 Dynamic Vertical Epipolar Auto-Calibration (Simulated +3px vertical lens tilt)
     engine.reset_calibration()
     test_l_tilted = np.ones((800, 1280, 3), dtype=np.uint8) * 50
@@ -1449,6 +1541,31 @@ def test_ds4_controller():
     g_force = mag / scale
     assert math.isclose(g_force, 1.0, rel_tol=1e-2)
 
+    # Validate rest-locked IMU scale calibration in production DS4Controller (prevents peak swing >1.46G halving G-force)
+    scale_lsb = 8192.0
+    scale_locked = False
+    rest_samples = []
+    prev_mag = None
+    for _ in range(15):
+        scale_lsb, scale_locked, prev_mag = DS4Controller.update_imu_scale_calibration(
+            8200.0, scale_lsb, scale_locked, rest_samples, prev_mag
+        )
+    assert scale_locked is True and scale_lsb == 8192.0, f"Expected Sony DS4 locked at 8192, got {scale_lsb} (locked={scale_locked})"
+    # Violent 2.2G dance swing (raw_mag ~ 18022) must NEVER flip scale to 16384!
+    scale_lsb, scale_locked, prev_mag = DS4Controller.update_imu_scale_calibration(
+        18022.0, scale_lsb, scale_locked, rest_samples, prev_mag
+    )
+    assert scale_lsb == 8192.0, f"Peak dance swing corrupted locked IMU scale to {scale_lsb}!"
+    assert math.isclose(18022.0 / scale_lsb, 2.2, abs_tol=0.05)
+
+    # Validate 4096 LSB/G clone locking at rest
+    c_scale, c_locked, c_samples, c_prev = 8192.0, False, [], None
+    for _ in range(15):
+        c_scale, c_locked, c_prev = DS4Controller.update_imu_scale_calibration(
+            4096.0, c_scale, c_locked, c_samples, c_prev
+        )
+    assert c_locked is True and c_scale == 4096.0, f"Expected 4096 LSB/G clone lock, got {c_scale}"
+
     # 6. Verify DeviceController get_ds4_readout() and state contract
     from ui.controllers.device_controller import DeviceController
     dc = DeviceController()
@@ -1504,6 +1621,14 @@ def test_kinect_emulator():
     assert hasattr(ke_mod, "LIST_MODULES_32BIT") and ke_mod.LIST_MODULES_32BIT == 0x01
     assert hasattr(ke_mod, "TARGET_PROCESS_ALIASES") and "justdance2017.exe" in ke_mod.TARGET_PROCESS_ALIASES
     assert hasattr(daemon, "_stage_proxy_dll") and hasattr(daemon, "_resolve_iat_via_ilt")
+    assert hasattr(daemon, "_validate_fallback_iat_rva")
+    # Exact process name matching must reject unrelated substring processes
+    assert KinectEmulatorDaemon.is_target_process_name("Legacy.exe") is True
+    assert KinectEmulatorDaemon.is_target_process_name("JustDance2017.exe") is True
+    assert KinectEmulatorDaemon.is_target_process_name("SomeAppLegacy.exe") is False
+    assert KinectEmulatorDaemon.is_target_process_name("LegacyPSCam.exe") is False
+    assert KinectEmulatorDaemon.is_target_process_name("LegacySensor.exe") is False
+    assert daemon._validate_fallback_iat_rva(None, 0, 0x9CD250, 32) is False
 
     callback_called = []
     def on_status(conn, name, pid):
@@ -1615,8 +1740,30 @@ def test_session_logger():
         assert float(sample_row[7]) == 0.25  # ay
         assert float(sample_row[8]) == 1.05  # az
 
+        # 4.1 Phase 2 Regression: CSV quoting for song titles with commas/quotes + zero row loss on immediate stop
+        import csv
+        logger.start_telemetry_tracking(source="camera", song_name='Hey Ya!, "Remix"', coach_id=1)
+        for i in range(25):
+            logger.record_telemetry_sample(
+                ts_ms=2000000 + i * 16,
+                source="camera",
+                song_name='Hey Ya!, "Remix"',
+                coach_id=1,
+                is_tracked=True,
+                ax=0.1, ay=0.2, az=1.0, speed_mps=0.5,
+                game_feedback="SUPER, COMBO",
+            )
+        logger.stop_telemetry_tracking({"samples": 25})
+        with open(logger.telemetry_csv_path, "r", encoding="utf-8", newline="") as f:
+            parsed_rows = list(csv.reader(f))
+        assert len(parsed_rows) == 26, f"Expected header + all 25 rows without batch drop, got {len(parsed_rows)}"
+        assert parsed_rows[1][3] == 'Hey Ya!, "Remix"', f"CSV quoting failed: {parsed_rows[1][3]!r}"
+        assert parsed_rows[1][26] == "SUPER, COMBO"
+
         # 5. Test session rotation / backup on second initialization
+        orig_hook = sys.excepthook
         logger.close()
+        assert sys.excepthook is not logger._exception_hook if hasattr(logger, "_exception_hook") else True
 
         logger2 = SessionLogger(logs_dir=temp_dir)
         logger2.initialize(wipe_old_logs=True, backup_previous=True)
@@ -1747,6 +1894,86 @@ def test_person_lock_subsystem():
     crouch_lms = make_person_lms(0.53, 0.84, sh_w=0.18)
     assert lock.validate_candidate(scene_bgr, crouch_lms, dt=0.016) is True, (
         "Rapid vertical crouch in place must NEVER be rejected as an impostor"
+    )
+
+    # Phase 1 Regression A: PlayerSlotState.reset_transient() must preserve DancerIdentityLock
+    # so the 18-frame impostor gate works even when inertial_coasting_enabled=False
+    from sensor.player_slot import PlayerSlotState
+    from sensor.pose_tracker import PoseTracker
+    slot_lock_test = PlayerSlotState(
+        slot_index=0,
+        cfg={"person_lock_enabled": True, "dancer_lock_enabled": True, "inertial_coasting_enabled": False},
+    )
+    for _ in range(6):
+        assert slot_lock_test.person_lock.validate_candidate(scene_bgr, dancer_lms, dt=0.016) is True
+    assert slot_lock_test.person_lock.identity.is_locked is True
+    # First impostor rejection triggers handle_missing() -> reset_transient(); identity MUST survive!
+    assert slot_lock_test.person_lock.validate_candidate(scene_bgr, impostor_lms, dt=0.016) is False
+    slot_lock_test.handle_missing(dt=0.016, frame_w=640, frame_h=400)
+    assert slot_lock_test.person_lock.identity.is_locked is True, "reset_transient() must NOT wipe DancerIdentityLock!"
+    assert slot_lock_test.person_lock.identity.rejected_streak == 1
+
+    # Phase 1 Regression B: Upper-body lower-limb synthesis (hips_visible=False) must NOT invert Left/Right legs
+    class _LM3D:
+        def __init__(self, x, y, z=0.0, vis=0.95):
+            self.x = x
+            self.y = y
+            self.z = z
+            self.visibility = vis
+            self.presence = vis
+
+    slot_ub = PlayerSlotState(slot_index=0, cfg={"person_lock_enabled": False})
+    world_ub = [_LM3D(0.0, 0.0, 0.0, vis=0.05) for _ in range(33)]
+    norm_ub = [_LM3D(0.5, 0.5, 0.0, vis=0.05) for _ in range(33)]
+    # Facing camera (un-mirrored MediaPipe convention): LEFT_SHOULDER has +X (image right), RIGHT_SHOULDER has -X (image left)
+    world_ub[0] = _LM3D(0.0, -0.55, 0.0, vis=0.95)
+    world_ub[7] = _LM3D(0.08, -0.55, 0.0, vis=0.95)
+    world_ub[8] = _LM3D(-0.08, -0.55, 0.0, vis=0.95)
+    world_ub[11] = _LM3D(0.20, -0.35, 0.0, vis=0.95)   # LEFT_SHOULDER (+X in MediaPipe -> -X in Kinect)
+    world_ub[12] = _LM3D(-0.20, -0.35, 0.0, vis=0.95)  # RIGHT_SHOULDER (-X in MediaPipe -> +X in Kinect)
+    world_ub[13] = _LM3D(0.25, -0.10, 0.0, vis=0.90)
+    world_ub[14] = _LM3D(-0.25, -0.10, 0.0, vis=0.90)
+    world_ub[15] = _LM3D(0.28, 0.05, 0.0, vis=0.90)
+    world_ub[16] = _LM3D(-0.28, 0.05, 0.0, vis=0.90)
+    world_ub[19] = _LM3D(0.30, 0.10, 0.0, vis=0.90)
+    world_ub[20] = _LM3D(-0.30, 0.10, 0.0, vis=0.90)
+
+    norm_ub[0] = _LM3D(0.50, 0.20, 0.0, vis=0.95)
+    norm_ub[7] = _LM3D(0.54, 0.20, 0.0, vis=0.95)
+    norm_ub[8] = _LM3D(0.46, 0.20, 0.0, vis=0.95)
+    norm_ub[11] = _LM3D(0.62, 0.35, 0.0, vis=0.95)  # LEFT_SHOULDER (right side of raw image)
+    norm_ub[12] = _LM3D(0.38, 0.35, 0.0, vis=0.95)  # RIGHT_SHOULDER (left side of raw image)
+    norm_ub[13] = _LM3D(0.66, 0.50, 0.0, vis=0.90)
+    norm_ub[14] = _LM3D(0.34, 0.50, 0.0, vis=0.90)
+    norm_ub[15] = _LM3D(0.68, 0.62, 0.0, vis=0.90)
+    norm_ub[16] = _LM3D(0.32, 0.62, 0.0, vis=0.90)
+    norm_ub[19] = _LM3D(0.69, 0.65, 0.0, vis=0.90)
+    norm_ub[20] = _LM3D(0.31, 0.65, 0.0, vis=0.90)
+
+    pf_ub = slot_ub.process_detection(
+        world_lm=world_ub,
+        norm_lm=norm_ub,
+        seg_mask_obj=None,
+        frame_bgr=scene_bgr,
+        frame_left=None,
+        stereo_engine=None,
+        stereo_mode="disabled",
+        extract_joints_2d_fn=lambda *a, **k: {},
+        build_body_mask_fn=lambda lms, mw, mh: np.zeros((mh, mw), dtype=np.uint8),
+        dt_infer=0.016,
+        w=640,
+        h=400,
+    )
+    assert pf_ub is not None and pf_ub.tracked
+    # Kinect space: ShoulderLeft(4) & HipLeft(12) & FootLeft(15) on negative X; Right(8, 16, 19) on positive X
+    assert pf_ub.kinect_joints[4][0] < 0.0 and pf_ub.kinect_joints[8][0] > 0.0
+    assert pf_ub.kinect_joints[12][0] < 0.0 and pf_ub.kinect_joints[16][0] > 0.0, (
+        f"Synthesized hips inverted! HipLeft={pf_ub.kinect_joints[12][0]:.3f}, HipRight={pf_ub.kinect_joints[16][0]:.3f}"
+    )
+    assert pf_ub.kinect_joints[15][0] < pf_ub.kinect_joints[19][0], "Synthesized Left/Right feet must not cross!"
+    # 2D un-mirrored pixels: px_hip_l(12) must align with px_sh_l(4) on image right (> px_hip_r)
+    assert pf_ub.pixel_joints[12][0] > pf_ub.pixel_joints[16][0], (
+        f"2D synthesized hips inverted! px_hip_l={pf_ub.pixel_joints[12][0]}, px_hip_r={pf_ub.pixel_joints[16][0]}"
     )
 
     # 3. Test Smart Body Framing PTZ (360° Spin Head Fallback & Adaptive Full-Body Zoom)
@@ -1987,8 +2214,16 @@ def test_phone_camera_webapp():
                         break
                     resp += chunk
         assert b"200 OK" in resp and b"Legacy PSCam Sensor" in resp
-        assert b"Front Camera" in resp and b"Rear Camera" in resp and b"Dim Screen" in resp
+        assert b"Front Camera" in resp and b"Rear Camera" in resp and b"Cool Mode" in resp
+        assert b"CAMERA SLEEPING" in resp and b"runThermalGovernor" in resp
+        assert b"willReadFrequently: true" not in resp, "mobile_webapp.html must not force CPU software 2D canvas"
         assert b"computeScaledDimensions" in resp and b"Standby" in resp
+
+        # Phase 2 Regression: TLS manager must have no hardcoded repo primes and enforce TLSv1.2
+        tls_src = (BASE_DIR / "sensor" / "tls_manager.py").read_text(encoding="utf-8")
+        assert "_LOCAL_RSA_P" not in tls_src and "_LOCAL_RSA_Q" not in tls_src, "Static RSA primes must not be hardcoded"
+        tls_ctx = SelfSignedTLSManager.create_ssl_context("127.0.0.1")
+        assert tls_ctx.minimum_version == ssl.TLSVersion.TLSv1_2
 
         # 3c. WSS /ws WITHOUT token must be rejected with 403 Forbidden
         with socket.create_connection(("127.0.0.1", port), timeout=3.0) as raw_ws_bad:
@@ -2051,6 +2286,23 @@ def test_phone_camera_webapp():
                 assert ok_enc
                 send_masked_frame(0x02, jpeg_buf.tobytes())
 
+                # Phase 2 Regression: malformed JSON payloads (list / bad width) must NOT drop the WebSocket
+                send_masked_frame(0x01, b"[1, 2, 3]")
+                send_masked_frame(0x01, b'{"type":"hello","width":"not_an_int","height":null}')
+
+                # Phase 2 Regression: RFC 6455 fragmented WebSocket frame (FIN=0 + continuation opcode=0x00)
+                frag_payload = json.dumps({
+                    "type": "edge_metrics",
+                    "ts_ms": 987654321,
+                    "imu_accel": [0.3, 0.4, 0.9],
+                }).encode("utf-8")
+                mid = len(frag_payload) // 2
+                mask_k = b"\x12\x34\x56\x78"
+                for idx_f, (b0_val, chunk) in enumerate([(0x01, frag_payload[:mid]), (0x80, frag_payload[mid:])]):
+                    hdr_f = struct.pack("!BB", b0_val, 0x80 | len(chunk))
+                    masked_c = bytes(b ^ mask_k[i % 4] for i, b in enumerate(chunk))
+                    wss.sendall(hdr_f + mask_k + masked_c)
+
                 # Send a future-ready edge_metrics JSON packet
                 edge_json = json.dumps({
                     "type": "edge_metrics",
@@ -2095,10 +2347,27 @@ def test_phone_camera_webapp():
 
         # Verify DeviceController status readout includes full stream metadata (lens, dims, fps, info_text)
         from ui.controllers.device_controller import DeviceController
+        from ui.controllers.session_controller import SessionController
+        from ui.controllers.camera_controller import CameraController
         dc = DeviceController()
         st_snap = dc.get_phone_cam_status()
         for req_k in ("is_connected", "info_text", "client_lens", "width", "height", "fps", "target_fps"):
             assert req_k in st_snap, f"Missing key {req_k!r} in DeviceController.get_phone_cam_status()"
+
+        # Phase 2 Regression: Non-blocking DS4 probe cache, SessionController thread tracking & CameraController warmup token
+        t_ds4 = time.perf_counter()
+        ds4_snap = dc.get_ds4_readout()
+        dt_ds4_ms = (time.perf_counter() - t_ds4) * 1000.0
+        assert isinstance(ds4_snap, dict) and "is_connected" in ds4_snap
+        assert dt_ds4_ms < 25.0, f"get_ds4_readout() must return cached snapshot without blocking UI ({dt_ds4_ms:.2f}ms)"
+        assert hasattr(dc, "is_connecting_ds4")
+        sc = SessionController()
+        assert hasattr(sc, "_tracking_thread")
+        cc = CameraController()
+        gen_before = getattr(cc, "_warmup_gen", 0)
+        cc.cancel_warmup(sync=False)
+        assert getattr(cc, "_warmup_gen", 0) == gen_before + 1, "cancel_warmup must increment cancellation generation token"
+        cc.set_closing(True)
     finally:
         srv.stop()
 
@@ -2565,29 +2834,100 @@ def test_multi_player_tracking():
     print("  -> Multi-Player (2P Duo) Pose Engine, Anti-Swap Memory & JDP2/JMI2 IPC PASSED")
 
 
+from contextlib import contextmanager
+
+
+@contextmanager
+def _isolated_test_environment():
+    """
+    Isolates %APPDATA% into a temporary directory for the full test run so the user's real
+    %APPDATA%/LegacyPSCam_Sensor/config.json, logs, TLS keys, and TCP port 8443 are never touched.
+    """
+    import json
+    import tempfile
+
+    prev_appdata = os.environ.get("APPDATA")
+    prev_portable = os.environ.get("LEGACY_PSCAM_PORTABLE")
+    prev_qt_platform = os.environ.get("QT_QPA_PLATFORM")
+
+    with tempfile.TemporaryDirectory(prefix="legacy_pscam_test_appdata_") as temp_appdata:
+        os.environ["APPDATA"] = temp_appdata
+        os.environ.pop("LEGACY_PSCAM_PORTABLE", None)
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+        app_dir = Path(temp_appdata) / "LegacyPSCam_Sensor"
+        app_dir.mkdir(parents=True, exist_ok=True)
+        seed_cfg = dict(DEFAULT_CONFIG)
+        seed_cfg["phone_cam_port"] = 0  # Ephemeral OS port prevents colliding with real port 8443
+        (app_dir / "config.json").write_text(json.dumps(seed_cfg, indent=2), encoding="utf-8")
+
+        try:
+            yield app_dir
+        finally:
+            try:
+                from sensor.phone_camera import _phone_camera_server
+                if _phone_camera_server is not None and _phone_camera_server.is_running:
+                    _phone_camera_server.stop()
+            except Exception:
+                pass
+            if prev_appdata is None:
+                os.environ.pop("APPDATA", None)
+            else:
+                os.environ["APPDATA"] = prev_appdata
+            if prev_portable is None:
+                os.environ.pop("LEGACY_PSCAM_PORTABLE", None)
+            else:
+                os.environ["LEGACY_PSCAM_PORTABLE"] = prev_portable
+            if prev_qt_platform is None:
+                os.environ.pop("QT_QPA_PLATFORM", None)
+            else:
+                os.environ["QT_QPA_PLATFORM"] = prev_qt_platform
+
+
+def run_modular_unit_tests():
+    """Discovers and executes modular unittest suites under LegacyPSCam_Sensor/tests/."""
+    import unittest
+
+    tests_dir = BASE_DIR / "tests"
+    if not tests_dir.is_dir():
+        return
+    print("[TEST] Modular unittest suites (tests/test_*.py)...")
+    loader = unittest.TestLoader()
+    suite = loader.discover(start_dir=str(tests_dir), pattern="test_*.py", top_level_dir=str(BASE_DIR))
+    runner = unittest.TextTestRunner(verbosity=1, stream=sys.stdout)
+    result = runner.run(suite)
+    if not result.wasSuccessful():
+        raise AssertionError(
+            f"Modular unittest suite failed: {len(result.failures)} failures, {len(result.errors)} errors"
+        )
+    print(f"  -> Modular unittest suites PASSED ({result.testsRun} tests)")
+
+
 def run_all_tests():
     print("==========================================")
     print("   RUNNING LEGACY PSCAM SENSOR TEST SUITE ")
     print("==========================================")
-    test_project_structure()
-    test_config()
-    test_shared_memory()
-    test_hand_anchor()
-    test_adaptive_smoother()
-    test_calibrator()
-    test_pose_tracker()
-    test_overlay()
-    test_camera_manager()
-    test_telemetry_and_adaptive_benchmark()
-    test_ps4_native_backend()
-    test_stereo_vision_engine()
-    test_ds4_controller()
-    test_kinect_emulator()
-    test_session_logger()
-    test_person_lock_subsystem()
-    test_arm_raise_gesture()
-    test_phone_camera_webapp()
-    test_multi_player_tracking()
+    with _isolated_test_environment():
+        test_project_structure()
+        test_config()
+        test_shared_memory()
+        test_hand_anchor()
+        test_adaptive_smoother()
+        test_calibrator()
+        test_pose_tracker()
+        test_overlay()
+        test_camera_manager()
+        test_telemetry_and_adaptive_benchmark()
+        test_ps4_native_backend()
+        test_stereo_vision_engine()
+        test_ds4_controller()
+        test_kinect_emulator()
+        test_session_logger()
+        test_person_lock_subsystem()
+        test_arm_raise_gesture()
+        test_phone_camera_webapp()
+        test_multi_player_tracking()
+        run_modular_unit_tests()
     print("==========================================")
     print("   ALL TESTS PASSED SUCCESSFULLY (19/19)  ")
     print("==========================================")

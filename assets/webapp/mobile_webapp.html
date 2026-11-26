@@ -56,12 +56,35 @@
   }
   video { width: 100%; height: 100%; object-fit: cover; }
   video.mirrored { transform: scaleX(-1); }
+  /* Shrinks decoder surface during Auto-Dim so Android SurfaceFlinger skips fullscreen 60/120Hz compositing */
+  video.video-eco-hidden {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 2px !important;
+    height: 2px !important;
+    opacity: 0.001 !important;
+    transform: none !important;
+    pointer-events: none !important;
+  }
   .hud-pill {
     position: absolute; top: 10px; left: 10px;
     background: rgba(7, 11, 20, 0.86);
     padding: 5px 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.12);
     font-size: 11px; font-weight: 600; color: #E2E8F0;
+    z-index: 2;
   }
+  .sleep-overlay {
+    display: none;
+    position: absolute; inset: 0;
+    background: #04070E;
+    z-index: 3;
+    flex-direction: column; align-items: center; justify-content: center;
+    text-align: center; padding: 20px; cursor: pointer;
+  }
+  .sleep-overlay.visible { display: flex; }
+  .sleep-title { font-size: 13px; font-weight: 700; color: #38BDF8; letter-spacing: 0.4px; margin-bottom: 6px; }
+  .sleep-sub { font-size: 11px; color: #94A3B8; line-height: 1.4; }
   .rotate-pill {
     display: none;
     width: 100%; max-width: 460px;
@@ -93,13 +116,18 @@
   }
   button:active { transform: scale(0.98); background: var(--ps-blue); }
   button.primary { background: var(--ps-blue); border-color: #1D4ED8; }
-  .btn-dim {
+  .btn-cool {
     grid-column: span 2;
     background: var(--card-bg);
     color: var(--text-muted);
     border: 1px solid var(--border);
   }
-  .btn-dim:active { transform: scale(0.98); background: #1E293B; color: var(--text-main); }
+  .btn-cool.active {
+    background: rgba(14, 165, 233, 0.14);
+    color: #7DD3FC;
+    border-color: rgba(56, 189, 248, 0.50);
+  }
+  .btn-cool:active { transform: scale(0.98); }
   .info-card {
     width: 100%; max-width: 460px;
     background: var(--card-bg); border: 1px solid var(--border);
@@ -125,6 +153,10 @@
   <div class="preview-wrap" id="previewWrap">
     <video id="camVideo" autoplay playsinline webkit-playsinline muted class="mirrored"></video>
     <div class="hud-pill" id="statsPill">Standby • Waiting for PC</div>
+    <div class="sleep-overlay" id="standbySleepOverlay" onclick="wakeCameraFromStandby()">
+      <div class="sleep-title">CAMERA SLEEPING (COOL STANDBY)</div>
+      <div class="sleep-sub">Sensor powered off while PC is idle to keep your phone cool.<br>Wakes automatically on Start Tracking • Tap to preview</div>
+    </div>
   </div>
 
   <div class="rotate-pill" id="rotateBanner" role="status" aria-live="polite">
@@ -147,7 +179,7 @@
   <div class="controls">
     <button id="btnLensFront" class="primary" onclick="setCameraLens('user')">Front Camera</button>
     <button id="btnLensRear" onclick="setCameraLens('environment')">Rear Camera</button>
-    <button id="btnDim" class="btn-dim" onclick="enableOledSaver()">Dim Screen</button>
+    <button id="btnCoolMode" class="btn-cool" onclick="toggleCoolMode()">Cool Mode: ON (Auto-Dim)</button>
   </div>
 
   <div class="info-card" id="infoBox">
@@ -155,43 +187,60 @@
   </div>
 
   <div id="oledOverlay" onclick="disableOledSaver()">
-    <div style="font-weight:700; color:#475569; margin-bottom:6px;">SCREEN DIMMED</div>
+    <div style="font-weight:700; color:#475569; margin-bottom:6px;">COOL MODE • SCREEN DIMMED</div>
     <div>Tap anywhere on screen to restore preview</div>
-    <div style="margin-top:8px; font-size:11px; color:#334155;">Tip: Lower phone brightness for cooler operation</div>
+    <div style="margin-top:8px; font-size:11px; color:#334155;">Tracking continues at low thermal load (re-dims automatically after 15s)</div>
   </div>
 
   <canvas id="captureCanvas" style="display:none;"></canvas>
 
 <script>
 const sessionToken = new URLSearchParams(location.search).get("t") || "";
+const isAndroid = /Android/i.test(navigator.userAgent || "");
+
 let ws = null;
 let stream = null;
 let facingMode = "user"; // "user" (Front) or "environment" (Rear)
 let targetW = 640;
 let targetH = 480;
 let targetFps = 30;
-let jpegQuality = 0.55; // Thermal-friendly quality (ideal for MediaPipe pose without overheating)
-let processingMode = "pc_video"; // "pc_video" or "phone_edge" (future edge offload)
-let streamingActive = false; // Standby until PC starts tracking (saves battery & prevents overheating)
+let effectiveFps = 30;
+let coolMode = isAndroid; // Enabled by default on Android to prevent ISP/CPU/Wi-Fi overheating
+let jpegQuality = coolMode ? 0.42 : 0.52;
+let processingMode = "pc_video"; // "pc_video" or "phone_edge"
+let streamingActive = false; // Standby until PC starts tracking
+let cameraSleeping = false;  // True when sensor track is powered down during long idle Standby
+let oledDimmed = false;
 let manualDisconnect = false;
 let reconnectAttempts = 0;
 let sentFrames = 0;
 let displayFps = 0;
 let lastFpsTick = performance.now();
+let lastWsTxTs = 0;
+let camStartSeq = 0;  // Generation counter preventing concurrent startCamera() track leaks
+let captureGen = 0;   // Generation counter invalidating in-flight toBlob callbacks on stop
 let captureTimer = null;
 let heartbeatTimer = null;
 let hiddenShutdownTimer = null;
+let standbySleepTimer = null;
+let autoDimTimer = null;
 let wakeLock = null;
+
+const STANDBY_SLEEP_MS = 25000; // Power off camera sensor after 25s of idle PC Standby
+const AUTO_DIM_MS = 15000;      // Auto-dim display after 15s of active streaming in Cool Mode
 
 const previewWrap = document.getElementById("previewWrap");
 const videoEl = document.getElementById("camVideo");
 const canvasEl = document.getElementById("captureCanvas");
-const ctx = canvasEl.getContext("2d", { alpha: false, willReadFrequently: true });
+// Keep GPU-accelerated 2D canvas (never enable software readback mode since we never call getImageData)
+const ctx = canvasEl.getContext("2d", { alpha: false });
 const statusBadge = document.getElementById("statusBadge");
 const statusText = document.getElementById("statusText");
 const statsPill = document.getElementById("statsPill");
+const sleepOverlay = document.getElementById("standbySleepOverlay");
 const btnLensFront = document.getElementById("btnLensFront");
 const btnLensRear = document.getElementById("btnLensRear");
+const btnCoolMode = document.getElementById("btnCoolMode");
 
 function detectDeviceName() {
   const ua = navigator.userAgent || "";
@@ -209,16 +258,130 @@ function setStatus(state, text) {
   statusText.textContent = text;
 }
 
+function updateCoolModeButton() {
+  if (!btnCoolMode) return;
+  if (coolMode) {
+    btnCoolMode.textContent = "Cool Mode: ON (Auto-Dim)";
+    btnCoolMode.className = "btn-cool active";
+  } else {
+    btnCoolMode.textContent = "Cool Mode: OFF (Full Quality)";
+    btnCoolMode.className = "btn-cool";
+  }
+}
+
+function toggleCoolMode() {
+  coolMode = !coolMode;
+  jpegQuality = coolMode ? Math.min(jpegQuality, 0.42) : Math.max(jpegQuality, 0.50);
+  effectiveFps = targetFps;
+  thermalStressTicks = 0;
+  thermalReliefTicks = 0;
+  updateCoolModeButton();
+  if (coolMode && streamingActive) {
+    scheduleAutoDim();
+  } else {
+    clearAutoDimTimer();
+    if (!coolMode && oledDimmed) {
+      disableOledSaver();
+    }
+  }
+  sendHello();
+}
+
 async function requestWakeLock() {
   try {
-    if ("wakeLock" in navigator) {
+    if ("wakeLock" in navigator && !document.hidden) {
+      if (wakeLock && !wakeLock.released) return;
       wakeLock = await navigator.wakeLock.request("screen");
     }
   } catch (e) {}
 }
 
+function clearStandbySleepTimer() {
+  if (standbySleepTimer) {
+    clearTimeout(standbySleepTimer);
+    standbySleepTimer = null;
+  }
+}
+
+function clearAutoDimTimer() {
+  if (autoDimTimer) {
+    clearTimeout(autoDimTimer);
+    autoDimTimer = null;
+  }
+}
+
+function scheduleAutoDim() {
+  clearAutoDimTimer();
+  if (!coolMode || !streamingActive || manualDisconnect || document.hidden || oledDimmed) return;
+  autoDimTimer = setTimeout(() => {
+    autoDimTimer = null;
+    if (coolMode && streamingActive && !manualDisconnect && !document.hidden) {
+      enableOledSaver();
+    }
+  }, AUTO_DIM_MS);
+}
+
+function scheduleStandbySleep() {
+  clearStandbySleepTimer();
+  if (streamingActive || manualDisconnect || cameraSleeping || !stream) return;
+  standbySleepTimer = setTimeout(() => {
+    standbySleepTimer = null;
+    if (!streamingActive && !manualDisconnect && stream) {
+      sleepCameraForStandby();
+    }
+  }, STANDBY_SLEEP_MS);
+}
+
+async function applyStandbyFpsThrottle(isStandby) {
+  if (!stream) return;
+  try {
+    const track = stream.getVideoTracks()[0];
+    if (!track || typeof track.applyConstraints !== "function") return;
+    if (isStandby) {
+      await track.applyConstraints({ frameRate: { ideal: 10, max: 15 } });
+    } else {
+      const minFps = Math.min(20, targetFps);
+      await track.applyConstraints({ frameRate: { min: minFps, ideal: targetFps, max: targetFps } });
+    }
+  } catch (e) {}
+}
+
+function sleepCameraForStandby() {
+  clearStandbySleepTimer();
+  stopCaptureLoop();
+  if (stream) {
+    try { stream.getTracks().forEach(t => t.stop()); } catch (e) {}
+    stream = null;
+  }
+  videoEl.srcObject = null;
+  cameraSleeping = true;
+  if (sleepOverlay) sleepOverlay.classList.add("visible");
+  setStatus("ok", "Ready • Cool Sleep");
+  statsPill.textContent = "Standby • Camera Off (Cool)";
+}
+
+function wakeCameraFromStandby() {
+  if (manualDisconnect || !cameraSleeping) return;
+  cameraSleeping = false;
+  if (sleepOverlay) sleepOverlay.classList.remove("visible");
+  startCamera();
+}
+
+function applyVideoDisplayClasses() {
+  if (!videoEl) return;
+  const classes = [];
+  if (facingMode === "user") classes.push("mirrored");
+  if (oledDimmed) classes.push("video-eco-hidden");
+  videoEl.className = classes.join(" ");
+}
+
 async function startCamera() {
   if (manualDisconnect) return;
+  const mySeq = ++camStartSeq;
+  clearStandbySleepTimer();
+  cameraSleeping = false;
+  if (sleepOverlay) sleepOverlay.classList.remove("visible");
+
   if (stream) {
     try {
       stream.getTracks().forEach(t => t.stop());
@@ -228,7 +391,7 @@ async function startCamera() {
     // Give mobile camera HAL driver 160ms to cleanly release hardware
     await new Promise(r => setTimeout(r, 160));
   }
-  if (manualDisconnect) return;
+  if (manualDisconnect || mySeq !== camStartSeq) return;
 
   // 1. Attempt device enumeration if available to pinpoint matching lens deviceId
   let targetDeviceId = null;
@@ -248,39 +411,45 @@ async function startCamera() {
       }
     } catch (e) {}
   }
+  if (manualDisconnect || mySeq !== camStartSeq) return;
 
-  // 2. Build progressive fallback constraints:
-  // First try frameRate min:24 to prevent Android Camera2 HAL from dropping AE shutter to 5-10 FPS indoors!
+  // 2. Build progressive constraints:
+  // Strictly cap sensor width/height to targetW x targetH FIRST so Android Camera2 HAL negotiates
+  // native 640x480 VGA instead of burning 3x ISP power capturing 1280x720 HD!
   const candidateConstraints = [];
-  const maxCapW = Math.max(1280, targetW);
-  const maxCapH = Math.max(720, targetH);
-  const minFps = Math.min(24, targetFps);
+  const strictMaxW = Math.max(320, targetW);
+  const strictMaxH = Math.max(240, targetH);
+  const relaxedMaxW = Math.max(1280, targetW);
+  const relaxedMaxH = Math.max(720, targetH);
+  const reqFps = streamingActive ? targetFps : Math.min(15, targetFps);
+  const minFps = streamingActive ? Math.min(20, targetFps) : 10;
 
   if (targetDeviceId) {
     candidateConstraints.push({
       audio: false,
       video: {
         deviceId: { exact: targetDeviceId },
-        width: { ideal: targetW, max: maxCapW },
-        height: { ideal: targetH, max: maxCapH },
-        frameRate: { min: minFps, ideal: targetFps }
+        width: { ideal: strictMaxW, max: strictMaxW },
+        height: { ideal: strictMaxH, max: strictMaxH },
+        frameRate: { min: minFps, ideal: reqFps, max: targetFps }
       }
     });
     candidateConstraints.push({
       audio: false,
       video: {
         deviceId: { exact: targetDeviceId },
-        width: { ideal: targetW, max: maxCapW },
-        height: { ideal: targetH, max: maxCapH },
-        frameRate: { ideal: targetFps }
+        width: { ideal: strictMaxW, max: strictMaxW },
+        height: { ideal: strictMaxH, max: strictMaxH },
+        frameRate: { ideal: reqFps }
       }
     });
     candidateConstraints.push({
       audio: false,
       video: {
         deviceId: { exact: targetDeviceId },
-        width: { ideal: targetW, max: maxCapW },
-        height: { ideal: targetH, max: maxCapH }
+        width: { ideal: targetW, max: relaxedMaxW },
+        height: { ideal: targetH, max: relaxedMaxH },
+        frameRate: { ideal: reqFps }
       }
     });
     candidateConstraints.push({
@@ -291,29 +460,40 @@ async function startCamera() {
     });
   }
 
-  // Ideal facingMode + bounded resolution + locked min FPS (beats Android indoor 5 FPS AE drop)
+  // Ideal facingMode + strict VGA/preset cap + bounded FPS
   candidateConstraints.push({
     audio: false,
     video: {
       facingMode: { ideal: facingMode },
-      width: { ideal: targetW, max: maxCapW },
-      height: { ideal: targetH, max: maxCapH },
-      frameRate: { min: minFps, ideal: targetFps }
+      width: { ideal: strictMaxW, max: strictMaxW },
+      height: { ideal: strictMaxH, max: strictMaxH },
+      frameRate: { min: minFps, ideal: reqFps, max: targetFps }
     }
   });
 
-  // Ideal facingMode + bounded resolution + ideal FPS
+  // Ideal facingMode + strict cap + ideal FPS
   candidateConstraints.push({
     audio: false,
     video: {
       facingMode: { ideal: facingMode },
-      width: { ideal: targetW, max: maxCapW },
-      height: { ideal: targetH, max: maxCapH },
-      frameRate: { ideal: targetFps }
+      width: { ideal: strictMaxW, max: strictMaxW },
+      height: { ideal: strictMaxH, max: strictMaxH },
+      frameRate: { ideal: reqFps }
     }
   });
 
-  // Direct string facingMode + resolution
+  // Fallback with relaxed max (1280x720) if device HAL only exposes HD modes
+  candidateConstraints.push({
+    audio: false,
+    video: {
+      facingMode: { ideal: facingMode },
+      width: { ideal: targetW, max: relaxedMaxW },
+      height: { ideal: targetH, max: relaxedMaxH },
+      frameRate: { ideal: reqFps }
+    }
+  });
+
+  // Direct string facingMode + ideal resolution
   candidateConstraints.push({
     audio: false,
     video: {
@@ -323,19 +503,11 @@ async function startCamera() {
     }
   });
 
-  // Ideal facingMode without resolution restrictions
+  // Ideal facingMode alone
   candidateConstraints.push({
     audio: false,
     video: {
       facingMode: { ideal: facingMode }
-    }
-  });
-
-  // Direct string facingMode alone
-  candidateConstraints.push({
-    audio: false,
-    video: {
-      facingMode: facingMode
     }
   });
 
@@ -349,12 +521,21 @@ async function startCamera() {
   let lastErr = null;
 
   for (let i = 0; i < candidateConstraints.length; i++) {
+    if (manualDisconnect || mySeq !== camStartSeq) return;
     try {
       newStream = await navigator.mediaDevices.getUserMedia(candidateConstraints[i]);
       if (newStream) break;
     } catch (err) {
       lastErr = err;
     }
+  }
+
+  // If another startCamera() superseded us or session shut down while awaiting getUserMedia, release immediately!
+  if (manualDisconnect || mySeq !== camStartSeq) {
+    if (newStream) {
+      try { newStream.getTracks().forEach(t => t.stop()); } catch (e) {}
+    }
+    return;
   }
 
   if (!newStream) {
@@ -386,15 +567,19 @@ async function startCamera() {
   }
 
   stream = newStream;
-  if (manualDisconnect) {
-    stream.getTracks().forEach(t => t.stop());
-    stream = null;
-    return;
-  }
   videoEl.srcObject = stream;
   try {
     await videoEl.play();
   } catch (e) {}
+
+  if (manualDisconnect || mySeq !== camStartSeq) {
+    if (stream === newStream) {
+      try { stream.getTracks().forEach(t => t.stop()); } catch (e) {}
+      stream = null;
+      videoEl.srcObject = null;
+    }
+    return;
+  }
 
   // Determine actual facingMode from track settings if available
   try {
@@ -405,7 +590,7 @@ async function startCamera() {
     }
   } catch (e) {}
 
-  videoEl.className = (facingMode === "user") ? "mirrored" : "";
+  applyVideoDisplayClasses();
   updateLensButtons();
   setStatus(streamingActive ? "ok" : "warn", streamingActive ? "Streaming to PC" : "Ready • Standby");
   document.getElementById("infoBox").textContent =
@@ -415,6 +600,10 @@ async function startCamera() {
   if (streamingActive) {
     lastCaptureTs = 0;
     scheduleNextCapture(0);
+    scheduleAutoDim();
+  } else {
+    applyStandbyFpsThrottle(true);
+    scheduleStandbySleep();
   }
 }
 
@@ -433,7 +622,7 @@ function updateLensButtons() {
 }
 
 async function setCameraLens(mode) {
-  if (facingMode === mode && stream) return;
+  if (facingMode === mode && stream && !cameraSleeping) return;
   facingMode = mode;
   updateLensButtons();
   await startCamera();
@@ -444,16 +633,23 @@ function toggleCameraLens() {
 }
 
 function enableOledSaver() {
+  clearAutoDimTimer();
+  oledDimmed = true;
   document.getElementById("oledOverlay").style.display = "flex";
-  if (previewWrap) previewWrap.style.opacity = "0.001";
+  applyVideoDisplayClasses();
 }
 
 function disableOledSaver() {
+  oledDimmed = false;
   document.getElementById("oledOverlay").style.display = "none";
-  if (previewWrap) previewWrap.style.opacity = "1";
+  applyVideoDisplayClasses();
+  if (coolMode && streamingActive) {
+    scheduleAutoDim();
+  }
 }
 
 function stopCaptureLoop() {
+  captureGen++;
   if (captureTimer) {
     clearTimeout(captureTimer);
     captureTimer = null;
@@ -468,7 +664,18 @@ function stopCaptureLoop() {
 function shutdownSession(reasonText, isError) {
   manualDisconnect = true;
   streamingActive = false;
+  cameraSleeping = false;
+  camStartSeq++;
+  clearStandbySleepTimer();
+  clearAutoDimTimer();
   stopCaptureLoop();
+  if (oledDimmed) {
+    oledDimmed = false;
+    const ov = document.getElementById("oledOverlay");
+    if (ov) ov.style.display = "none";
+    applyVideoDisplayClasses();
+  }
+  if (sleepOverlay) sleepOverlay.classList.remove("visible");
   if (heartbeatTimer) {
     clearInterval(heartbeatTimer);
     heartbeatTimer = null;
@@ -478,7 +685,7 @@ function shutdownSession(reasonText, isError) {
     hiddenShutdownTimer = null;
   }
   if (stream) {
-    stream.getTracks().forEach(t => t.stop());
+    try { stream.getTracks().forEach(t => t.stop()); } catch (e) {}
     stream = null;
   }
   videoEl.srcObject = null;
@@ -497,7 +704,10 @@ function shutdownSession(reasonText, isError) {
 }
 
 function computeScaledDimensions(vw, vh) {
-  const maxTarget = Math.max(targetW, targetH);
+  // Cool Mode caps transmitted stream at 480px max side (480x360 / 480x270) — ideal for MediaPipe Pose
+  // while cutting JPEG CPU encoding & Wi-Fi TLS TX power by ~55-65% on Android!
+  const requestedMax = Math.max(targetW, targetH);
+  const maxTarget = coolMode ? Math.min(480, requestedMax) : requestedMax;
   const maxSrc = Math.max(vw, vh);
   const scale = maxSrc > maxTarget ? (maxTarget / maxSrc) : 1.0;
   const outW = Math.max(2, Math.round((vw * scale) / 2) * 2);
@@ -505,18 +715,30 @@ function computeScaledDimensions(vw, vh) {
   return [outW, outH];
 }
 
+function wsSendSafe(payload) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+  try {
+    ws.send(payload);
+    lastWsTxTs = Date.now();
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
 function sendHello() {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
   const vw = videoEl.videoWidth || targetW;
   const vh = videoEl.videoHeight || targetH;
   const [outW, outH] = computeScaledDimensions(vw, vh);
-  ws.send(JSON.stringify({
+  wsSendSafe(JSON.stringify({
     type: "hello",
     device: detectDeviceName(),
     lens: facingMode,
     width: outW,
     height: outH,
     fps: targetFps,
+    cool_mode: coolMode,
     processing_mode: processingMode,
     capabilities: ["pc_video", "phone_edge"]
   }));
@@ -525,7 +747,7 @@ function sendHello() {
 // Future-ready hook: transmits pre-computed landmarks/joints/IMU when processingMode === "phone_edge"
 function sendEdgeMetricsPacket(metricsPayload) {
   if (!ws || ws.readyState !== WebSocket.OPEN || ws.bufferedAmount > 65536) return;
-  ws.send(JSON.stringify({
+  wsSendSafe(JSON.stringify({
     type: "edge_metrics",
     ts_ms: Date.now(),
     ...metricsPayload
@@ -536,10 +758,12 @@ const MAX_WS_BUFFERED = 128 * 1024; // 128 KB backpressure window (prevents Andr
 let encodingInProgress = false;
 let videoFrameCallbackId = null;
 let lastCaptureTs = 0;
-let avgEncodeMs = 15;
-let avgDrawMs = 3;
+let avgEncodeMs = 12;
+let avgDrawMs = 2;
 let camFrameCount = 0;
 let displayCamFps = 0;
+let thermalStressTicks = 0;
+let thermalReliefTicks = 0;
 
 function canUseVideoFrameCallback() {
   return !!(videoEl && typeof videoEl.requestVideoFrameCallback === "function");
@@ -547,7 +771,7 @@ function canUseVideoFrameCallback() {
 
 function scheduleNextCapture(delayMs) {
   stopCaptureLoop();
-  if (!streamingActive || manualDisconnect || document.hidden) return;
+  if (!streamingActive || manualDisconnect || document.hidden || !stream) return;
   if (canUseVideoFrameCallback()) {
     videoFrameCallbackId = videoEl.requestVideoFrameCallback(onVideoFrame);
   } else {
@@ -567,7 +791,8 @@ function onVideoFrame(now) {
 function captureTick() {
   captureTimer = null;
   if (manualDisconnect || document.hidden || !streamingActive) return;
-  const targetInterval = Math.max(14, Math.floor(1000 / Math.max(15, targetFps)));
+  const activeCapFps = Math.max(15, Math.min(targetFps, effectiveFps));
+  const targetInterval = Math.max(14, Math.floor(1000 / activeCapFps));
   const t0 = performance.now();
   const started = processCaptureFrame(t0, () => {
     const elapsed = performance.now() - t0;
@@ -580,24 +805,56 @@ function captureTick() {
   }
 }
 
+function runThermalGovernor(targetInterval) {
+  // Adaptive Thermal Governor: if mobile CPU encoding starts lagging (classic Android thermal throttling),
+  // step down effective FPS (target -> 24 -> 20 -> 15) and JPEG quality so the phone stays cool instead of spiral-throttling.
+  const minQ = coolMode ? 0.34 : 0.38;
+  const maxQ = coolMode ? 0.44 : 0.54;
+
+  if (avgEncodeMs > targetInterval * 0.78) {
+    jpegQuality = Math.max(minQ, +(jpegQuality - 0.02).toFixed(2));
+    thermalStressTicks++;
+    thermalReliefTicks = 0;
+    if (thermalStressTicks >= 3) {
+      thermalStressTicks = 0;
+      if (effectiveFps > 24) effectiveFps = 24;
+      else if (effectiveFps > 20) effectiveFps = 20;
+      else if (effectiveFps > 15) effectiveFps = 15;
+    }
+  } else if (avgEncodeMs < targetInterval * 0.42 && ws && ws.bufferedAmount < 32768) {
+    jpegQuality = Math.min(maxQ, +(jpegQuality + 0.01).toFixed(2));
+    thermalReliefTicks++;
+    thermalStressTicks = 0;
+    if (thermalReliefTicks >= 8 && effectiveFps < targetFps) {
+      thermalReliefTicks = 0;
+      effectiveFps = Math.min(targetFps, effectiveFps + 3);
+    }
+  } else {
+    thermalStressTicks = Math.max(0, thermalStressTicks - 1);
+  }
+}
+
 function processCaptureFrame(now, onDone) {
   if (!ws || ws.readyState !== WebSocket.OPEN) return false;
   if (processingMode !== "pc_video") return false;
   if (encodingInProgress || videoEl.readyState < 2 || !videoEl.videoWidth) return false;
 
-  const targetInterval = Math.max(14, Math.floor(1000 / Math.max(15, targetFps)));
-  // Respect target FPS cap with 2ms tolerance to avoid beat-frequency frame drops
+  const activeCapFps = Math.max(15, Math.min(targetFps, effectiveFps));
+  const targetInterval = Math.max(14, Math.floor(1000 / activeCapFps));
+  // Respect effective FPS cap with 2ms tolerance to avoid beat-frequency frame drops
   if (lastCaptureTs > 0 && (now - lastCaptureTs) < (targetInterval - 2)) {
     return false;
   }
 
   // Backpressure guard: allow 1-2 frames in flight, drop only if Wi-Fi queue is genuinely congested
+  const minQ = coolMode ? 0.34 : 0.38;
   if (ws.bufferedAmount > MAX_WS_BUFFERED) {
-    jpegQuality = Math.max(0.38, +(jpegQuality - 0.03).toFixed(2));
+    jpegQuality = Math.max(minQ, +(jpegQuality - 0.03).toFixed(2));
     return false;
   }
 
   lastCaptureTs = now;
+  const myGen = captureGen;
   const t0 = performance.now();
   const srcW = videoEl.videoWidth;
   const srcH = videoEl.videoHeight;
@@ -608,56 +865,78 @@ function processCaptureFrame(now, onDone) {
   }
 
   encodingInProgress = true;
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = "low";
-  ctx.drawImage(videoEl, 0, 0, outW, outH);
-  const drawMs = performance.now() - t0;
-  avgDrawMs = avgDrawMs * 0.8 + drawMs * 0.2;
+  try {
+    const needScale = (srcW !== outW || srcH !== outH);
+    ctx.imageSmoothingEnabled = needScale;
+    if (needScale) ctx.imageSmoothingQuality = "low";
+    ctx.drawImage(videoEl, 0, 0, outW, outH);
+    const drawMs = performance.now() - t0;
+    avgDrawMs = avgDrawMs * 0.8 + drawMs * 0.2;
 
-  canvasEl.toBlob(blob => {
-    encodingInProgress = false;
-    const encodeMs = performance.now() - t0;
-    avgEncodeMs = avgEncodeMs * 0.8 + encodeMs * 0.2;
+    canvasEl.toBlob(blob => {
+      if (myGen !== captureGen) return;
+      encodingInProgress = false;
+      const encodeMs = performance.now() - t0;
+      avgEncodeMs = avgEncodeMs * 0.8 + encodeMs * 0.2;
 
-    // Adaptive JPEG quality: keep frame rate smooth on budget Android CPUs & 2.4 GHz Wi-Fi
-    if (avgEncodeMs > targetInterval * 0.85) {
-      jpegQuality = Math.max(0.38, +(jpegQuality - 0.02).toFixed(2));
-    } else if (avgEncodeMs < targetInterval * 0.45 && ws.bufferedAmount < 32768) {
-      jpegQuality = Math.min(0.55, +(jpegQuality + 0.01).toFixed(2));
-    }
-
-    if (blob && streamingActive && !manualDisconnect && !document.hidden && ws && ws.readyState === WebSocket.OPEN && ws.bufferedAmount <= MAX_WS_BUFFERED * 2) {
-      ws.send(blob);
-      sentFrames++;
-      const tickNow = performance.now();
-      if (tickNow - lastFpsTick >= 1000) {
-        const dt = tickNow - lastFpsTick;
-        displayFps = Math.round((sentFrames * 1000) / dt);
-        displayCamFps = Math.round((camFrameCount * 1000) / dt);
-        sentFrames = 0;
-        camFrameCount = 0;
-        lastFpsTick = tickNow;
-        const camTag = canUseVideoFrameCallback() ? ` cam:${displayCamFps}` : "";
-        statsPill.textContent = `${outW}x${outH} • ${displayFps} FPS (${srcW}x${srcH}${camTag} d:${Math.round(avgDrawMs)}ms e:${Math.round(avgEncodeMs)}ms)`;
+      if (blob && streamingActive && !manualDisconnect && !document.hidden && ws && ws.readyState === WebSocket.OPEN && ws.bufferedAmount <= MAX_WS_BUFFERED * 2) {
+        if (wsSendSafe(blob)) {
+          sentFrames++;
+        }
+        const tickNow = performance.now();
+        if (tickNow - lastFpsTick >= 1000) {
+          const dt = tickNow - lastFpsTick;
+          displayFps = Math.round((sentFrames * 1000) / dt);
+          displayCamFps = Math.round((camFrameCount * 1000) / dt);
+          sentFrames = 0;
+          camFrameCount = 0;
+          lastFpsTick = tickNow;
+          runThermalGovernor(targetInterval);
+          if (!oledDimmed) {
+            const ecoTag = coolMode ? " COOL" : "";
+            const thrTag = (effectiveFps < targetFps) ? ` gov:${effectiveFps}` : "";
+            const camTag = canUseVideoFrameCallback() ? ` cam:${displayCamFps}` : "";
+            statsPill.textContent = `${outW}x${outH} • ${displayFps} FPS${ecoTag}${thrTag} (${srcW}x${srcH}${camTag} e:${Math.round(avgEncodeMs)}ms)`;
+          }
+        }
       }
-    }
-    if (typeof onDone === "function") onDone();
-  }, "image/jpeg", jpegQuality);
+      if (typeof onDone === "function") onDone();
+    }, "image/jpeg", jpegQuality);
+  } catch (err) {
+    encodingInProgress = false;
+    return false;
+  }
   return true;
 }
 
 function updateStreamingState(active) {
   streamingActive = !!active;
   if (streamingActive) {
+    clearStandbySleepTimer();
+    effectiveFps = targetFps;
+    thermalStressTicks = 0;
+    thermalReliefTicks = 0;
     setStatus("ok", "Streaming to PC");
     sentFrames = 0;
     lastFpsTick = performance.now();
-    scheduleNextCapture(10);
+    if (!stream || cameraSleeping) {
+      startCamera();
+    } else {
+      applyStandbyFpsThrottle(false);
+      scheduleNextCapture(10);
+      scheduleAutoDim();
+    }
   } else {
     stopCaptureLoop();
+    clearAutoDimTimer();
+    if (oledDimmed) disableOledSaver();
     if (ws && ws.readyState === WebSocket.OPEN) {
-      setStatus("ok", "Ready (Standby)");
-      statsPill.textContent = "Standby • Waiting for PC";
+      setStatus("ok", cameraSleeping ? "Ready • Cool Sleep" : "Ready (Standby)");
+      statsPill.textContent = cameraSleeping ? "Standby • Camera Off (Cool)" : "Standby • Waiting for PC";
+    }
+    if (stream && !cameraSleeping) {
+      applyStandbyFpsThrottle(true);
+      scheduleStandbySleep();
     }
   }
 }
@@ -665,8 +944,11 @@ function updateStreamingState(active) {
 function startHeartbeat() {
   if (heartbeatTimer) clearInterval(heartbeatTimer);
   heartbeatTimer = setInterval(() => {
-    if (!manualDisconnect && !document.hidden && ws && ws.readyState === WebSocket.OPEN && !streamingActive) {
-      try { ws.send(JSON.stringify({ type: "ping", ts_ms: Date.now() })); } catch (e) {}
+    if (manualDisconnect || document.hidden || !ws || ws.readyState !== WebSocket.OPEN) return;
+    // Send lightweight keepalive whenever no video/text traffic left the phone in the last 2s
+    // (covers both Standby Cool Sleep and temporary camera stalls during lens switches!)
+    if ((Date.now() - lastWsTxTs) >= 1900) {
+      wsSendSafe(JSON.stringify({ type: "ping", ts_ms: Date.now() }));
     }
   }, 2000);
 }
@@ -675,19 +957,24 @@ function connectWebSocket() {
   if (manualDisconnect || document.hidden) return;
   const proto = (location.protocol === "https:") ? "wss:" : "ws:";
   const tokenQuery = sessionToken ? `?t=${encodeURIComponent(sessionToken)}` : "";
-  ws = new WebSocket(`${proto}//${location.host}/ws${tokenQuery}`);
-  ws.binaryType = "arraybuffer";
+  const sock = new WebSocket(`${proto}//${location.host}/ws${tokenQuery}`);
+  ws = sock;
+  sock.binaryType = "arraybuffer";
 
-  ws.onopen = () => {
+  sock.onopen = () => {
+    if (ws !== sock) return;
     reconnectAttempts = 0;
+    lastWsTxTs = Date.now();
     sendHello();
     startHeartbeat();
     updateStreamingState(streamingActive);
   };
 
-  ws.onmessage = (ev) => {
+  sock.onmessage = (ev) => {
+    if (ws !== sock) return;
     try {
       const msg = JSON.parse(ev.data);
+      if (!msg || typeof msg !== "object") return;
       if (msg.type === "config") {
         let needRestartCam = false;
         if (msg.width && msg.height && (msg.width !== targetW || msg.height !== targetH)) {
@@ -697,6 +984,7 @@ function connectWebSocket() {
         }
         if (msg.fps && msg.fps !== targetFps) {
           targetFps = msg.fps;
+          effectiveFps = targetFps;
           needRestartCam = true;
         }
         if (msg.lens && msg.lens !== facingMode && (!stream || msg.force_lens)) {
@@ -709,14 +997,16 @@ function connectWebSocket() {
         if (typeof msg.active === "boolean") {
           updateStreamingState(msg.active);
         }
-        if (needRestartCam) startCamera();
+        if (needRestartCam && !cameraSleeping) startCamera();
       } else if (msg.type === "disconnect") {
         shutdownSession("Disconnected by PC. Scan the new QR Code to connect again.", false);
       }
     } catch (e) {}
   };
 
-  ws.onclose = (ev) => {
+  sock.onclose = (ev) => {
+    // Ignore stale close events from a superseded socket
+    if (ws !== sock) return;
     stopCaptureLoop();
     if (manualDisconnect || ev.code === 1000 || ev.code === 4001) {
       shutdownSession("Session ended. Scan the current QR Code on PC to connect again.", false);
@@ -731,7 +1021,8 @@ function connectWebSocket() {
     setTimeout(connectWebSocket, 2000);
   };
 
-  ws.onerror = () => {
+  sock.onerror = () => {
+    if (ws !== sock) return;
     if (!manualDisconnect) setStatus("err", "Connection Lost");
   };
 }
@@ -746,6 +1037,7 @@ window.addEventListener("beforeunload", () => {
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
     stopCaptureLoop();
+    clearAutoDimTimer();
     if (hiddenShutdownTimer) clearTimeout(hiddenShutdownTimer);
     hiddenShutdownTimer = setTimeout(() => {
       if (document.hidden) {
@@ -757,8 +1049,17 @@ document.addEventListener("visibilitychange", () => {
       clearTimeout(hiddenShutdownTimer);
       hiddenShutdownTimer = null;
     }
+    // Re-acquire screen WakeLock (browsers automatically release it on tab hide)
+    if (!manualDisconnect) {
+      requestWakeLock();
+    }
     if (!manualDisconnect && streamingActive && ws && ws.readyState === WebSocket.OPEN) {
-      scheduleNextCapture(20);
+      if (!stream || cameraSleeping) {
+        startCamera();
+      } else {
+        scheduleNextCapture(20);
+        scheduleAutoDim();
+      }
     }
   }
 });
@@ -790,6 +1091,7 @@ if (videoEl) {
 }
 
 document.getElementById("deviceLabel").textContent = detectDeviceName();
+updateCoolModeButton();
 updateOrientationBanner();
 startCamera().then(() => { updateOrientationBanner(); if (!manualDisconnect) connectWebSocket(); });
 </script>

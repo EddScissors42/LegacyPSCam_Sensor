@@ -127,8 +127,9 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin, UIDeviceReadoutMixin):
     tracking_finished_signal = Signal(bool, str)
     model_download_signal = Signal(str, int, str)
     phone_firewall_signal = Signal(bool, str)
+    pre_tracking_validated_signal = Signal(bool, str, str, str)
 
-    def __init__(self, parent=None, *args, auto_discover=True, controller: Optional[SensorAppController] = None, **kwargs):
+    def __init__(self, parent=None, *args, auto_discover=True, controller: Optional[SensorAppController] = None, cli_overrides: Optional[dict] = None, **kwargs):
         if parent is not None and not isinstance(parent, QWidget):
             parent = None
         super().__init__(parent)
@@ -148,6 +149,8 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin, UIDeviceReadoutMixin):
         # Configuration and decoupled application controller facade
         self.cfg_mgr = ConfigManager()
         self.cfg = self.cfg_mgr.config
+        if cli_overrides:
+            self.cfg.update(cli_overrides)
         # Stereo Vision is always enabled by default on PlayStation 4 Camera
         if str(self.cfg.get("stereo_mode", "")).strip().lower() in ("", "disabled", "false", "0"):
             self.cfg["stereo_mode"] = "sparse_metric"
@@ -162,7 +165,6 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin, UIDeviceReadoutMixin):
         self.kinect_emulator = self.controller.session.kinect_emulator
 
         self._current_pscam_state = "DISCONNECTED"
-        self._is_refreshing_cams = False
         self.active_tab = "video"
         self.current_calib_preset = self.cfg.get("tracking_preset", "competitive")
         if self.current_calib_preset == "stable":
@@ -174,7 +176,7 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin, UIDeviceReadoutMixin):
             self.cfg["pose_model"] = "full"
         self.is_adv_calib_open = False
         self._is_closing = False
-        self._is_connecting_ds4 = False
+        self._is_preparing_tracking = False
         self.calib_cards = {}
 
         self._load_pixmaps()
@@ -190,6 +192,7 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin, UIDeviceReadoutMixin):
         self.tracking_finished_signal.connect(self._on_tracking_finished)
         self.model_download_signal.connect(self._on_model_download_progress)
         self.phone_firewall_signal.connect(self._on_phone_firewall_finished)
+        self.pre_tracking_validated_signal.connect(self._on_pre_tracking_validated)
 
         # Initial mode setup (already calls _update_pscam_status for camera modes)
         initial_mode = self.cfg.get("camera_mode", "pscam")
@@ -241,51 +244,71 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin, UIDeviceReadoutMixin):
 
         threading.Thread(target=_warm_worker, daemon=True, name="MediaPipePrewarmThread").start()
 
+    @property
+    def _is_refreshing_cams(self) -> bool:
+        return bool(getattr(self.controller.camera, "_is_refreshing_cams", False))
+
+    @property
+    def _is_connecting_ds4(self) -> bool:
+        return bool(getattr(self.controller.devices, "is_connecting_ds4", False))
+
     def _ensure_pose_model_async(self, variant: str):
         """
         Ensures the requested AI model variant (`lite` or `full`) is available in the local or
-        persistent `%APPDATA%\\LegacyPSCam_Sensor\\models` cache without blocking the Qt UI thread.
+        persistent `%APPDATA%\\LegacyPSCam_Sensor\\models` cache without blocking the Qt UI thread
+        (including SHA-256 verification).
         """
         if getattr(self, "_is_closing", False):
             return
         try:
             from sensor.model_manager import ModelManager
             norm = ModelManager.normalize_variant(variant)
-            if ModelManager.is_model_ready(norm):
-                return
         except Exception:
             return
 
         if getattr(self, "_downloading_model_variant", None) == norm:
             return
         self._downloading_model_variant = norm
-        self.model_download_signal.emit(norm, 0, "downloading")
+
+        def _safe_emit(v: str, pct: int, status: str):
+            if getattr(self, "_is_closing", False):
+                return
+            try:
+                self.model_download_signal.emit(v, pct, status)
+            except RuntimeError:
+                pass
 
         def _dl_worker():
             try:
                 from sensor.model_manager import ModelManager
+                if ModelManager.is_model_ready(norm):
+                    return
+                _safe_emit(norm, 0, "downloading")
                 last_pct = [-1]
 
                 def _cb(done: int, total: int):
                     pct = int(min(100, round((done * 100.0) / max(1, total))))
                     if pct != last_pct[0]:
                         last_pct[0] = pct
-                        self.model_download_signal.emit(norm, pct, "downloading")
+                        _safe_emit(norm, pct, "downloading")
 
                 res = ModelManager.download_model(norm, progress_cb=_cb)
                 if res is not None:
-                    self.model_download_signal.emit(norm, 100, "done")
+                    _safe_emit(norm, 100, "done")
                 else:
-                    self.model_download_signal.emit(norm, -1, "offline")
+                    _safe_emit(norm, -1, "offline")
             except Exception:
-                self.model_download_signal.emit(norm, -1, "offline")
+                _safe_emit(norm, -1, "offline")
             finally:
-                self._downloading_model_variant = None
+                if getattr(self, "_downloading_model_variant", None) == norm:
+                    self._downloading_model_variant = None
 
         threading.Thread(target=_dl_worker, daemon=True, name=f"ModelDownload-{norm}").start()
 
     @Slot(str, int, str)
     def _on_model_download_progress(self, variant: str, pct: int, status: str):
+        if getattr(self, "_is_closing", False):
+            return
         if not hasattr(self, "model_dl_box") or not hasattr(self, "lbl_model_dl_status"):
             return
         label = "Balanced (Full AI)" if variant == "full" else "Competitive (Lite AI)"
@@ -305,7 +328,13 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin, UIDeviceReadoutMixin):
                 f"{label} model cached in %APPDATA% — Ready for instant launch!"
             )
             self.model_dl_box.setVisible(True)
-            QTimer.singleShot(3000, lambda: self.model_dl_box.setVisible(False) if hasattr(self, "model_dl_box") else None)
+            QTimer.singleShot(
+                3000,
+                self,
+                lambda: self.model_dl_box.setVisible(False)
+                if (not getattr(self, "_is_closing", False) and hasattr(self, "model_dl_box"))
+                else None,
+            )
         else:
             self.model_dl_box.setStyleSheet(
                 "QFrame#modelDownloadBox { background-color: #FEF3C7; border: 1px solid #FCD34D; border-radius: 8px; }"
@@ -1140,6 +1169,10 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin, UIDeviceReadoutMixin):
             self._update_video_view_visibility()
             return
 
+        if mode in ("phone_cam", "ds4"):
+            self._update_video_view_visibility()
+            return
+
         if mode == "pscam":
             ps_cams = [c for c in cams if c.is_pscam]
             if ps_cams:
@@ -1353,7 +1386,7 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin, UIDeviceReadoutMixin):
             fw = self.controller.devices.get_phone_cam_firewall_status()
             port = fw.get("port", 8443)
             if fw.get("port_rule_allowed"):
-                self.btn_phone_firewall.setText("Firewall OK ✓")
+                self.btn_phone_firewall.setText("Firewall OK")
                 self.btn_phone_firewall.setStyleSheet(
                     f"background-color: #ECFDF5; color: #047857; border: 1px solid #6EE7B7; "
                     f"border-radius: 6px; padding: 0 10px; font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold;"
@@ -1385,12 +1418,21 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin, UIDeviceReadoutMixin):
         if hasattr(self, "btn_phone_firewall"):
             self.btn_phone_firewall.setEnabled(False)
             self.btn_phone_firewall.setText("Allowing...")
-        self.controller.devices.allow_phone_cam_firewall_async(
-            callback=lambda ok, msg: self.phone_firewall_signal.emit(bool(ok), str(msg))
-        )
+
+        def _fw_done(ok: bool, msg: str):
+            if getattr(self, "_is_closing", False):
+                return
+            try:
+                self.phone_firewall_signal.emit(bool(ok), str(msg))
+            except RuntimeError:
+                pass
+
+        self.controller.devices.allow_phone_cam_firewall_async(callback=_fw_done)
 
     @Slot(bool, str)
     def _on_phone_firewall_finished(self, ok: bool, msg: str):
+        if getattr(self, "_is_closing", False):
+            return
         if hasattr(self, "btn_phone_firewall"):
             self.btn_phone_firewall.setEnabled(True)
         self._refresh_phone_cam_firewall_button()
@@ -1420,7 +1462,13 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin, UIDeviceReadoutMixin):
             cb.setText(url)
         if hasattr(self, "btn_copy_phone_url"):
             self.btn_copy_phone_url.setText("Copied!")
-            QTimer.singleShot(1500, lambda: self.btn_copy_phone_url.setText("Copy URL") if hasattr(self, "btn_copy_phone_url") else None)
+            QTimer.singleShot(
+                1500,
+                self,
+                lambda: self.btn_copy_phone_url.setText("Copy URL")
+                if (not getattr(self, "_is_closing", False) and hasattr(self, "btn_copy_phone_url"))
+                else None,
+            )
 
     def _on_phone_cam_settings_changed(self):
         if not hasattr(self, "cb_phone_res") or not hasattr(self, "cb_phone_fps"):
@@ -1491,14 +1539,19 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin, UIDeviceReadoutMixin):
                 btn.setText("Searching...")
 
         def _done(ip, port, code):
-            QtCore.QMetaObject.invokeMethod(
-                self,
-                "_on_vphone_discover_finished",
-                Qt.ConnectionType.QueuedConnection,
-                QtCore.Q_ARG(str, ip),
-                QtCore.Q_ARG(int, port),
-                QtCore.Q_ARG(str, code),
-            )
+            if getattr(self, "_is_closing", False):
+                return
+            try:
+                QtCore.QMetaObject.invokeMethod(
+                    self,
+                    "_on_vphone_discover_finished",
+                    Qt.ConnectionType.QueuedConnection,
+                    QtCore.Q_ARG(str, ip),
+                    QtCore.Q_ARG(int, port),
+                    QtCore.Q_ARG(str, code),
+                )
+            except (RuntimeError, Exception):
+                pass
 
         self.controller.devices.discover_vphone_server_async(callback=_done)
 
@@ -1694,14 +1747,34 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin, UIDeviceReadoutMixin):
             QMessageBox.warning(self, "PlayStation Camera Backend", msg)
 
     def _start_tracking(self):
-        if self.is_tracking_active:
+        if self.is_tracking_active or getattr(self, "_is_preparing_tracking", False):
             return
         if hasattr(self, "btn_start") and not self.btn_start.isEnabled():
             return
 
         mode = self.cfg.get("camera_mode", "pscam")
-        ok, title, msg = self.controller.validate_pre_tracking(mode)
+        self._is_preparing_tracking = True
+        if hasattr(self, "btn_start"):
+            self.btn_start.setText("PREPARING DEVICE...")
+            self.btn_start.setEnabled(False)
+
+        def _on_val_done(ok: bool, title: str, msg: str):
+            if getattr(self, "_is_closing", False):
+                return
+            try:
+                self.pre_tracking_validated_signal.emit(bool(ok), str(title), str(msg), str(mode))
+            except RuntimeError:
+                pass
+
+        self.controller.validate_pre_tracking_async(mode, callback=_on_val_done)
+
+    @Slot(bool, str, str, str)
+    def _on_pre_tracking_validated(self, ok: bool, title: str, msg: str, mode: str):
+        self._is_preparing_tracking = False
+        if getattr(self, "_is_closing", False):
+            return
         if not ok:
+            self._update_start_button_state()
             QMessageBox.warning(self, title, msg)
             return
 
@@ -1709,6 +1782,7 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin, UIDeviceReadoutMixin):
 
         started = self.controller.start_tracking()
         if not started:
+            self._update_start_button_state()
             return
 
         if hasattr(self, "lbl_vphone_accel"):
@@ -1719,6 +1793,8 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin, UIDeviceReadoutMixin):
 
     @Slot(bool, str)
     def _on_tracking_finished(self, success: bool, err_msg: str):
+        if getattr(self, "_is_closing", False):
+            return
         self.is_tracking_active = False
         if hasattr(self, "lbl_vphone_accel"):
             self.lbl_vphone_accel.setVisible(False)
@@ -1726,20 +1802,39 @@ class LegacySensorQtGUI(QMainWindow, UIPagesMixin, UIDeviceReadoutMixin):
         self.showNormal()
         self.activateWindow()
         self._refresh_cameras()
-        if self.cfg.get("camera_mode") == "phone_cam":
+        mode = self.cfg.get("camera_mode", "pscam")
+        if mode == "phone_cam":
             self._update_phone_cam_status()
             if not get_phone_camera_server().is_client_connected:
                 self._refresh_phone_cam_qr(rotate_token=False)
 
         if not success:
             detail = f"\n\nDetails: {err_msg}" if err_msg else ""
+            if mode == "ds4":
+                tips = (
+                    "• Verify the DualShock 4 is connected via USB or paired via Windows Bluetooth.\n"
+                    "• Make sure no other input remapper (e.g., DS4Windows) is holding exclusive HID access."
+                )
+            elif mode == "phone_cam":
+                tips = (
+                    "• Keep the Phone Camera WebApp open on your smartphone browser.\n"
+                    "• Ensure PC and smartphone are on the same Wi-Fi network and Windows Firewall allows the port."
+                )
+            elif mode == "webcam":
+                tips = (
+                    "• Check if the webcam is properly connected to USB.\n"
+                    "• Make sure no other application (OBS, Zoom, Discord) is locking the webcam."
+                )
+            else:
+                tips = (
+                    "• Check if the PlayStation 4 Camera is connected to a USB 3.0 port.\n"
+                    "• Verify that the WinUSB driver association is active.\n"
+                    "• Make sure no other application is locking the camera."
+                )
             QMessageBox.critical(
                 self,
                 "Tracking Initialization Failed",
-                f"Could not start tracking with the selected device.{detail}\n\n"
-                "• Check if camera is connected to USB.\n"
-                "• Verify that PSCam4Win driver is active.\n"
-                "• Make sure no other application is locking the camera."
+                f"Could not start tracking with the selected device.{detail}\n\n{tips}",
             )
 
     def _save_settings(self):

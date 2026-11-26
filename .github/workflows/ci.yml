@@ -1,0 +1,44 @@
+name: CI — Tests & Verification
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+
+jobs:
+  test-windows:
+    name: Test Suite & Modular Unit Tests (Windows)
+    runs-on: windows-latest
+
+    env:
+      QT_QPA_PLATFORM: offscreen
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Integrated Test Suite (19/19 + Modular Suites)
+        run: |
+          python -u test_suite.py
+
+      - name: Run Modular Unittest Discovery
+        run: |
+          python -m unittest discover -s tests -v
+
+      - name: CLI Smoke Test (--version & --help)
+        run: |
+          python main.py --version
+          python main.py --help

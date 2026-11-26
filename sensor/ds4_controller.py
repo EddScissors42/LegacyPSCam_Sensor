@@ -171,6 +171,9 @@ def _init_win32_apis():
     hid = ctypes.WinDLL("hid", use_last_error=True)
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 
+    hid.HidD_GetHidGuid.restype = None
+    hid.HidD_GetHidGuid.argtypes = [ctypes.c_void_p]
+
     hid.HidD_GetPreparsedData.restype = wintypes.BOOL
     hid.HidD_GetPreparsedData.argtypes = [wintypes.HANDLE, ctypes.c_void_p]
 
@@ -200,6 +203,38 @@ def _init_win32_apis():
         ctypes.c_void_p,
         wintypes.ULONG,
     ]
+
+    kernel32.CreateFileW.restype = wintypes.HANDLE
+    kernel32.CreateFileW.argtypes = [
+        ctypes.c_wchar_p,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    ]
+
+    kernel32.ReadFile.restype = wintypes.BOOL
+    kernel32.ReadFile.argtypes = [
+        wintypes.HANDLE,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD),
+        ctypes.c_void_p,
+    ]
+
+    kernel32.WriteFile.restype = wintypes.BOOL
+    kernel32.WriteFile.argtypes = [
+        wintypes.HANDLE,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD),
+        ctypes.c_void_p,
+    ]
+
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
 
     kernel32.CancelIoEx.restype = wintypes.BOOL
     kernel32.CancelIoEx.argtypes = [wintypes.HANDLE, ctypes.c_void_p]
@@ -445,7 +480,7 @@ class DS4Controller:
         self._device_path: str = ""
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._input_len: int = 64
         self._output_len: int = 32
         self._feature_len: int = 64
@@ -639,21 +674,76 @@ class DS4Controller:
             threading.Thread(target=_stop_initial_rumble, daemon=True).start()
             return True
 
+    @staticmethod
+    def quantize_imu_scale_lsb(raw_mag: float) -> float:
+        """Maps a static 1G raw accelerometer magnitude to the nearest DS4/clone LSB-per-G tier."""
+        if raw_mag > 12000.0:
+            return 16384.0
+        if raw_mag > 6000.0:
+            return 8192.0
+        if raw_mag > 3000.0:
+            return 4096.0
+        return 2048.0
+
+    @staticmethod
+    def update_imu_scale_calibration(
+        raw_mag: float,
+        scale_lsb: float,
+        scale_locked: bool,
+        rest_samples: List[float],
+        prev_mag: Optional[float],
+        from_candidate_scan: bool = False,
+        lock_sample_count: int = 12,
+    ) -> Tuple[float, bool, Optional[float]]:
+        """
+        Locks IMU LSB/G scale once during a brief stillness window so peak dance swings
+        (>1.46G on 8192 LSB/G Sony DS4) never corrupt the active scale mid-song.
+        """
+        if scale_locked:
+            return scale_lsb, True, prev_mag
+
+        if from_candidate_scan and 1500.0 <= raw_mag <= 35000.0:
+            scale_lsb = DS4Controller.quantize_imu_scale_lsb(raw_mag)
+
+        if 1500.0 <= raw_mag <= 22000.0:
+            if prev_mag is not None and abs(raw_mag - prev_mag) <= 600.0:
+                rest_samples.append(raw_mag)
+                if len(rest_samples) >= lock_sample_count:
+                    ordered = sorted(rest_samples)
+                    med = ordered[len(ordered) // 2]
+                    scale_lsb = DS4Controller.quantize_imu_scale_lsb(med)
+                    scale_locked = True
+            else:
+                rest_samples.clear()
+            prev_mag = raw_mag
+
+        return scale_lsb, scale_locked, prev_mag
+
     def disconnect(self) -> None:
-        """Safely shuts down HID polling, turns off the lightbar, and closes the handle."""
+        """Safely shuts down HID polling, turns off the lightbar, joins worker thread, and closes handle."""
         self._stop_event.set()
         with self._lock:
-            if self._handle:
+            h_active = self._handle
+            if h_active:
                 try:
-                    # Turn off lightbar and rumble
+                    # Turn off lightbar and rumble before cancelling reads
                     self._send_output_report(r=0, g=0, b=0, rumble_small=0, rumble_large=0)
                 except Exception:
                     pass
                 try:
-                    # Cancel any pending synchronous ReadFile calls
-                    _kernel32.CancelIoEx(self._handle, None)
+                    # Cancel any pending synchronous ReadFile calls so the worker exits promptly
+                    _kernel32.CancelIoEx(h_active, None)
                 except Exception:
                     pass
+            worker = self._thread
+
+        # Join worker thread BEFORE closing the Win32 handle to prevent handle UAF/recycling races
+        if worker and worker.is_alive() and worker is not threading.current_thread():
+            worker.join(timeout=1.0)
+
+        with self._lock:
+            self._thread = None
+            if self._handle:
                 try:
                     _kernel32.CloseHandle(self._handle)
                 except Exception:
@@ -666,10 +756,6 @@ class DS4Controller:
             self.state.imu_frozen = False
             self.state.controller_name = "DualShock 4"
             self.is_usb = False
-
-        if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=0.6)
-            self._thread = None
 
     def set_lightbar(self, r: int, g: int, b: int) -> None:
         """Updates the lightbar RGB color on the controller."""
@@ -825,8 +911,26 @@ class DS4Controller:
     def _worker_loop(self) -> None:
         """
         High-frequency background reader supporting Report 0x01, Report 0x11..0x19,
-        Report 0x31, and clone reports with adaptive IMU offset & scale detection.
+        Report 0x31, and clone reports with rest-locked IMU offset & scale detection.
         """
+        try:
+            self._run_worker_poll_loop()
+        finally:
+            with self._lock:
+                # Close leaked handle if loop exited due to unexpected physical disconnect
+                if self._handle and not self._stop_event.is_set():
+                    try:
+                        _kernel32.CloseHandle(self._handle)
+                    except Exception:
+                        pass
+                    self._handle = None
+                self.state.connected = False
+                self.state.is_usb = False
+                self.state.sample_rate_hz = 0.0
+                self.state.imu_frozen = False
+                self.is_usb = False
+
+    def _run_worker_poll_loop(self) -> None:
         buf_len = max(64, self._input_len)
         buf = (ctypes.c_ubyte * buf_len)()
         bytes_read = wintypes.DWORD()
@@ -839,17 +943,23 @@ class DS4Controller:
         samples_time_start = time.perf_counter()
         consecutive_zero_accel = 0
 
-        # Dynamic IMU offset & LSB scale detector for clones
+        # Rest-locked IMU offset & LSB scale detector for Sony DS4 & clones
         detected_imu_offset: Optional[int] = None
         detected_accel_is_block_a: bool = False
         detected_scale_lsb: float = 8192.0
+        scale_locked: bool = False
+        rest_mag_samples: List[float] = []
+        prev_raw_mag: Optional[float] = None
 
         self.state.connected = True
         self.state.is_usb = self.is_usb
 
         while not self._stop_event.is_set():
+            h_cur = self._handle
+            if not h_cur:
+                break
             res = _kernel32.ReadFile(
-                self._handle, ctypes.byref(buf), buf_len, ctypes.byref(bytes_read), None
+                h_cur, ctypes.byref(buf), buf_len, ctypes.byref(bytes_read), None
             )
             if not res or bytes_read.value == 0:
                 # Device disconnected or error
@@ -965,14 +1075,14 @@ class DS4Controller:
                             target_mag = mag_a
 
                         if found_candidate:
-                            if target_mag > 12000.0:
-                                detected_scale_lsb = 16384.0
-                            elif target_mag > 6000.0:
-                                detected_scale_lsb = 8192.0
-                            elif target_mag > 3000.0:
-                                detected_scale_lsb = 4096.0
-                            else:
-                                detected_scale_lsb = 2048.0
+                            detected_scale_lsb, scale_locked, prev_raw_mag = self.update_imu_scale_calibration(
+                                target_mag,
+                                detected_scale_lsb,
+                                scale_locked,
+                                rest_mag_samples,
+                                prev_raw_mag,
+                                from_candidate_scan=True,
+                            )
                             break
 
                 if not found_candidate:
@@ -983,15 +1093,14 @@ class DS4Controller:
                 consecutive_zero_accel = 0
                 if detected_imu_offset is None and default_offset >= 0:
                     detected_imu_offset = default_offset
-                if 1500.0 <= raw_mag <= 35000.0:
-                    if raw_mag > 12000.0:
-                        detected_scale_lsb = 16384.0
-                    elif raw_mag > 6000.0:
-                        detected_scale_lsb = 8192.0
-                    elif raw_mag > 3000.0:
-                        detected_scale_lsb = 4096.0
-                    else:
-                        detected_scale_lsb = 2048.0
+                detected_scale_lsb, scale_locked, prev_raw_mag = self.update_imu_scale_calibration(
+                    raw_mag,
+                    detected_scale_lsb,
+                    scale_locked,
+                    rest_mag_samples,
+                    prev_raw_mag,
+                    from_candidate_scan=False,
+                )
 
             # If controller is streaming zeroes (sleeping IMU on BT clone),
             # trigger Feature Report 0x02 and output report poke every 0.8s to wake it up!
@@ -999,8 +1108,10 @@ class DS4Controller:
                 if now - last_wake_poke > 0.8:
                     last_wake_poke = now
                     def _wake_poke():
-                        self._activate_operational_mode()
-                        self._send_output_report(self.led_r, self.led_g, self.led_b)
+                        with self._lock:
+                            if self._handle and not self._stop_event.is_set():
+                                self._activate_operational_mode()
+                                self._send_output_report(self.led_r, self.led_g, self.led_b)
                     threading.Thread(target=_wake_poke, daemon=True).start()
 
             # Hardware scaling into calibrated G-forces
@@ -1077,12 +1188,9 @@ class DS4Controller:
             # Periodic heartbeat (every 4s) to keep lightbar/rumble alive
             if now - last_out_refresh > 4.0:
                 last_out_refresh = now
-                self._send_output_report(self.led_r, self.led_g, self.led_b)
-
-        self.state.connected = False
-        self.state.is_usb = False
-        self.state.sample_rate_hz = 0.0
-        self.state.imu_frozen = False
+                with self._lock:
+                    if self._handle and not self._stop_event.is_set():
+                        self._send_output_report(self.led_r, self.led_g, self.led_b)
 
     def _handle_button_press(self, btn: str, vphone) -> None:
         """

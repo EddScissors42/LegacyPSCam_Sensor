@@ -35,6 +35,7 @@ scratch/
 dump_*.py
 test_*.py
 !test_suite.py
+!tests/test_*.py
 *.bak
 
 # AI agent configurations

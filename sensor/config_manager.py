@@ -21,7 +21,6 @@ DEFAULT_CONFIG = {
     "phone_cam_port": 8443,
     "phone_cam_lens": "user",
     "phone_cam_processing_mode": "pc_video",
-    "mirror_horizontal": True,
     "tracking_preset": "competitive",
     "pose_model": "lite",
     "smoothing_alpha": 0.75,

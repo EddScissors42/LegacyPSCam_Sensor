@@ -235,6 +235,8 @@ class _MinimalWebSocketClient:
     TLS/SSL (wss://, used by Just Dance 2022 CivetWeb) and plain TCP (ws://) fallback.
     """
 
+    MAX_WS_PAYLOAD_BYTES: int = 2 * 1024 * 1024
+
     def __init__(self, host: str, port: int, path: str = WS_ENDPOINT, subprotocol: Optional[str] = WS_SUBPROTOCOL) -> None:
         self.host = host
         self.port = int(port)
@@ -452,10 +454,15 @@ class _MinimalWebSocketClient:
                 elif length == 127:
                     length = struct.unpack("!Q", self._recv_exact(8))[0]
 
+                if length > self.MAX_WS_PAYLOAD_BYTES:
+                    self.close()
+                    raise ConnectionError(f"WebSocket payload too large ({length} bytes > {self.MAX_WS_PAYLOAD_BYTES}).")
+
                 mask_key = self._recv_exact(4) if masked else b""
                 payload = bytearray(self._recv_exact(length)) if length > 0 else bytearray()
             finally:
-                self._sock.settimeout(0.02)
+                if self._sock is not None:
+                    self._sock.settimeout(0.02)
 
             if masked and mask_key:
                 for i in range(len(payload)):
@@ -474,10 +481,12 @@ class _MinimalWebSocketClient:
     def _send_pong(self, payload: bytes) -> None:
         if not self.connected or self._sock is None:
             return
+        # RFC 6455 section 5.5: control frame payloads MUST be <= 125 bytes
+        trimmed = payload[:125]
         mask_key = os.urandom(4)
-        frame = bytearray([0x8A, 0x80 | (len(payload) & 0x7F)])
+        frame = bytearray([0x8A, 0x80 | len(trimmed)])
         frame.extend(mask_key)
-        for i, b in enumerate(payload[:125]):
+        for i, b in enumerate(trimmed):
             frame.append(b ^ mask_key[i & 3])
         with self._send_lock:
             try:
@@ -642,7 +651,7 @@ def find_just_dance_pids() -> List[int]:
         if kernel32.Process32First(hSnapshot, ctypes.byref(pe)):
             while True:
                 name = pe.szExeFile.decode("latin1", errors="ignore").lower()
-                if any(k in name for k in ("jd20", "jd21", "jd22", "justdance", "just dance")):
+                if name == "legacy.exe" or any(k in name for k in ("jd20", "jd21", "jd22", "justdance", "just dance")):
                     pids.append(pe.th32ProcessID)
                 if not kernel32.Process32Next(hSnapshot, ctypes.byref(pe)):
                     break
@@ -759,7 +768,13 @@ def detect_active_song_from_game_process() -> str:
                                 offset += chunk_len
                             if found_map:
                                 break
-                    addr += mbi.RegionSize
+                    region_size = int(mbi.RegionSize)
+                    if region_size <= 0:
+                        break
+                    next_addr = int(mbi.BaseAddress) + region_size
+                    if next_addr <= addr:
+                        break
+                    addr = next_addr
             finally:
                 kernel32.CloseHandle(h)
 

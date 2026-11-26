@@ -24,7 +24,7 @@ O projeto segue estritamente as convenções padrão do ecossistema Python (PEP 
 O projeto adota uma convenção estrita de versionamento semântico pragmático centralizada em `version.py`:
 
 ```python
-__version__ = "0.10.0"
+__version__ = "0.10.2"
 STAGE = "Alpha"
 VERSION_STRING = f"v{__version__} ({STAGE})"
 WINDOW_TITLE = f"Legacy PSCam Sensor {VERSION_STRING}"
@@ -85,38 +85,44 @@ Toda lógica de hardware (câmeras, DirectShow, WinUSB), rede (WebSockets UbiArt
 
 ## 🧪 Procedimento de Testes e Validação Obrigatória
 
-Antes de aprovar qualquer modificação de código, execute a suíte de testes integrada:
+Antes de aprovar qualquer modificação de código, execute a suíte de testes integrada (que executa com isolamento hermético de `%APPDATA%` e porta efêmera `0`, nunca modificando as configurações reais do usuário nem colidindo com a porta `8443`):
 
 ```powershell
 python LegacyPSCam_Sensor/test_suite.py
 ```
 
-A suíte cobre 19 áreas fundamentais (19/19 PASSED):
+Você também pode executar diretamente a suíte modular `unittest` (compatível com `unittest discover` e `pytest`):
+
+```powershell
+python -m unittest discover -s LegacyPSCam_Sensor/tests -v
+```
+
+A suíte cobre 19 áreas integradas (`19/19 PASSED`) mais os módulos dedicados em `tests/` (`test_vphone_protocol.py`, `test_tracking_math.py`, `test_controllers_and_cli.py`):
 
 | Teste | Módulo Testado | Critério de Sucesso |
 |---|---|---|
 | `test_project_structure` | `sensor/`, `ui/`, `assets/` | Integridade da estrutura modular, interface Qt 6 (`LegacySensorQtGUI`, `UIPagesMixin`), `launch_app`, assets e instanciação offscreen Qt6. |
 | `test_config` | `sensor/config_manager.py` | Leitura, escrita, persistência e parsing de presets de resolução/FPS. |
-| `test_shared_memory` | `sensor/kinect_shared_memory.py` | Tamanho exato de 344 bytes (JDP1) e 664 bytes (JDP2), paridade seqlock, máscara JMI1/JMI2 e pacer de 33ms da `Legacy10.dll`. |
+| `test_shared_memory` | `sensor/kinect_shared_memory.py` | Tamanho exato de 344 bytes (JDP1) e 664 bytes (JDP2), paridade seqlock, máscara JMI1/JMI2, isolamento por `tagname` customizado e pacer de 33ms da `Legacy10.dll`. |
 | `test_hand_anchor` | `sensor/pose_filters.py` | Extrapolação correta do antebraço em coordenadas 3D e 2D. |
-| `test_adaptive_smoother` | `sensor/pose_filters.py` | Alpha baixo para jitter em repouso (< 0.002) vs alpha alto em alta velocidade (> 0.5) e consistência 30/60 FPS. |
+| `test_adaptive_smoother` | `sensor/pose_filters.py` | Alpha baixo para jitter em repouso (< 0.002) vs alpha alto em alta velocidade (> 0.5) e constante de tempo física compensada por `dt` em 30/60/120 FPS. |
 | `test_calibrator` | `sensor/pose_filters.py` | Validação de eixos do Kinect: `ShoulderRight` positivo no X e `ShoulderLeft` negativo no X, nos 3 tiers. |
 | `test_pose_tracker` | `sensor/pose_tracker.py` | Rajada de frames com intervalo < 1ms sem disparar exceção de timestamp e auto-framing `FaceFollowPTZ`. |
 | `test_overlay` | `sensor/tracking_overlay.py` | Renderização do HUD, silhueta ROI e esqueleto sem falhas numpy. |
 | `test_camera_manager` | `sensor/camera_manager.py` | Snapshot PnP ultrarrápido (< 3ms via `cfgmgr32.dll`), máquina de estados da PS4 Camera, enumeração OpenCV, leitor `FrameBusReader`, detecção rápida de quadro preto e auto-crop de stereo Side-by-Side. |
 | `test_telemetry_and_adaptive_benchmark` | `sensor/telemetry_benchmark.py` | Correlação cruzada de telemetria, parsing de CSV, auto-registro por ciclo de dança, detecção de processo e mapa em memória, e calibração adaptativa. |
 | `test_ps4_native_backend` | `sensor/ps4_backend/` | Verificação de pacote INF, validação SHA-1/SHA-256 do firmware OV580, depacketizer UVC, demultiplexação independente dos dois sensores (Olho Direito e Esquerdo) e captura ao vivo em hardware físico a 60 FPS. |
-| `test_stereo_vision_engine` | `sensor/stereo_matcher.py` | Calibração de fábrica rígida ($B=85.2\text{ mm}$), retificação epipolar via `cv2.remap`, triangulação sub-pixel `PyrLK` + auto-calibração vertical epipolar, máscara de profundidade densa (320x240) e integração com `SkeletonCalibrator`. |
-| `test_ds4_controller` | `sensor/ds4_controller.py` | Identificação de VID/PID oficiais e clones (ShanWan, DragonRise), filtro permissivo, pontuação de interface HID, CRC-32 de Output Report `0x11` e detecção automática de layout/escala de IMU. |
-| `test_kinect_emulator` | `sensor/kinect_emulator.py` | Ciclo de vida do daemon em segundo plano para Just Dance Legacy 32-bit, persistência de configuração, integridade binária da `Legacy10.dll` e roteamento de callbacks de status. |
-| `test_session_logger` | `sensor/session_logger.py` | Rotação/limpeza automática de sessão anterior, diagnóstico de sistema (SO, CPU, RAM), mapeamento de controles, streaming CSV assíncrono e exception hooks. |
+| `test_stereo_vision_engine` | `sensor/stereo_matcher.py` | Calibração de fábrica rígida ($B=85.2\text{ mm}$), sinal correto de `stereoRectify`, triangulação sub-pixel `PyrLK` (curta ~1m em 1280x800 e longa >3.2m no olho direito) + auto-calibração vertical epipolar, máscara de profundidade densa (320x240) e integração com `SkeletonCalibrator`. |
+| `test_ds4_controller` | `sensor/ds4_controller.py` | Identificação de VID/PID oficiais e clones (ShanWan, DragonRise), filtro permissivo, pontuação de interface HID, CRC-32 de Output Report `0x11` e travamento de escala IMU em repouso (proteção contra golpes > 1.46 G). |
+| `test_kinect_emulator` | `sensor/kinect_emulator.py` | Ciclo de vida do daemon em segundo plano para Just Dance Legacy 32-bit, match exato de executável (anti-substring), validação PE32 do fallback `0x9CD250`, persistência de configuração, integridade binária da `Legacy10.dll` e roteamento de callbacks de status. |
+| `test_session_logger` | `sensor/session_logger.py` | Rotação/limpeza automática de sessão anterior, diagnóstico de sistema (SO, CPU, RAM), mapeamento de controles, streaming CSV assíncrono com escaping `csv.writer`, drenagem sem perda de linhas e restauração de exception hooks. |
 | `test_person_lock_subsystem` | `sensor/person_lock.py` & `sensor/pose_filters.py` | Predição inercial em micro-quedas (coasting 3D/2D + translação de máscara + LERP de reentrada), trava de identidade por histograma HSV do tronco e continuidade espacial, fallback anti-giro 360° e zoom adaptativo no `FaceFollowPTZ`, e chaves modulares de bypass. |
 | `test_arm_raise_gesture` | `sensor/gesture_detector.py` | Máquina de estados do gesto de braço levantado (`[ENTER]`), progresso percentual, disparo e cooldown. |
-| `test_phone_camera_webapp` | `sensor/phone_camera.py` | Gerador QR Code ISO/IEC 18004 puro em Python, certificado TLS X.509 multi-SAN autoassinado, ranking inteligente de interfaces LAN (anti-VPN/virtual), diagnóstico de Windows Firewall, autenticação de token, streaming WebSocket JPEG e modo Standby térmico. |
-| `test_multi_player_tracking` | `sensor/player_slot.py` & `pose_tracker.py` | Rastreamento de 2 jogadores (2P Duo), contrato binário `JDP2` (664B) e `JMI2` (máscara indexada 1 e 2), singleton `get_kinect_bridge()`, memória de identidade anti-swap em valsas/cruzamentos, gesto `[ENTER]` de P2, cores P1 Azul / P2 Laranja Claro e controles 2P na UI Qt 6. |
+| `test_phone_camera_webapp` | `sensor/phone_camera.py` & `tls_manager.py` | Gerador QR Code ISO/IEC 18004 puro em Python, chave RSA-2048 única por instalação + certificado TLS X.509v3 (`TLSv1.2+`, 365 dias), ranking inteligente de interfaces LAN, diagnóstico de Windows Firewall, autenticação de token, fragmentação WebSocket RFC 6455, resiliência a JSON malformado, streaming JPEG, Cool Mode térmico Android e Standby Frio. |
+| `test_multi_player_tracking` | `sensor/player_slot.py`, `player_reid.py` & `pose_tracker.py` | Rastreamento de 2 jogadores (2P Duo), contrato binário `JDP2` (664B) e `JMI2` (máscara indexada 1 e 2), singleton `get_kinect_bridge()`, memória de identidade anti-swap em valsas/cruzamentos, gesto `[ENTER]` de P2, cores P1 Azul / P2 Laranja Claro e controles 2P na UI Qt 6. |
 
 ### Adicionando Novos Testes
-Ao criar novos recursos (como um novo algoritmo de suavização ou novo controle de GUI), adicione uma função `test_<funcionalidade>()` no arquivo `test_suite.py` e inclua sua execução na função principal `run_all_tests()`.
+Para testes unitários focados em módulos específicos, adicione casos `unittest.TestCase` em `tests/test_<modulo>.py` (versionado automaticamente via `!tests/test_*.py` no `.gitignore` e executado tanto pelo `test_suite.py` quanto pelo CI). Para novos subsistemas ponta a ponta, adicione também uma função `test_<funcionalidade>()` em `test_suite.py`.
 
 ---
 
@@ -139,20 +145,24 @@ Ao criar novos recursos (como um novo algoritmo de suavização ou novo controle
 
 ---
 
-## 📦 Build e Publicação Automática de Releases (GitHub Actions)
+## 📦 Integração Contínua (CI) e Publicação Automática de Releases (GitHub Actions)
 
-O projeto conta com automação completa de CI/CD para gerar o executável standalone do Windows através do workflow [`.github/workflows/release.yml`](../.github/workflows/release.yml) e a especificação [`legacy_pscam_sensor.spec`](../legacy_pscam_sensor.spec).
+O projeto conta com dois workflows dedicados no GitHub Actions:
+
+1. **CI Contínuo ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)):**
+   - Disparado automaticamente em todo `push` (`main`/`master`) e `pull_request` no runner Windows (`QT_QPA_PLATFORM=offscreen`), executando `python -u test_suite.py`, `python -m unittest discover -s tests -v` e smoke test CLI (`--version` / `--help`).
+2. **Build & Release ([`.github/workflows/release.yml`](../.github/workflows/release.yml) + [`legacy_pscam_sensor.spec`](../legacy_pscam_sensor.spec)):**
+   - Valida automaticamente que a tag git coincide com `__version__` em `version.py` e lê `STAGE` dinamicamente.
+   - Executa toda a suíte de testes (`test_suite.py` + `tests/`), gera o splash temporário em `build/splash.png` (sem sujar o repositório), compila os pacotes `--onefile` (`LegacyPSCam.exe`) e `--onedir` (`LegacyPSCam-Portable-Windows.zip`), executa smoke test `--version` em ambos os executáveis e publica `SHA256SUMS.txt` junto aos artefatos.
 
 ### Como disparar uma nova Release:
 1. **Automático via Git Tag:**
    ```powershell
-   git tag v0.4.9
-   git push origin v0.4.9
+   git tag v0.10.2
+   git push origin v0.10.2
    ```
-   O GitHub Actions iniciará o runner Windows, instalará as dependências, executará a suíte de testes (19/19), compilará ambos os pacotes — o executável único `LegacyPSCam.exe` (`--onefile` com Splash Screen e poda de binários mortos) e a pasta portátil de abertura instantânea `LegacyPSCam-Portable-Windows.zip` (`--onedir`) — e anexará os dois arquivos diretamente na página de Releases do repositório.
+   O GitHub Actions validará a tag contra `version.py`, rodará os testes, compilará e testará os executáveis e publicará `LegacyPSCam.exe`, `LegacyPSCam-Portable-Windows.zip` e `SHA256SUMS.txt` na página de Releases.
 
 2. **Manual para Testes (Workflow Dispatch):**
-   - Acesse a aba **Actions** no GitHub.
-   - Selecione **"Build & Release Legacy PSCam Sensor"**.
-   - Clique em **"Run workflow"**.
-   - O executável `.exe` será gerado e ficará disponível para download na seção de **Artifacts** da execução.
+   - Acesse a aba **Actions** no GitHub, selecione **"Build & Release Legacy PSCam Sensor"** e clique em **"Run workflow"**.
+   - Se desejar publicar a GitHub Release manualmente, marque `create_release = true` (a tag `v<__version__>` é atribuída automaticamente a partir de `version.py`).

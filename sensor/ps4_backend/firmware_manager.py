@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import shutil
 import sys
+import threading
 import time
 from typing import Optional
 import urllib.request
@@ -265,12 +266,22 @@ class PS4FirmwareManager:
         )
         return True
 
+    _FW_UPLOAD_LOCK = threading.Lock()
+
     @staticmethod
     def upload_to_bootloader_device(allow_download: bool = True, wait_reenumerate_s: float = 6.0) -> tuple[bool, str]:
         """
         Finds a connected PS4 Camera in bootloader state (05A9:0580), uploads verified firmware,
         and waits up to `wait_reenumerate_s` seconds for it to re-enumerate in streaming mode (058B/058A).
         """
+        with PS4FirmwareManager._FW_UPLOAD_LOCK:
+            return PS4FirmwareManager._upload_to_bootloader_device_unlocked(
+                allow_download=allow_download,
+                wait_reenumerate_s=wait_reenumerate_s,
+            )
+
+    @staticmethod
+    def _upload_to_bootloader_device_unlocked(allow_download: bool = True, wait_reenumerate_s: float = 6.0) -> tuple[bool, str]:
         api = get_winusb_api()
         if not api.available:
             return False, "WinUSB is only supported on Windows."

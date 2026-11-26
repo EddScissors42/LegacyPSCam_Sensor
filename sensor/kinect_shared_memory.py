@@ -119,63 +119,77 @@ class KinectSharedMemory:
         self.mm = None
         self.seq = 0
         self.is_connected = False
+        self._lock = threading.RLock()
         self._init_shared_memory()
 
     def _init_shared_memory(self):
-        try:
-            self.mm = mmap.mmap(-1, SHARED_SIZE, tagname=self.tagname)
-            self.is_connected = True
-            self.write_empty()
-            print(f"[OK] Shared Memory Pose: {self.tagname} ({SHARED_SIZE} bytes)")
-        except Exception as e:
-            self.is_connected = False
-            print(f"[ERROR] Failed to initialize pose shared memory {self.tagname}: {e}")
+        with self._lock:
+            try:
+                self.mm = mmap.mmap(-1, SHARED_SIZE, tagname=self.tagname)
+                self.is_connected = True
+                self.write_empty()
+                print(f"[OK] Shared Memory Pose: {self.tagname} ({SHARED_SIZE} bytes)")
+            except Exception as e:
+                self.is_connected = False
+                print(f"[ERROR] Failed to initialize pose shared memory {self.tagname}: {e}")
 
     def write_pose(self, joints, tracked=True):
-        if not self.is_connected or self.mm is None:
-            return False
+        with self._lock:
+            if not self.is_connected or self.mm is None:
+                return False
 
-        try:
-            self.seq = (self.seq + 2) | 1
-            ts_ms = int(time.time() * 1000)
-            tracked_val = 1 if tracked and joints else 0
+            odd_written = False
+            try:
+                self.seq = ((self.seq + 2) | 1) & 0xFFFFFFFF
+                ts_ms = int(time.time() * 1000)
+                tracked_val = 1 if tracked and joints else 0
 
-            self.mm.seek(0)
-            self.mm.write(struct.pack(HEADER_FMT, MAGIC, VERSION, self.seq, tracked_val, ts_ms))
+                self.mm.seek(0)
+                self.mm.write(struct.pack(HEADER_FMT, MAGIC, VERSION, self.seq, tracked_val, ts_ms))
+                odd_written = True
 
-            if joints and tracked_val == 1:
-                flat_floats = []
-                count = min(len(joints), JOINT_COUNT)
-                for i in range(count):
-                    x, y, z, conf = joints[i]
-                    flat_floats.extend((float(x), float(y), float(z), float(conf)))
-                if count < JOINT_COUNT:
-                    flat_floats.extend([0.0] * ((JOINT_COUNT - count) * 4))
-                self.mm.write(struct.pack(FULL_JOINTS_FMT, *flat_floats))
-            else:
-                self.mm.write(ZERO_JOINTS_BYTES)
+                if joints and tracked_val == 1:
+                    flat_floats = []
+                    count = min(len(joints), JOINT_COUNT)
+                    for i in range(count):
+                        x, y, z, conf = joints[i]
+                        flat_floats.extend((float(x), float(y), float(z), float(conf)))
+                    if count < JOINT_COUNT:
+                        flat_floats.extend([0.0] * ((JOINT_COUNT - count) * 4))
+                    self.mm.write(struct.pack(FULL_JOINTS_FMT, *flat_floats))
+                else:
+                    self.mm.write(ZERO_JOINTS_BYTES)
 
-            self.seq += 1
-            self.mm.seek(8)
-            self.mm.write(struct.pack('<I', self.seq))
-            self.mm.flush()
-            return True
-        except Exception as e:
-            print(f"[WARN] Error writing pose: {e}")
-            return False
+                self.seq = (self.seq + 1) & 0xFFFFFFFF
+                self.mm.seek(8)
+                self.mm.write(struct.pack('<I', self.seq))
+                odd_written = False
+                self.mm.flush()
+                return True
+            except Exception as e:
+                if odd_written and self.mm is not None:
+                    try:
+                        self.seq = (self.seq + 1) & 0xFFFFFFFF
+                        self.mm.seek(8)
+                        self.mm.write(struct.pack('<II', self.seq, 0))
+                    except Exception:
+                        pass
+                print(f"[WARN] Error writing pose: {e}")
+                return False
 
     def write_empty(self):
         return self.write_pose(None, tracked=False)
 
     def close(self):
-        if self.mm is not None:
-            try:
-                self.write_empty()
-                self.mm.close()
-            except Exception:
-                pass
-            self.mm = None
-            self.is_connected = False
+        with self._lock:
+            if self.mm is not None:
+                try:
+                    self.write_empty()
+                    self.mm.close()
+                except Exception:
+                    pass
+                self.mm = None
+                self.is_connected = False
 
 
 class KinectMultiPoseSharedMemory:
@@ -190,92 +204,117 @@ class KinectMultiPoseSharedMemory:
         self.mm = None
         self.seq = 0
         self.is_connected = False
+        self._lock = threading.RLock()
         self._init_shared_memory()
 
     def _init_shared_memory(self):
-        try:
-            self.mm = mmap.mmap(-1, MULTI_SHARED_SIZE, tagname=self.tagname)
-            self.is_connected = True
-            self.write_empty()
-            print(f"[OK] Shared Memory Pose V2: {self.tagname} ({MULTI_SHARED_SIZE} bytes)")
-        except Exception as e:
-            self.is_connected = False
-            print(f"[ERROR] Failed to initialize pose V2 shared memory {self.tagname}: {e}")
+        with self._lock:
+            try:
+                self.mm = mmap.mmap(-1, MULTI_SHARED_SIZE, tagname=self.tagname)
+                self.is_connected = True
+                self.write_empty()
+                print(f"[OK] Shared Memory Pose V2: {self.tagname} ({MULTI_SHARED_SIZE} bytes)")
+            except Exception as e:
+                self.is_connected = False
+                print(f"[ERROR] Failed to initialize pose V2 shared memory {self.tagname}: {e}")
 
     def write_poses(self, players, tracked=True):
-        if not self.is_connected or self.mm is None:
-            return False
+        with self._lock:
+            if not self.is_connected or self.mm is None:
+                return False
 
-        try:
-            if not players or not tracked:
-                return self.write_empty()
+            odd_written = False
+            try:
+                if not players or not tracked:
+                    return self.write_empty()
 
-            if isinstance(players[0], (tuple, list)) and len(players[0]) == 4 and isinstance(players[0][0], (int, float)):
-                bodies = [players, None]
-            else:
-                bodies = list(players[:MAX_PLAYERS])
-                while len(bodies) < MAX_PLAYERS:
-                    bodies.append(None)
-
-            tracked_mask = sum(1 << i for i, b in enumerate(bodies) if b is not None and len(b) > 0 and tracked)
-            if tracked_mask == 0:
-                return self.write_empty()
-
-            self.seq = (self.seq + 2) | 1
-            ts_ms = int(time.time() * 1000)
-
-            self.mm.seek(0)
-            self.mm.write(struct.pack(HEADER_FMT, MULTI_MAGIC, MULTI_VERSION, self.seq, tracked_mask, ts_ms))
-
-            for body in bodies:
-                if body and tracked_mask > 0:
-                    flat_floats = []
-                    count = min(len(body), JOINT_COUNT)
-                    for i in range(count):
-                        x, y, z, conf = body[i]
-                        flat_floats.extend((float(x), float(y), float(z), float(conf)))
-                    if count < JOINT_COUNT:
-                        flat_floats.extend([0.0] * ((JOINT_COUNT - count) * 4))
-                    self.mm.write(struct.pack(FULL_JOINTS_FMT, *flat_floats))
+                if isinstance(players[0], (tuple, list)) and len(players[0]) == 4 and isinstance(players[0][0], (int, float)):
+                    bodies = [players, None]
                 else:
-                    self.mm.write(ZERO_JOINTS_BYTES)
+                    bodies = list(players[:MAX_PLAYERS])
+                    while len(bodies) < MAX_PLAYERS:
+                        bodies.append(None)
 
-            self.seq += 1
-            self.mm.seek(8)
-            self.mm.write(struct.pack('<I', self.seq))
-            self.mm.flush()
-            return True
-        except Exception as e:
-            print(f"[WARN] Error writing pose V2 to shared memory: {e}")
-            return False
+                tracked_mask = sum(1 << i for i, b in enumerate(bodies) if b is not None and len(b) > 0 and tracked)
+                if tracked_mask == 0:
+                    return self.write_empty()
+
+                self.seq = ((self.seq + 2) | 1) & 0xFFFFFFFF
+                ts_ms = int(time.time() * 1000)
+
+                self.mm.seek(0)
+                self.mm.write(struct.pack(HEADER_FMT, MULTI_MAGIC, MULTI_VERSION, self.seq, tracked_mask, ts_ms))
+                odd_written = True
+
+                for body in bodies:
+                    if body and tracked_mask > 0:
+                        flat_floats = []
+                        count = min(len(body), JOINT_COUNT)
+                        for i in range(count):
+                            x, y, z, conf = body[i]
+                            flat_floats.extend((float(x), float(y), float(z), float(conf)))
+                        if count < JOINT_COUNT:
+                            flat_floats.extend([0.0] * ((JOINT_COUNT - count) * 4))
+                        self.mm.write(struct.pack(FULL_JOINTS_FMT, *flat_floats))
+                    else:
+                        self.mm.write(ZERO_JOINTS_BYTES)
+
+                self.seq = (self.seq + 1) & 0xFFFFFFFF
+                self.mm.seek(8)
+                self.mm.write(struct.pack('<I', self.seq))
+                odd_written = False
+                self.mm.flush()
+                return True
+            except Exception as e:
+                if odd_written and self.mm is not None:
+                    try:
+                        self.seq = (self.seq + 1) & 0xFFFFFFFF
+                        self.mm.seek(8)
+                        self.mm.write(struct.pack('<II', self.seq, 0))
+                    except Exception:
+                        pass
+                print(f"[WARN] Error writing pose V2 to shared memory: {e}")
+                return False
 
     def write_empty(self):
-        if not self.is_connected or self.mm is None:
-            return False
-        try:
-            self.seq = (self.seq + 2) | 1
-            ts_ms = int(time.time() * 1000)
-            self.mm.seek(0)
-            self.mm.write(struct.pack(HEADER_FMT, MULTI_MAGIC, MULTI_VERSION, self.seq, 0, ts_ms))
-            self.mm.write(ZERO_JOINTS_BYTES)
-            self.mm.write(ZERO_JOINTS_BYTES)
-            self.seq += 1
-            self.mm.seek(8)
-            self.mm.write(struct.pack('<I', self.seq))
-            self.mm.flush()
-            return True
-        except Exception:
-            return False
+        with self._lock:
+            if not self.is_connected or self.mm is None:
+                return False
+            odd_written = False
+            try:
+                self.seq = ((self.seq + 2) | 1) & 0xFFFFFFFF
+                ts_ms = int(time.time() * 1000)
+                self.mm.seek(0)
+                self.mm.write(struct.pack(HEADER_FMT, MULTI_MAGIC, MULTI_VERSION, self.seq, 0, ts_ms))
+                odd_written = True
+                self.mm.write(ZERO_JOINTS_BYTES)
+                self.mm.write(ZERO_JOINTS_BYTES)
+                self.seq = (self.seq + 1) & 0xFFFFFFFF
+                self.mm.seek(8)
+                self.mm.write(struct.pack('<I', self.seq))
+                odd_written = False
+                self.mm.flush()
+                return True
+            except Exception:
+                if odd_written and self.mm is not None:
+                    try:
+                        self.seq = (self.seq + 1) & 0xFFFFFFFF
+                        self.mm.seek(8)
+                        self.mm.write(struct.pack('<II', self.seq, 0))
+                    except Exception:
+                        pass
+                return False
 
     def close(self):
-        if self.mm is not None:
-            try:
-                self.write_empty()
-                self.mm.close()
-            except Exception:
-                pass
-            self.mm = None
-            self.is_connected = False
+        with self._lock:
+            if self.mm is not None:
+                try:
+                    self.write_empty()
+                    self.mm.close()
+                except Exception:
+                    pass
+                self.mm = None
+                self.is_connected = False
 
 
 class KinectImageSharedMemory:
@@ -286,8 +325,14 @@ class KinectImageSharedMemory:
       - Local\\LegacyWebcamKinectImageV2 (JMI2, version 2, player index mask with 1 for Player 1 and 2 for Player 2)
     Ensures 100% binary compatibility with Legacy10.dll / Kinect10.dll.
     """
-    def __init__(self, tagname=IMAGE_SHARED_NAME):
+    def __init__(self, tagname=IMAGE_SHARED_NAME, tagname_v2=None):
         self.tagname = tagname
+        if tagname_v2 is not None:
+            self.tagname_v2 = tagname_v2
+        elif tagname == IMAGE_SHARED_NAME:
+            self.tagname_v2 = MULTI_IMAGE_SHARED_NAME
+        else:
+            self.tagname_v2 = f"{tagname}V2"
         self.mm_v1 = None
         self.mm_v2 = None
         self.mm = None  # Alias for mm_v1 (backwards compatibility with tests)
@@ -295,6 +340,7 @@ class KinectImageSharedMemory:
         self.seq_v2 = 0
         self.seq = 0
         self.is_connected = False
+        self._lock = threading.RLock()
 
         # Pre-allocated reusable buffers & zero-copy memoryviews to eliminate
         # ~150 MB/s of per-frame heap allocations and .tobytes() copies at 60 FPS
@@ -311,22 +357,23 @@ class KinectImageSharedMemory:
         self._init_shared_memory()
 
     def _init_shared_memory(self):
-        try:
-            self.mm_v1 = mmap.mmap(-1, IMAGE_SHARED_SIZE, tagname=IMAGE_SHARED_NAME)
-            self.mm = self.mm_v1
-            print(f"[OK] Shared Memory Image/Mask V1: {IMAGE_SHARED_NAME} ({IMAGE_SHARED_SIZE} bytes)")
-        except Exception as e:
-            print(f"[ERROR] Failed to initialize image memory V1: {e}")
+        with self._lock:
+            try:
+                self.mm_v1 = mmap.mmap(-1, IMAGE_SHARED_SIZE, tagname=self.tagname)
+                self.mm = self.mm_v1
+                print(f"[OK] Shared Memory Image/Mask V1: {self.tagname} ({IMAGE_SHARED_SIZE} bytes)")
+            except Exception as e:
+                print(f"[ERROR] Failed to initialize image memory V1 ({self.tagname}): {e}")
 
-        try:
-            self.mm_v2 = mmap.mmap(-1, IMAGE_SHARED_SIZE, tagname=MULTI_IMAGE_SHARED_NAME)
-            print(f"[OK] Shared Memory Image/Mask V2: {MULTI_IMAGE_SHARED_NAME} ({IMAGE_SHARED_SIZE} bytes)")
-        except Exception as e:
-            print(f"[WARN] Failed to initialize image memory V2: {e}")
+            try:
+                self.mm_v2 = mmap.mmap(-1, IMAGE_SHARED_SIZE, tagname=self.tagname_v2)
+                print(f"[OK] Shared Memory Image/Mask V2: {self.tagname_v2} ({IMAGE_SHARED_SIZE} bytes)")
+            except Exception as e:
+                print(f"[WARN] Failed to initialize image memory V2 ({self.tagname_v2}): {e}")
 
-        self.is_connected = (self.mm_v1 is not None or self.mm_v2 is not None)
-        if self.is_connected:
-            self.write_empty()
+            self.is_connected = (self.mm_v1 is not None or self.mm_v2 is not None)
+            if self.is_connected:
+                self.write_empty()
 
     def write_image_and_mask(
         self,
@@ -342,120 +389,143 @@ class KinectImageSharedMemory:
         - In JMI1, player pixels must be >= 64 (0x40 in Legacy10.dll) -> written as 255.
         - In JMI2, player pixels correspond to player index -> 1 (Player 1), 2 (Player 2), 0 (Background).
         """
-        if not self.is_connected:
-            return False
+        with self._lock:
+            if not self.is_connected:
+                return False
 
-        try:
-            ts_ms = int(time.time() * 1000)
-            if tracked_mask is not None:
-                v2_tracked_mask = int(tracked_mask) if tracked else 0
-                v1_tracked_val = 1 if v2_tracked_mask > 0 else 0
-            else:
-                v1_tracked_val = 1 if tracked else 0
-                v2_tracked_mask = 1 if tracked else 0
-
-            # 1. Prepare 640x480 BGRA buffer in-place (zero heap allocation, full-frame 1:1 with Kinect)
-            if frame_bgr is not None:
-                if frame_bgr.shape[0] != IMAGE_H or frame_bgr.shape[1] != IMAGE_W:
-                    cv2.resize(frame_bgr, (IMAGE_W, IMAGE_H), dst=self._resized_bgr, interpolation=cv2.INTER_LINEAR)
-                    src_bgr = self._resized_bgr
+            v1_odd = False
+            v2_odd = False
+            try:
+                ts_ms = int(time.time() * 1000)
+                if tracked_mask is not None:
+                    v2_tracked_mask = int(tracked_mask) if tracked else 0
+                    v1_tracked_val = 1 if v2_tracked_mask > 0 else 0
                 else:
-                    src_bgr = frame_bgr
-                cv2.cvtColor(src_bgr, cv2.COLOR_BGR2BGRA, dst=self._bgra_buf)
-                bgra_payload = self._bgra_view
-            else:
-                bgra_payload = ZERO_BGRA_BYTES
+                    v1_tracked_val = 1 if tracked else 0
+                    v2_tracked_mask = 1 if tracked else 0
 
-            # 2. Prepare 320x240 masks for both V1 and V2 in-place (SIMD threshold, zero allocation)
-            if mask_binary is not None and v1_tracked_val == 1:
-                if mask_binary.shape[0] != MASK_H or mask_binary.shape[1] != MASK_W:
-                    cv2.resize(mask_binary, (MASK_W, MASK_H), dst=self._small_mask, interpolation=cv2.INTER_NEAREST)
-                    src_mask = self._small_mask
+                # 1. Prepare 640x480 BGRA buffer in-place (zero heap allocation, full-frame 1:1 with Kinect)
+                if frame_bgr is not None:
+                    if frame_bgr.shape[0] != IMAGE_H or frame_bgr.shape[1] != IMAGE_W:
+                        cv2.resize(frame_bgr, (IMAGE_W, IMAGE_H), dst=self._resized_bgr, interpolation=cv2.INTER_LINEAR)
+                        src_bgr = self._resized_bgr
+                    else:
+                        src_bgr = frame_bgr
+                    cv2.cvtColor(src_bgr, cv2.COLOR_BGR2BGRA, dst=self._bgra_buf)
+                    bgra_payload = self._bgra_view
                 else:
-                    src_mask = mask_binary
+                    bgra_payload = ZERO_BGRA_BYTES
 
-                if is_player_index_mask:
-                    # src_mask already holds player indices (0=bg, 1=P1, 2=P2)
-                    cv2.threshold(src_mask, 0, 255, cv2.THRESH_BINARY, dst=self._v1_mask)
-                    np.clip(src_mask, 0, 6, out=self._v2_mask)
+                # 2. Prepare 320x240 masks for both V1 and V2 in-place (SIMD threshold, zero allocation)
+                if mask_binary is not None and v1_tracked_val == 1:
+                    if mask_binary.shape[0] != MASK_H or mask_binary.shape[1] != MASK_W:
+                        cv2.resize(mask_binary, (MASK_W, MASK_H), dst=self._small_mask, interpolation=cv2.INTER_NEAREST)
+                        src_mask = self._small_mask
+                    else:
+                        src_mask = mask_binary
+
+                    if is_player_index_mask:
+                        # src_mask already holds player indices (0=bg, 1=P1, 2=P2)
+                        cv2.threshold(src_mask, 0, 255, cv2.THRESH_BINARY, dst=self._v1_mask)
+                        np.clip(src_mask, 0, 6, out=self._v2_mask)
+                    else:
+                        # Legacy binary mask where player pixels are >= 64 (255)
+                        cv2.threshold(src_mask, 64, 255, cv2.THRESH_BINARY, dst=self._v1_mask)
+                        cv2.threshold(src_mask, 64, 1, cv2.THRESH_BINARY, dst=self._v2_mask)
+
+                    v1_mask_payload = self._v1_mask_view
+                    v2_mask_payload = self._v2_mask_view
                 else:
-                    # Legacy binary mask where player pixels are >= 64 (255)
-                    cv2.threshold(src_mask, 64, 255, cv2.THRESH_BINARY, dst=self._v1_mask)
-                    cv2.threshold(src_mask, 64, 1, cv2.THRESH_BINARY, dst=self._v2_mask)
+                    v1_mask_payload = ZERO_MASK_BYTES
+                    v2_mask_payload = ZERO_MASK_BYTES
 
-                v1_mask_payload = self._v1_mask_view
-                v2_mask_payload = self._v2_mask_view
-            else:
-                v1_mask_payload = ZERO_MASK_BYTES
-                v2_mask_payload = ZERO_MASK_BYTES
+                # 3. Write JMI1 channel
+                if self.mm_v1 is not None:
+                    self.seq_v1 = ((self.seq_v1 + 2) | 1) & 0xFFFFFFFF
+                    self.mm_v1.seek(0)
+                    self.mm_v1.write(struct.pack(
+                        IMAGE_HEADER_FMT,
+                        IMAGE_MAGIC,
+                        IMAGE_VERSION,
+                        self.seq_v1,
+                        v1_tracked_val,
+                        IMAGE_W,
+                        IMAGE_H,
+                        ts_ms
+                    ))
+                    v1_odd = True
+                    self.mm_v1.write(bgra_payload)
+                    self.mm_v1.write(v1_mask_payload)
+                    self.seq_v1 = (self.seq_v1 + 1) & 0xFFFFFFFF
+                    self.mm_v1.seek(8)
+                    self.mm_v1.write(struct.pack('<I', self.seq_v1))
+                    v1_odd = False
+                    self.mm_v1.flush()
+                    self.seq = self.seq_v1
 
-            # 3. Write JMI1 channel (Local\LegacyWebcamKinectImage)
-            if self.mm_v1 is not None:
-                self.seq_v1 = (self.seq_v1 + 2) | 1
-                self.mm_v1.seek(0)
-                self.mm_v1.write(struct.pack(
-                    IMAGE_HEADER_FMT,
-                    IMAGE_MAGIC,
-                    IMAGE_VERSION,
-                    self.seq_v1,
-                    v1_tracked_val,
-                    IMAGE_W,
-                    IMAGE_H,
-                    ts_ms
-                ))
-                self.mm_v1.write(bgra_payload)
-                self.mm_v1.write(v1_mask_payload)
-                self.seq_v1 += 1
-                self.mm_v1.seek(8)
-                self.mm_v1.write(struct.pack('<I', self.seq_v1))
-                self.mm_v1.flush()
-                self.seq = self.seq_v1
+                # 4. Write JMI2 channel
+                if self.mm_v2 is not None:
+                    self.seq_v2 = ((self.seq_v2 + 2) | 1) & 0xFFFFFFFF
+                    self.mm_v2.seek(0)
+                    self.mm_v2.write(struct.pack(
+                        IMAGE_HEADER_FMT,
+                        MULTI_IMAGE_MAGIC,
+                        MULTI_IMAGE_VERSION,
+                        self.seq_v2,
+                        v2_tracked_mask,  # bit 0 = Player 1, bit 1 = Player 2
+                        IMAGE_W,
+                        IMAGE_H,
+                        ts_ms
+                    ))
+                    v2_odd = True
+                    self.mm_v2.write(bgra_payload)
+                    self.mm_v2.write(v2_mask_payload)
+                    self.seq_v2 = (self.seq_v2 + 1) & 0xFFFFFFFF
+                    self.mm_v2.seek(8)
+                    self.mm_v2.write(struct.pack('<I', self.seq_v2))
+                    v2_odd = False
+                    self.mm_v2.flush()
 
-            # 4. Write JMI2 channel (Local\LegacyWebcamKinectImageV2)
-            if self.mm_v2 is not None:
-                self.seq_v2 = (self.seq_v2 + 2) | 1
-                self.mm_v2.seek(0)
-                self.mm_v2.write(struct.pack(
-                    IMAGE_HEADER_FMT,
-                    MULTI_IMAGE_MAGIC,
-                    MULTI_IMAGE_VERSION,
-                    self.seq_v2,
-                    v2_tracked_mask,  # bit 0 = Player 1, bit 1 = Player 2
-                    IMAGE_W,
-                    IMAGE_H,
-                    ts_ms
-                ))
-                self.mm_v2.write(bgra_payload)
-                self.mm_v2.write(v2_mask_payload)
-                self.seq_v2 += 1
-                self.mm_v2.seek(8)
-                self.mm_v2.write(struct.pack('<I', self.seq_v2))
-                self.mm_v2.flush()
-
-            return True
-        except Exception as e:
-            print(f"[WARN] Error writing image to shared memory: {e}")
-            return False
+                return True
+            except Exception as e:
+                if v1_odd and self.mm_v1 is not None:
+                    try:
+                        self.seq_v1 = (self.seq_v1 + 1) & 0xFFFFFFFF
+                        self.mm_v1.seek(8)
+                        self.mm_v1.write(struct.pack('<II', self.seq_v1, 0))
+                        self.seq = self.seq_v1
+                    except Exception:
+                        pass
+                if v2_odd and self.mm_v2 is not None:
+                    try:
+                        self.seq_v2 = (self.seq_v2 + 1) & 0xFFFFFFFF
+                        self.mm_v2.seek(8)
+                        self.mm_v2.write(struct.pack('<II', self.seq_v2, 0))
+                    except Exception:
+                        pass
+                print(f"[WARN] Error writing image to shared memory: {e}")
+                return False
 
     def write_empty(self):
         return self.write_image_and_mask(None, None, tracked=False)
 
     def close(self):
-        self.write_empty()
-        if self.mm_v1 is not None:
-            try:
-                self.mm_v1.close()
-            except Exception:
-                pass
-            self.mm_v1 = None
-        if self.mm_v2 is not None:
-            try:
-                self.mm_v2.close()
-            except Exception:
-                pass
-            self.mm_v2 = None
-        self.mm = None
-        self.is_connected = False
+        with self._lock:
+            self.write_empty()
+            if self.mm_v1 is not None:
+                try:
+                    self.mm_v1.close()
+                except Exception:
+                    pass
+                self.mm_v1 = None
+            if self.mm_v2 is not None:
+                try:
+                    self.mm_v2.close()
+                except Exception:
+                    pass
+                self.mm_v2 = None
+            self.mm = None
+            self.is_connected = False
 
 
 class KinectCoachXSharedMemory:
@@ -468,53 +538,67 @@ class KinectCoachXSharedMemory:
         self.mm = None
         self.seq = 0
         self.is_connected = False
+        self._lock = threading.RLock()
         self._init_shared_memory()
 
     def _init_shared_memory(self):
-        try:
-            self.mm = mmap.mmap(-1, COACHX_SHARED_SIZE, tagname=self.tagname)
-            self.is_connected = True
-            self.seq = 0
-            self.write_coach_x(coach_x=0.0, enabled=False)
-            print(f"[OK] Shared Memory CoachX: {self.tagname} ({COACHX_SHARED_SIZE} bytes)")
-        except Exception as e:
-            self.is_connected = False
-            print(f"[ERROR] Failed to initialize CoachX {self.tagname}: {e}")
+        with self._lock:
+            try:
+                self.mm = mmap.mmap(-1, COACHX_SHARED_SIZE, tagname=self.tagname)
+                self.is_connected = True
+                self.seq = 0
+                self.write_coach_x(coach_x=0.0, enabled=False)
+                print(f"[OK] Shared Memory CoachX: {self.tagname} ({COACHX_SHARED_SIZE} bytes)")
+            except Exception as e:
+                self.is_connected = False
+                print(f"[ERROR] Failed to initialize CoachX {self.tagname}: {e}")
 
     def write_coach_x(self, coach_x=0.0, enabled=False):
-        if not self.is_connected or self.mm is None:
-            return False
-        try:
-            self.seq = (self.seq + 2) | 1
-            ts_ms = int(time.time() * 1000)
-            en_val = 1 if enabled else 0
-            self.mm.seek(0)
-            self.mm.write(struct.pack(
-                COACHX_HEADER_FMT,
-                COACHX_MAGIC,
-                COACHX_VERSION,
-                self.seq,
-                en_val,
-                float(coach_x),
-                ts_ms
-            ))
-            self.seq += 1
-            self.mm.seek(8)
-            self.mm.write(struct.pack('<I', self.seq))
-            self.mm.flush()
-            return True
-        except Exception as e:
-            print(f"[WARN] Error writing CoachX to shared memory: {e}")
-            return False
+        with self._lock:
+            if not self.is_connected or self.mm is None:
+                return False
+            odd_written = False
+            try:
+                self.seq = ((self.seq + 2) | 1) & 0xFFFFFFFF
+                ts_ms = int(time.time() * 1000)
+                en_val = 1 if enabled else 0
+                self.mm.seek(0)
+                self.mm.write(struct.pack(
+                    COACHX_HEADER_FMT,
+                    COACHX_MAGIC,
+                    COACHX_VERSION,
+                    self.seq,
+                    en_val,
+                    float(coach_x),
+                    ts_ms
+                ))
+                odd_written = True
+                self.seq = (self.seq + 1) & 0xFFFFFFFF
+                self.mm.seek(8)
+                self.mm.write(struct.pack('<I', self.seq))
+                odd_written = False
+                self.mm.flush()
+                return True
+            except Exception as e:
+                if odd_written and self.mm is not None:
+                    try:
+                        self.seq = (self.seq + 1) & 0xFFFFFFFF
+                        self.mm.seek(8)
+                        self.mm.write(struct.pack('<II', self.seq, 0))
+                    except Exception:
+                        pass
+                print(f"[WARN] Error writing CoachX to shared memory: {e}")
+                return False
 
     def close(self):
-        if self.mm is not None:
-            try:
-                self.mm.close()
-            except Exception:
-                pass
-            self.mm = None
-            self.is_connected = False
+        with self._lock:
+            if self.mm is not None:
+                try:
+                    self.mm.close()
+                except Exception:
+                    pass
+                self.mm = None
+                self.is_connected = False
 
 
 class KinectBridge:
@@ -526,6 +610,7 @@ class KinectBridge:
     - CoachX: Local\LegacyWebcamKinectCoachX (28 bytes, JXC1)
     """
     def __init__(self):
+        self._lock = threading.RLock()
         self.pose = KinectSharedMemory()
         self.pose_v2 = KinectMultiPoseSharedMemory()
         self.image = KinectImageSharedMemory()
@@ -533,57 +618,62 @@ class KinectBridge:
 
     @property
     def is_connected(self):
-        return self.pose.is_connected and self.pose_v2.is_connected and self.image.is_connected
+        with self._lock:
+            return self.pose.is_connected and self.pose_v2.is_connected and self.image.is_connected
 
     def write(self, joints, frame_bgr, mask_binary, tracked=True):
-        p1_ok = self.pose.write_pose(joints, tracked=tracked)
-        p2_ok = self.pose_v2.write_poses(joints, tracked=tracked)
-        i_ok = self.image.write_image_and_mask(frame_bgr, mask_binary, tracked=tracked)
-        self.coach_x.write_coach_x(coach_x=0.0, enabled=False)
-        return p1_ok and p2_ok and i_ok
+        with self._lock:
+            p1_ok = self.pose.write_pose(joints, tracked=tracked)
+            p2_ok = self.pose_v2.write_poses(joints, tracked=tracked)
+            i_ok = self.image.write_image_and_mask(frame_bgr, mask_binary, tracked=tracked)
+            self.coach_x.write_coach_x(coach_x=0.0, enabled=False)
+            return p1_ok and p2_ok and i_ok
 
     def write_multi(self, players_joints, frame_bgr, player_index_mask, tracked_mask: Optional[int] = None):
         """
         Writes 1 or 2 player skeletons and their combined player_index_mask (0=bg, 1=P1, 2=P2)
         to all shared memory channels atomically.
         """
-        bodies = list(players_joints[:MAX_PLAYERS]) if players_joints else []
-        while len(bodies) < MAX_PLAYERS:
-            bodies.append(None)
+        with self._lock:
+            bodies = list(players_joints[:MAX_PLAYERS]) if players_joints else []
+            while len(bodies) < MAX_PLAYERS:
+                bodies.append(None)
 
-        if tracked_mask is None:
-            tracked_mask = sum(1 << i for i, b in enumerate(bodies) if b is not None and len(b) > 0)
+            if tracked_mask is None:
+                tracked_mask = sum(1 << i for i, b in enumerate(bodies) if b is not None and len(b) > 0)
 
-        any_tracked = (tracked_mask > 0)
-        primary_joints = bodies[0] if (bodies[0] is not None and (tracked_mask & 1)) else (
-            bodies[1] if (bodies[1] is not None and (tracked_mask & 2)) else None
-        )
+            any_tracked = (tracked_mask > 0)
+            primary_joints = bodies[0] if (bodies[0] is not None and (tracked_mask & 1)) else (
+                bodies[1] if (bodies[1] is not None and (tracked_mask & 2)) else None
+            )
 
-        p1_ok = self.pose.write_pose(primary_joints, tracked=bool(primary_joints is not None))
-        p2_ok = self.pose_v2.write_poses(bodies, tracked=any_tracked)
-        i_ok = self.image.write_image_and_mask(
-            frame_bgr,
-            player_index_mask,
-            tracked=any_tracked,
-            tracked_mask=tracked_mask,
-            is_player_index_mask=True,
-        )
-        self.coach_x.write_coach_x(coach_x=0.0, enabled=False)
-        return p1_ok and p2_ok and i_ok
+            p1_ok = self.pose.write_pose(primary_joints, tracked=bool(primary_joints is not None))
+            p2_ok = self.pose_v2.write_poses(bodies, tracked=any_tracked)
+            i_ok = self.image.write_image_and_mask(
+                frame_bgr,
+                player_index_mask,
+                tracked=any_tracked,
+                tracked_mask=tracked_mask,
+                is_player_index_mask=True,
+            )
+            self.coach_x.write_coach_x(coach_x=0.0, enabled=False)
+            return p1_ok and p2_ok and i_ok
 
     def write_empty(self):
-        p1_ok = self.pose.write_empty()
-        p2_ok = self.pose_v2.write_empty()
-        i_ok = self.image.write_empty()
-        self.coach_x.write_coach_x(coach_x=0.0, enabled=False)
-        return p1_ok and p2_ok and i_ok
+        with self._lock:
+            p1_ok = self.pose.write_empty()
+            p2_ok = self.pose_v2.write_empty()
+            i_ok = self.image.write_empty()
+            self.coach_x.write_coach_x(coach_x=0.0, enabled=False)
+            return p1_ok and p2_ok and i_ok
 
     def close(self):
-        self.pose.close()
-        self.pose_v2.close()
-        self.image.close()
-        self.coach_x.close()
-        print("[INFO] All IPC shared memory channels closed.")
+        with self._lock:
+            self.pose.close()
+            self.pose_v2.close()
+            self.image.close()
+            self.coach_x.close()
+            print("[INFO] All IPC shared memory channels closed.")
 
 
 _bridge_singleton: Optional[KinectBridge] = None
@@ -595,6 +685,11 @@ def get_kinect_bridge() -> KinectBridge:
     global _bridge_singleton
     with _bridge_lock:
         if _bridge_singleton is None or not _bridge_singleton.is_connected:
+            if _bridge_singleton is not None:
+                try:
+                    _bridge_singleton.close()
+                except Exception:
+                    pass
             _bridge_singleton = KinectBridge()
         return _bridge_singleton
 

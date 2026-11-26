@@ -106,8 +106,8 @@ class StereoCalibrator:
             d2 = np.zeros(5, dtype=np.float64)
 
             r = np.eye(3, dtype=np.float64)
-            # Physical translation: left eye is origin, right eye is at +baseline_m along X
-            t = np.array([self.baseline_m, 0.0, 0.0], dtype=np.float64).reshape(3, 1)
+            # OpenCV stereoRectify convention: X_right = R * X_left + T -> T = [-baseline_m, 0, 0]
+            t = np.array([-self.baseline_m, 0.0, 0.0], dtype=np.float64).reshape(3, 1)
 
         r1, r2, p1, p2, q, _, _ = cv2.stereoRectify(
             k1, d1, k2, d2, (w, h), r, t,
@@ -226,7 +226,9 @@ class StereoDepthEngine:
 
         p_sz = patch_half_size
         v_tol = max(1, int(vertical_tol_px))
-        max_d = search_radius_px
+        # Scale horizontal disparity search window with resolution so close dancers (~0.65m) match at 1280x800
+        min_z_disp = int(math.ceil((fx * baseline) / 0.65)) if (fx > 0 and baseline > 0) else int(search_radius_px)
+        max_d = max(int(search_radius_px), min(max(int(search_radius_px), w // 3), min_z_disp))
         v_off_int = int(round(self.vertical_offset_px))
 
         results = {}
@@ -253,8 +255,8 @@ class StereoDepthEngine:
                 u_s_end = min(w, u_p + p_sz + 1)
                 v_s_center = v_p - v_off_int
             else:
-                u_s_start = max(0, u_p)
-                u_s_end = min(w, u_p + max_d + p_sz * 2 + 1)
+                u_s_start = max(0, u_p - p_sz)
+                u_s_end = min(w, u_p + max_d + p_sz + 1)
                 v_s_center = v_p + v_off_int
 
             v_s_start = max(0, v_s_center - p_sz - v_tol)

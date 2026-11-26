@@ -408,6 +408,7 @@ class PS4CameraBackend:
         frame_pts = 0
         frame_pts_valid = False
         consecutive_timeouts = 0
+        urb_submitted = [False] * num_urb
 
         try:
             # Submit initial isochronous ring
@@ -422,8 +423,10 @@ class PS4CameraBackend:
                     descs[i],
                     ctypes.byref(ovs[i]),
                 )
-                if not res and api.kernel32.GetLastError() != ERROR_IO_PENDING:
-                    api.winusb.WinUsb_ReadIsochPipeAsap(
+                if res or api.kernel32.GetLastError() == ERROR_IO_PENDING:
+                    urb_submitted[i] = True
+                else:
+                    res2 = api.winusb.WinUsb_ReadIsochPipeAsap(
                         h_isoch,
                         i * urb_len,
                         urb_len,
@@ -432,6 +435,8 @@ class PS4CameraBackend:
                         descs[i],
                         ctypes.byref(ovs[i]),
                     )
+                    if res2 or api.kernel32.GetLastError() == ERROR_IO_PENDING:
+                        urb_submitted[i] = True
 
             urb_idx = 0
             while self.running and self.usb_dev.is_open:
@@ -448,76 +453,85 @@ class PS4CameraBackend:
                 ok_ov = api.winusb.WinUsb_GetOverlappedResult(
                     h_vs, ctypes.byref(ovs[urb_idx]), ctypes.byref(got_bytes), False
                 )
+                urb_submitted[urb_idx] = False
                 if not ok_ov:
                     err = api.kernel32.GetLastError()
-                    # ERROR_DEVICE_NOT_CONNECTED (1167) or ERROR_GEN_FAILURE (31)
+                    # ERROR_DEVICE_NOT_CONNECTED (1167), ERROR_GEN_FAILURE (31), or ERROR_BAD_COMMAND (22)
                     if err in (31, 1167, 22):
                         break
+                else:
+                    base_off = urb_idx * urb_len
+                    urb_descs = descs[urb_idx]
 
-                base_off = urb_idx * urb_len
-                urb_descs = descs[urb_idx]
+                    for p in range(num_pkts):
+                        length = urb_descs[p].Length
+                        if urb_descs[p].Status != 0 or length <= 4:
+                            continue
 
-                for p in range(num_pkts):
-                    length = urb_descs[p].Length
-                    if urb_descs[p].Status != 0 or length <= 4:
-                        continue
+                        pkt_off = urb_descs[p].Offset
+                        off = base_off + pkt_off
+                        if off < 0 or off + length > total_buf_size:
+                            continue
 
-                    off = base_off + urb_descs[p].Offset
-                    b0 = iso_buf[off]
-                    b1 = iso_buf[off + 1]
-                    hdr12 = (b0 == 0x0C) and (length >= 12) and ((b1 & 0x0C) == 0x0C)
-                    strip = 12 if hdr12 else 4
+                        b0 = iso_buf[off]
+                        b1 = iso_buf[off + 1]
+                        hdr12 = (b0 == 0x0C) and (length >= 12) and ((b1 & 0x0C) == 0x0C)
+                        strip = 12 if hdr12 else 4
 
-                    if hdr12:
-                        fid = b1 & 0x01
-                        if not frame_pts_valid:
-                            frame_pts = (
-                                iso_buf[off + 2]
-                                | (iso_buf[off + 3] << 8)
-                                | (iso_buf[off + 4] << 16)
-                                | (iso_buf[off + 5] << 24)
-                            )
-                            frame_pts_valid = True
+                        if hdr12:
+                            fid = b1 & 0x01
+                            if not frame_pts_valid:
+                                frame_pts = (
+                                    iso_buf[off + 2]
+                                    | (iso_buf[off + 3] << 8)
+                                    | (iso_buf[off + 4] << 16)
+                                    | (iso_buf[off + 5] << 24)
+                                )
+                                frame_pts_valid = True
 
-                        if last_fid >= 0 and fid != last_fid:
-                            if write_pos >= frame_bytes:
-                                try:
-                                    self._publish_raw_frame(accum_np, geom, frame_pts)
-                                except Exception as e:
-                                    print(f"[PS4-STREAM] Frame demux error: {e}")
-                            write_pos = 0
-                            frame_pts_valid = False
-                        last_fid = fid
+                            if last_fid >= 0 and fid != last_fid:
+                                if write_pos >= frame_bytes:
+                                    try:
+                                        self._publish_raw_frame(accum_np, geom, frame_pts)
+                                    except Exception as e:
+                                        print(f"[PS4-STREAM] Frame demux error: {e}")
+                                write_pos = 0
+                                frame_pts_valid = False
+                            last_fid = fid
 
-                    plen = length - strip
-                    if plen > 0:
-                        if write_pos + plen > max_accum:
-                            write_pos = 0
-                        ctypes.memmove(accum_addr + write_pos, iso_buf_addr + off + strip, plen)
-                        write_pos += plen
+                        plen = length - strip
+                        if 0 < plen <= max_accum and (off + strip + plen) <= total_buf_size:
+                            if write_pos + plen > max_accum:
+                                write_pos = 0
+                            ctypes.memmove(accum_addr + write_pos, iso_buf_addr + off + strip, plen)
+                            write_pos += plen
 
                 # Re-submit this URB to keep the ring full
                 api.kernel32.ResetEvent(events[urb_idx])
                 res = api.winusb.WinUsb_ReadIsochPipeAsap(
                     h_isoch,
-                    base_off,
+                    base_off if ok_ov else (urb_idx * urb_len),
                     urb_len,
                     True,
                     num_pkts,
-                    urb_descs,
+                    descs[urb_idx],
                     ctypes.byref(ovs[urb_idx]),
                 )
-                if not res and api.kernel32.GetLastError() != ERROR_IO_PENDING:
+                if res or api.kernel32.GetLastError() == ERROR_IO_PENDING:
+                    urb_submitted[urb_idx] = True
+                else:
                     res2 = api.winusb.WinUsb_ReadIsochPipeAsap(
                         h_isoch,
-                        base_off,
+                        urb_idx * urb_len,
                         urb_len,
                         False,
                         num_pkts,
-                        urb_descs,
+                        descs[urb_idx],
                         ctypes.byref(ovs[urb_idx]),
                     )
-                    if not res2 and api.kernel32.GetLastError() != ERROR_IO_PENDING:
+                    if res2 or api.kernel32.GetLastError() == ERROR_IO_PENDING:
+                        urb_submitted[urb_idx] = True
+                    else:
                         break
 
                 urb_idx = (urb_idx + 1) % num_urb
@@ -528,6 +542,16 @@ class PS4CameraBackend:
                     api.kernel32.CancelIoEx(self.usb_dev.h_file, None)
                 except Exception:
                     pass
+            # Drain all pending overlapped URBs before unregistering/freeing iso_buf & event handles
+            dummy_bytes = wintypes.ULONG(0)
+            for i in range(num_urb):
+                if urb_submitted[i]:
+                    try:
+                        api.winusb.WinUsb_GetOverlappedResult(
+                            h_vs, ctypes.byref(ovs[i]), ctypes.byref(dummy_bytes), True
+                        )
+                    except Exception:
+                        pass
             try:
                 api.winusb.WinUsb_UnregisterIsochBuffer(h_isoch)
             except Exception:

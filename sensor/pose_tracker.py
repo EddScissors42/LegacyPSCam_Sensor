@@ -139,6 +139,7 @@ class PoseTracker:
         self.stereo_engine = StereoDepthEngine(baseline_m=PS4_STEREO_BASELINE_M)
 
         self.start_time = time.time()
+        self._start_perf = time.perf_counter()
         self.frame_index = 0
         self.last_timestamp_ms = 0
         self.last_infer_perf = None
@@ -538,7 +539,7 @@ class PoseTracker:
         dt_infer = (now_perf - self.last_infer_perf) if self.last_infer_perf is not None else None
         self.last_infer_perf = now_perf
 
-        now_ms = int((time.time() - self.start_time) * 1000)
+        now_ms = int((now_perf - self._start_perf) * 1000)
         timestamp_ms = max(now_ms, self.frame_index)
         if timestamp_ms <= self.last_timestamp_ms:
             timestamp_ms = self.last_timestamp_ms + 1
@@ -547,7 +548,7 @@ class PoseTracker:
         result = self.detector.detect_for_video(mp_image, timestamp_ms)
 
         world_list = list(result.pose_world_landmarks) if getattr(result, "pose_world_landmarks", None) else []
-        norm_list = list(result.pose_landmarks) if getattr(result, "pose_landmarks", None) else world_list
+        norm_list = list(result.pose_landmarks) if getattr(result, "pose_landmarks", None) else []
         seg_list = list(result.segmentation_masks) if getattr(result, "segmentation_masks", None) else []
 
         candidates = []

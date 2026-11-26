@@ -4,7 +4,7 @@ Reusable custom Qt 6 widgets and High-DPI image utilities for Legacy PSCam Senso
 from typing import Dict, Optional
 
 from PySide6.QtCore import (
-    Qt, QPropertyAnimation, QEasingCurve, QPoint, Signal, QParallelAnimationGroup
+    Qt, QPropertyAnimation, QEasingCurve, QPoint, Signal, QParallelAnimationGroup, QAbstractAnimation
 )
 from PySide6.QtWidgets import (
     QStackedWidget, QFrame, QVBoxLayout, QHBoxLayout, QLabel
@@ -41,10 +41,25 @@ class SlidingStackedWidget(QStackedWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._is_animating = False
+        self.anim_group: Optional[QParallelAnimationGroup] = None
 
-    def slide_to_index(self, index: int, duration: int = 240):
-        if index == self.currentIndex() or self._is_animating or index < 0 or index >= self.count():
-            return
+    def slide_to_index(self, index: int, duration: int = 240) -> bool:
+        if index < 0 or index >= self.count():
+            return False
+        if index == self.currentIndex() and not self._is_animating:
+            return True
+
+        # Finish any in-flight transition cleanly so rapid tab clicks never desync tab & page
+        if self._is_animating and self.anim_group is not None:
+            try:
+                self.anim_group.setCurrentTime(self.anim_group.totalDuration())
+                self.anim_group.stop()
+            except Exception:
+                pass
+            self._is_animating = False
+            self.anim_group = None
+            if index == self.currentIndex():
+                return True
 
         current_idx = self.currentIndex()
         next_widget = self.widget(index)
@@ -54,7 +69,7 @@ class SlidingStackedWidget(QStackedWidget):
         h = self.height()
         if w <= 0 or h <= 0:
             self.setCurrentIndex(index)
-            return
+            return True
 
         offset = w if index > current_idx else -w
 
@@ -64,31 +79,35 @@ class SlidingStackedWidget(QStackedWidget):
 
         self._is_animating = True
 
-        anim_next = QPropertyAnimation(next_widget, b"pos", self)
+        group = QParallelAnimationGroup(self)
+        anim_next = QPropertyAnimation(next_widget, b"pos", group)
         anim_next.setDuration(duration)
         anim_next.setEasingCurve(QEasingCurve.Type.OutCubic)
         anim_next.setStartValue(QPoint(offset, 0))
         anim_next.setEndValue(QPoint(0, 0))
 
-        anim_curr = QPropertyAnimation(current_widget, b"pos", self)
+        anim_curr = QPropertyAnimation(current_widget, b"pos", group)
         anim_curr.setDuration(duration)
         anim_curr.setEasingCurve(QEasingCurve.Type.OutCubic)
         anim_curr.setStartValue(QPoint(0, 0))
         anim_curr.setEndValue(QPoint(-offset, 0))
 
-        self.anim_group = QParallelAnimationGroup(self)
-        self.anim_group.addAnimation(anim_next)
-        self.anim_group.addAnimation(anim_curr)
+        group.addAnimation(anim_next)
+        group.addAnimation(anim_curr)
+        self.anim_group = group
 
         def on_finished():
             self.setCurrentIndex(index)
             current_widget.hide()
             current_widget.move(0, 0)
             next_widget.move(0, 0)
+            if self.anim_group is group:
+                self.anim_group = None
             self._is_animating = False
 
-        self.anim_group.finished.connect(on_finished)
-        self.anim_group.start()
+        group.finished.connect(on_finished)
+        group.start(QAbstractAnimation.DeletionPolicy.DeleteWhenStopped)
+        return True
 
 
 class DeviceNavCard(QFrame):
@@ -214,7 +233,7 @@ class CalibPresetCard(QFrame):
         self._is_active = False
 
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setFixedHeight(140)
+        self.setMinimumHeight(140)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 12, 14, 12)
@@ -314,3 +333,69 @@ class CalibPresetCard(QFrame):
         if event.button() == Qt.MouseButton.LeftButton:
             self.clicked.emit(self.preset_id)
         super().mousePressEvent(event)
+
+
+class SettingBlock(QFrame):
+    """
+    Reusable rounded white settings block with title, optional word-wrapped subtitle,
+    and dynamic minimum height so wrapped text never clips under High-DPI scaling.
+    """
+    def __init__(
+        self,
+        title: str,
+        subtitle: str = "",
+        *,
+        object_name: str = "settingBlock",
+        font_heading: str = "",
+        font_body: str = "",
+        min_height: int = 90,
+        spacing: int = 4,
+        disabled_style: bool = False,
+        parent=None,
+    ):
+        super().__init__(parent)
+        self.setObjectName(object_name)
+        if min_height > 0:
+            self.setMinimumHeight(min_height)
+
+        disabled_qss = ""
+        if disabled_style:
+            disabled_qss = f"""
+            QFrame#{object_name}:disabled {{
+                background-color: {PALETTE["input_bg"]};
+                border-color: {PALETTE["border_subtle"]};
+            }}
+            """
+        self.setStyleSheet(f"""
+            QFrame#{object_name} {{
+                background-color: #FFFFFF;
+                border: 1px solid {PALETTE["border_subtle"]};
+                border-radius: 10px;
+            }}
+            QFrame#{object_name}:hover {{
+                border-color: {PALETTE["input_border"]};
+            }}
+            {disabled_qss}
+        """)
+
+        self.content_layout = QVBoxLayout(self)
+        self.content_layout.setContentsMargins(14, 10, 14, 10)
+        self.content_layout.setSpacing(spacing)
+
+        self.lbl_title = QLabel(title, self)
+        self.lbl_title.setStyleSheet(
+            f"font-family: '{font_heading}'; font-size: 11px; font-weight: bold; "
+            f"color: {PALETTE['blue_dark']}; background: transparent; border: none;"
+        )
+        self.content_layout.addWidget(self.lbl_title)
+
+        self.lbl_subtitle: Optional[QLabel] = None
+        if subtitle:
+            self.lbl_subtitle = QLabel(subtitle, self)
+            self.lbl_subtitle.setWordWrap(True)
+            self.lbl_subtitle.setStyleSheet(
+                f"font-family: '{font_body}'; font-size: 10px; "
+                f"color: {PALETTE['text_muted']}; background: transparent; border: none;"
+            )
+            self.content_layout.addWidget(self.lbl_subtitle)
+

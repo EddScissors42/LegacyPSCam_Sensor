@@ -13,7 +13,9 @@ from PyInstaller.utils.win32.versioninfo import (
     VarStruct,
 )
 
-sys.path.insert(0, str(Path.cwd()))
+BASE_DIR = Path(SPECPATH).resolve()
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
 from version import __version__, APP_NAME, VERSION_STRING
 
 BUILD_MODE = os.environ.get("LEGACY_BUILD_MODE", "onefile").strip().lower()
@@ -62,21 +64,21 @@ mp_datas, mp_binaries, mp_hiddenimports = collect_all('mediapipe')
 
 # Option 1B: Bundle Lite AI offline (5.5 MB); Full AI (9.0 MB) downloads on-demand into %APPDATA%\LegacyPSCam_Sensor\models\
 added_datas = [
-    ('models/pose_landmarker_lite.task', 'models'),
-    ('assets', 'assets'),
-    ('tools/Legacy10.dll', 'tools'),
-    ('tools/get_cameras.ps1', 'tools'),
-    ('driver/legacy_pscam_device.inf', 'driver'),
+    (str(BASE_DIR / 'models' / 'pose_landmarker_lite.task'), 'models'),
+    (str(BASE_DIR / 'assets'), 'assets'),
+    (str(BASE_DIR / 'tools' / 'Legacy10.dll'), 'tools'),
+    (str(BASE_DIR / 'tools' / 'get_cameras.ps1'), 'tools'),
+    (str(BASE_DIR / 'driver' / 'legacy_pscam_device.inf'), 'driver'),
 ] + mp_datas
 
-if Path('tools/PSCam4Win-Setup.exe').exists():
-    added_datas.append(('tools/PSCam4Win-Setup.exe', 'tools'))
+if (BASE_DIR / 'tools' / 'PSCam4Win-Setup.exe').exists():
+    added_datas.append((str(BASE_DIR / 'tools' / 'PSCam4Win-Setup.exe'), 'tools'))
 
 added_binaries = [] + mp_binaries
 
 a = Analysis(
-    ['main.py'],
-    pathex=[],
+    [str(BASE_DIR / 'main.py')],
+    pathex=[str(BASE_DIR)],
     binaries=added_binaries,
     datas=added_datas,
     hiddenimports=[
@@ -96,6 +98,7 @@ a = Analysis(
         'sensor.phone_camera',
         'sensor.qr_encoder',
         'sensor.tls_manager',
+        'sensor.player_reid',
         'sensor.player_slot',
         'sensor.pose_filters',
         'sensor.pose_tracker',
@@ -136,7 +139,7 @@ a = Analysis(
     ] + mp_hiddenimports,
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=['rthook_mediapipe.py'],
+    runtime_hooks=[str(BASE_DIR / 'rthook_mediapipe.py')],
     excludes=[
         'tkinter',
         'matplotlib',
@@ -181,25 +184,34 @@ _PRUNE_SUBSTRINGS = (
     '_sounddevice_data',
     'websockets',
     'dmsans.ttf',
+    '__pycache__',
+    '.pyc',
+    'licenses/notice',
 )
 
 
 def _should_keep(entry) -> bool:
     dest = str(entry[0]).replace('\\', '/').lower()
-    return not any(tok in dest for tok in _PRUNE_SUBSTRINGS)
+    src = str(entry[1]).replace('\\', '/').lower() if len(entry) > 1 else ''
+    return not any(tok in dest or tok in src for tok in _PRUNE_SUBSTRINGS)
 
 
 a.binaries = [b for b in a.binaries if _should_keep(b)]
 a.datas = [d for d in a.datas if _should_keep(d)]
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
-icon_path = 'assets/icons/app_icon.ico' if Path('assets/icons/app_icon.ico').exists() else None
-splash_path = 'assets/icons/splash.png'
+_icon_file = BASE_DIR / 'assets' / 'icons' / 'app_icon.ico'
+icon_path = str(_icon_file) if _icon_file.exists() else None
 
-# Always synchronize assets/icons/splash.png with version.py before bundling
+# Generate build-time splash inside build/ so tracked assets/icons/splash.png is never dirtied
+_build_splash = BASE_DIR / 'build' / 'splash.png'
+_fallback_splash = BASE_DIR / 'assets' / 'icons' / 'splash.png'
+splash_path = str(_fallback_splash)
 try:
     from tools.generate_splash import generate_splash
-    generate_splash(Path(splash_path))
+    _build_splash.parent.mkdir(parents=True, exist_ok=True)
+    generate_splash(_build_splash)
+    splash_path = str(_build_splash)
 except Exception as _splash_err:
     print(f"[WARN] Could not regenerate splash screen automatically: {_splash_err}")
 

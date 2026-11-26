@@ -24,11 +24,21 @@ class DeviceController:
         self.cfg_mgr = config_manager or ConfigManager()
         self.cfg = self.cfg_mgr.config
 
-        # Lazy references
+        # Lazy references & non-blocking DS4 probe/connect state
         self._vphone = None
         self._ds4 = None
+        self._ds4_conn_lock = threading.Lock()
         self._is_connecting_ds4 = False
+        self._ds4_probe_lock = threading.Lock()
+        self._ds4_probe_cache: Dict[str, Any] = {"is_connected": False, "device_present": False}
+        self._ds4_probe_ts: float = 0.0
+        self._ds4_probe_inflight: bool = False
         self._last_phone_cam_conn = None
+
+    @property
+    def is_connecting_ds4(self) -> bool:
+        with self._ds4_conn_lock:
+            return self._is_connecting_ds4
 
     # =========================================================================
     # PHONE CAMERA WEBAPP (WI-FI SMARTPHONE STREAM)
@@ -185,50 +195,76 @@ class DeviceController:
                 "buttons": act_btns,
             }
 
-        # Controller is not connected - probe PnP/HID
-        try:
-            from sensor.ds4_controller import find_ds4_devices, detect_controller_name
-            perm = bool(self.cfg.get("ds4_permissive_mode", True))
-            paths = find_ds4_devices(permissive=perm)
-            if paths:
-                is_usb = any("bth" not in p.lower() and "bluetooth" not in p.lower() and "00001124" not in p.lower() for p in paths)
-                detected_type = "on USB" if is_usb else "via Bluetooth"
-                detected_name = detect_controller_name(paths[0])
-                return {
-                    "is_connected": False,
-                    "device_present": True,
-                    "controller_name": detected_name,
-                    "connection_type": detected_type,
-                }
-        except Exception:
-            pass
+        # Controller is not connected: return cached snapshot immediately (<0.01ms on Qt UI thread)
+        # and refresh Win32 SetupAPI HID enumeration asynchronously at most once per 1.0s.
+        self._trigger_ds4_probe_async()
+        with self._ds4_probe_lock:
+            return dict(self._ds4_probe_cache)
 
-        return {
-            "is_connected": False,
-            "device_present": False,
-        }
+    def _trigger_ds4_probe_async(self, min_interval_s: float = 1.0) -> None:
+        now = time.perf_counter()
+        with self._ds4_probe_lock:
+            if self._ds4_probe_inflight or (now - self._ds4_probe_ts) < min_interval_s:
+                return
+            self._ds4_probe_inflight = True
+            perm = bool(self.cfg.get("ds4_permissive_mode", True))
+
+        def _probe_worker():
+            result: Dict[str, Any] = {"is_connected": False, "device_present": False}
+            try:
+                from sensor.ds4_controller import find_ds4_devices, detect_controller_name
+                paths = find_ds4_devices(permissive=perm)
+                if paths:
+                    is_usb = any(
+                        "bth" not in p.lower() and "bluetooth" not in p.lower() and "00001124" not in p.lower()
+                        for p in paths
+                    )
+                    detected_type = "on USB" if is_usb else "via Bluetooth"
+                    detected_name = detect_controller_name(paths[0])
+                    result = {
+                        "is_connected": False,
+                        "device_present": True,
+                        "controller_name": detected_name,
+                        "connection_type": detected_type,
+                    }
+            except Exception:
+                pass
+            finally:
+                with self._ds4_probe_lock:
+                    self._ds4_probe_cache = result
+                    self._ds4_probe_ts = time.perf_counter()
+                    self._ds4_probe_inflight = False
+
+        threading.Thread(target=_probe_worker, daemon=True, name="DS4ProbeThread").start()
 
     def connect_ds4_async(self, callback: Optional[Callable[[bool], None]] = None):
-        """Asynchronously attempts connection to DualShock 4."""
-        if self._is_connecting_ds4:
-            return
-        self._is_connecting_ds4 = True
+        """Asynchronously attempts connection to DualShock 4 (single source of truth for connection state)."""
+        with self._ds4_conn_lock:
+            if self._is_connecting_ds4:
+                return
+            self._is_connecting_ds4 = True
         perm = bool(self.cfg.get("ds4_permissive_mode", True))
 
         def worker():
+            ok = False
             try:
                 ds4 = self.get_ds4()
                 if ds4.is_connected:
-                    if callback:
-                        callback(True)
-                    return
-                ok = ds4.connect(permissive=perm)
-                if ok:
-                    ds4.trigger_rumble(small=140, large=80, duration_sec=0.15)
-                if callback:
-                    callback(ok)
+                    ok = True
+                else:
+                    ok = ds4.connect(permissive=perm)
+                    if ok:
+                        ds4.trigger_rumble(small=140, large=80, duration_sec=0.15)
+            except Exception:
+                ok = False
             finally:
-                self._is_connecting_ds4 = False
+                with self._ds4_conn_lock:
+                    self._is_connecting_ds4 = False
+            if callback:
+                try:
+                    callback(ok)
+                except Exception:
+                    pass
 
         threading.Thread(target=worker, daemon=True, name="DS4ConnectThread").start()
 

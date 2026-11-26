@@ -318,6 +318,8 @@ class PhoneCameraServer:
         self._accept_thread: Optional[threading.Thread] = None
         self._ssl_ctx: Optional[ssl.SSLContext] = None
         self._lock = threading.Lock()
+        self._ws_send_lock = threading.Lock()
+        self._conn_sem = threading.Semaphore(8)
 
         # Connected smartphone client state
         self.session_token: str = secrets.token_urlsafe(6)
@@ -521,6 +523,8 @@ class PhoneCameraServer:
         Triggers a standard Windows UAC elevation prompt only if not already running as Administrator.
         """
         port_int = int(port)
+        if not (1 <= port_int <= 65535):
+            return False, f"Invalid TCP port: {port_int}."
         if sys.platform != "win32":
             return True, "Firewall configuration is only required on Windows."
 
@@ -680,6 +684,13 @@ class PhoneCameraServer:
             except Exception:
                 pass
             self._server_sock = None
+        th = self._accept_thread
+        if th is not None and th.is_alive() and th is not threading.current_thread():
+            try:
+                th.join(timeout=1.5)
+            except Exception:
+                pass
+        self._accept_thread = None
 
     def disconnect_client(self, rotate_token: bool = True) -> None:
         with self._lock:
@@ -692,12 +703,12 @@ class PhoneCameraServer:
                 self.session_token = secrets.token_urlsafe(6)
         if sock is not None:
             try:
-                self._ws_send_text(sock, json.dumps({"type": "disconnect"}))
+                self._ws_send_text_locked(sock, json.dumps({"type": "disconnect"}))
             except Exception:
                 pass
             try:
                 # RFC 6455 Close Frame with custom code 4001 (explicitly disconnected by PC)
-                self._ws_send_frame(sock, 0x08, struct.pack("!H", 4001))
+                self._ws_send_frame_locked(sock, 0x08, struct.pack("!H", 4001))
             except Exception:
                 pass
             try:
@@ -747,7 +758,7 @@ class PhoneCameraServer:
                 "active": self.streaming_active,
             })
             try:
-                self._ws_send_text(sock, msg)
+                self._ws_send_text_locked(sock, msg)
             except Exception:
                 pass
 
@@ -782,6 +793,12 @@ class PhoneCameraServer:
                 continue
             except OSError:
                 break
+            if not self._conn_sem.acquire(blocking=False):
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                continue
             threading.Thread(
                 target=self._handle_connection,
                 args=(conn, addr),
@@ -807,8 +824,10 @@ class PhoneCameraServer:
 
             with self._lock:
                 ssl_ctx = self._ssl_ctx
+            is_tls = False
             if first_byte[0] == 0x16 and ssl_ctx is not None:
                 conn = ssl_ctx.wrap_socket(conn, server_side=True)
+                is_tls = True
 
             req_data = b""
             while b"\r\n\r\n" not in req_data and len(req_data) < 16384:
@@ -821,7 +840,8 @@ class PhoneCameraServer:
                 conn.close()
                 return
 
-            header_text = req_data.split(b"\r\n\r\n", 1)[0].decode("latin-1", errors="replace")
+            head_bytes, _, leftover = req_data.partition(b"\r\n\r\n")
+            header_text = head_bytes.decode("latin-1", errors="replace")
             lines = header_text.split("\r\n")
             req_line = lines[0].split()
             raw_path = req_line[1] if len(req_line) >= 2 else "/"
@@ -836,6 +856,20 @@ class PhoneCameraServer:
                 if ":" in line:
                     k, v = line.split(":", 1)
                     headers[k.strip().lower()] = v.strip()
+
+            # Enforce HTTPS on non-loopback LAN clients via clean 301 redirect
+            if not is_tls and ssl_ctx is not None and addr[0] not in ("127.0.0.1", "::1"):
+                host_hdr = headers.get("host") or f"{self.get_active_ip()}:{self.actual_port}"
+                safe_loc = f"https://{host_hdr}{raw_path}".replace("\r", "").replace("\n", "")
+                redir = (
+                    "HTTP/1.1 301 Moved Permanently\r\n"
+                    f"Location: {safe_loc}\r\n"
+                    "Content-Length: 0\r\n"
+                    "Connection: close\r\n\r\n"
+                ).encode("ascii", errors="ignore")
+                conn.sendall(redir)
+                conn.close()
+                return
 
             if headers.get("upgrade", "").lower() == "websocket" or path.startswith("/ws"):
                 if not token_valid:
@@ -863,7 +897,7 @@ class PhoneCameraServer:
                     f"Sec-WebSocket-Accept: {accept_val}\r\n\r\n"
                 )
                 conn.sendall(resp.encode("ascii"))
-                self._run_websocket_session(conn, addr[0])
+                self._run_websocket_session(conn, addr[0], initial_buf=leftover)
             else:
                 if not token_valid:
                     body = load_webapp_html("expired_session.html", EXPIRED_SESSION_HTML).encode("utf-8")
@@ -897,10 +931,16 @@ class PhoneCameraServer:
                 conn.close()
             except Exception:
                 pass
+        finally:
+            self._conn_sem.release()
 
     @staticmethod
-    def _recv_exact(sock: socket.socket, n: int) -> Optional[bytes]:
+    def _recv_exact(sock: socket.socket, n: int, prefetched: Optional[bytearray] = None) -> Optional[bytes]:
         buf = bytearray()
+        if prefetched:
+            take = min(n, len(prefetched))
+            buf.extend(prefetched[:take])
+            del prefetched[:take]
         while len(buf) < n:
             chunk = sock.recv(n - len(buf))
             if not chunk:
@@ -919,11 +959,23 @@ class PhoneCameraServer:
             hdr = struct.pack("!BBQ", 0x80 | opcode, 127, length)
         sock.sendall(hdr + payload)
 
+    def _ws_send_frame_locked(self, sock: socket.socket, opcode: int, payload: bytes) -> None:
+        with self._ws_send_lock:
+            self._ws_send_frame(sock, opcode, payload)
+
     @classmethod
     def _ws_send_text(cls, sock: socket.socket, text: str) -> None:
         cls._ws_send_frame(sock, 0x01, text.encode("utf-8"))
 
-    def _run_websocket_session(self, sock: socket.socket, client_ip: str) -> None:
+    def _ws_send_text_locked(self, sock: socket.socket, text: str) -> None:
+        self._ws_send_frame_locked(sock, 0x01, text.encode("utf-8"))
+
+    def _run_websocket_session(
+        self,
+        sock: socket.socket,
+        client_ip: str,
+        initial_buf: bytes = b"",
+    ) -> None:
         sock.settimeout(5.0)
         with self._lock:
             old_sock = self._client_sock
@@ -942,35 +994,41 @@ class PhoneCameraServer:
         # Push current target configuration immediately upon WebSocket connect
         self.configure_stream()
 
+        prefetched = bytearray(initial_buf)
+        frag_opcode: Optional[int] = None
+        frag_buf = bytearray()
+        max_msg_bytes = 4 * 1024 * 1024
+
         try:
             while self.running:
-                hdr2 = self._recv_exact(sock, 2)
+                hdr2 = self._recv_exact(sock, 2, prefetched)
                 if not hdr2:
                     break
                 b0, b1 = hdr2[0], hdr2[1]
+                fin = bool(b0 & 0x80)
                 opcode = b0 & 0x0F
                 masked = bool(b1 & 0x80)
                 length = b1 & 0x7F
 
                 if length == 126:
-                    ext = self._recv_exact(sock, 2)
+                    ext = self._recv_exact(sock, 2, prefetched)
                     if not ext:
                         break
                     length = struct.unpack("!H", ext)[0]
                 elif length == 127:
-                    ext = self._recv_exact(sock, 8)
+                    ext = self._recv_exact(sock, 8, prefetched)
                     if not ext:
                         break
                     length = struct.unpack("!Q", ext)[0]
 
-                if length > 4 * 1024 * 1024:
+                if length > max_msg_bytes:
                     break
 
-                mask_key = self._recv_exact(sock, 4) if masked else None
+                mask_key = self._recv_exact(sock, 4, prefetched) if masked else None
                 if masked and not mask_key:
                     break
 
-                payload = self._recv_exact(sock, length) if length > 0 else b""
+                payload = self._recv_exact(sock, length, prefetched) if length > 0 else b""
                 if payload is None:
                     break
 
@@ -982,18 +1040,49 @@ class PhoneCameraServer:
                     arr[1::4] ^= mask_key[1]
                     arr[2::4] ^= mask_key[2]
                     arr[3::4] ^= mask_key[3]
-                    if opcode == 0x02:
+                    if opcode == 0x02 and fin and frag_opcode is None:
                         unmasked_arr = arr
                     else:
                         payload = arr.tobytes()
 
+                # Control frames (may arrive interleaved inside fragmented messages)
                 if opcode == 0x08:  # Close
                     break
                 elif opcode == 0x09:  # Ping -> Pong
-                    self._ws_send_frame(sock, 0x0A, payload)
-                elif opcode == 0x01:  # Text JSON message (hello / edge_metrics)
+                    self._ws_send_frame_locked(sock, 0x0A, payload[:125])
+                    continue
+                elif opcode == 0x0A:  # Pong
+                    continue
+
+                # RFC 6455 fragmented data frame reassembly
+                if opcode in (0x01, 0x02):
+                    if not fin:
+                        frag_opcode = opcode
+                        frag_buf = bytearray(payload)
+                        continue
+                    # Unfragmented complete message
+                    frag_opcode = None
+                    frag_buf.clear()
+                    msg_op = opcode
+                elif opcode == 0x00:  # Continuation frame
+                    if frag_opcode is None:
+                        break
+                    if len(frag_buf) + len(payload) > max_msg_bytes:
+                        break
+                    frag_buf.extend(payload)
+                    if not fin:
+                        continue
+                    msg_op = frag_opcode
+                    payload = bytes(frag_buf)
+                    unmasked_arr = None
+                    frag_opcode = None
+                    frag_buf.clear()
+                else:
+                    continue
+
+                if msg_op == 0x01:  # Text JSON message (hello / edge_metrics / ping)
                     self._handle_json_message(payload.decode("utf-8", errors="replace"))
-                elif opcode == 0x02:  # Binary JPEG frame
+                elif msg_op == 0x02:  # Binary JPEG frame
                     self._handle_binary_frame(unmasked_arr if unmasked_arr is not None else payload)
         except Exception as e:
             try:
@@ -1029,19 +1118,29 @@ class PhoneCameraServer:
             except Exception:
                 pass
             return
+        if not isinstance(msg, dict):
+            return
         msg_type = msg.get("type")
         if msg_type == "hello":
             with self._lock:
-                self.client_device_name = str(msg.get("device") or "Smartphone")
-                lens = str(msg.get("lens") or "user")
+                dev = msg.get("device")
+                if isinstance(dev, str) and dev.strip():
+                    self.client_device_name = dev.strip()[:80]
+                lens = str(msg.get("lens") or "")
                 if lens in ("user", "environment"):
                     self.client_lens = lens
-                if msg.get("width") and msg.get("height"):
-                    self.actual_w = int(msg["width"])
-                    self.actual_h = int(msg["height"])
+                if msg.get("width") is not None and msg.get("height") is not None:
+                    try:
+                        w_val = int(msg["width"])
+                        h_val = int(msg["height"])
+                        if 64 <= w_val <= 3840 and 64 <= h_val <= 3840:
+                            self.actual_w = w_val
+                            self.actual_h = h_val
+                    except (ValueError, TypeError):
+                        pass
                 caps = msg.get("capabilities")
                 if isinstance(caps, list):
-                    self.client_capabilities = [str(c) for c in caps]
+                    self.client_capabilities = [str(c) for c in caps[:16]]
         elif msg_type == "edge_metrics":
             with self._lock:
                 self.latest_edge_metrics = msg

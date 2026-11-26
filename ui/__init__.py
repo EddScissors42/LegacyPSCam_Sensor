@@ -59,7 +59,7 @@ except ImportError:
 LegacySensorGUI = LegacySensorQtGUI
 
 
-def launch_app() -> int:
+def launch_app(cli_overrides=None) -> int:
     """
     Launches the primary graphical interface using PySide6 (Qt 6).
     """
@@ -104,7 +104,7 @@ def launch_app() -> int:
     pal.setColor(QtGui.QPalette.ColorGroup.Disabled, QtGui.QPalette.ColorRole.WindowText, QtGui.QColor("#94A3B8"))
     app.setPalette(pal)
 
-    window = LegacySensorQtGUI()
+    window = LegacySensorQtGUI(cli_overrides=cli_overrides)
     window.show()
 
     # Dismiss PyInstaller native boot splash screen as soon as Qt window is painted

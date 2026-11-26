@@ -132,8 +132,25 @@ class UIDeviceReadoutMixin:
             self._update_video_view_visibility()
         self._update_start_button_state()
 
+    @staticmethod
+    def _set_style_if_changed(widget, css: str) -> None:
+        if widget is None:
+            return
+        if widget.property("_cached_qss") != css:
+            widget.setProperty("_cached_qss", css)
+            widget.setStyleSheet(css)
+
+    @staticmethod
+    def _set_text_if_changed(widget, text: str) -> None:
+        if widget is None:
+            return
+        if widget.text() != text:
+            widget.setText(text)
+
     @Slot(str, int, str)
     def _on_vphone_discover_finished(self, ip: str, port: int, code: str):
+        if getattr(self, "_is_closing", False):
+            return
         for btn_attr in ("btn_vphone_discover", "btn_ds4_sb_discover"):
             btn = getattr(self, btn_attr, None)
             if btn is not None:
@@ -205,11 +222,11 @@ class UIDeviceReadoutMixin:
             dis_style = (
                 f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['text_muted']}; background: transparent; border: none;"
             )
-            self.lbl_vphone_status.setText("Status: Disabled (Virtual Phone)")
-            self.lbl_vphone_status.setStyleSheet(dis_style)
+            self._set_text_if_changed(self.lbl_vphone_status, "Status: Disabled (Virtual Phone)")
+            self._set_style_if_changed(self.lbl_vphone_status, dis_style)
             if hasattr(self, "lbl_ds4_sb_status"):
-                self.lbl_ds4_sb_status.setText("Status: Disconnected")
-                self.lbl_ds4_sb_status.setStyleSheet(dis_style)
+                self._set_text_if_changed(self.lbl_ds4_sb_status, "Status: Disconnected")
+                self._set_style_if_changed(self.lbl_ds4_sb_status, dis_style)
             return
 
         status = st.get("status_text", "")
@@ -222,14 +239,14 @@ class UIDeviceReadoutMixin:
         st_style = (
             f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {color}; background: transparent; border: none;"
         )
-        self.lbl_vphone_status.setText(f"Status: {status}")
-        self.lbl_vphone_status.setStyleSheet(st_style)
+        self._set_text_if_changed(self.lbl_vphone_status, f"Status: {status}")
+        self._set_style_if_changed(self.lbl_vphone_status, st_style)
         if hasattr(self, "lbl_ds4_sb_status"):
-            self.lbl_ds4_sb_status.setText(f"Status: {status}")
-            self.lbl_ds4_sb_status.setStyleSheet(st_style)
+            self._set_text_if_changed(self.lbl_ds4_sb_status, f"Status: {status}")
+            self._set_style_if_changed(self.lbl_ds4_sb_status, st_style)
 
         lbl_song = getattr(self, "lbl_benchmark_song", getattr(self, "lbl_vphone_song", None))
-        if lbl_song is not None:
+        if lbl_song is not None and lbl_song.isVisible():
             is_watching = getattr(self, "chk_benchmark_enabled", None) and self.chk_benchmark_enabled.isChecked()
             if is_watching and not self.vphone.enabled:
                 self.controller.devices.set_vphone_enabled(True)
@@ -241,24 +258,28 @@ class UIDeviceReadoutMixin:
                 else:
                     status_tag = " [Lobby / Paused - Ready]" if is_watching else " [Lobby / Paused]"
                     color = PALETTE["blue_dark"]
-                lbl_song.setText(f"Active Song: {song_name}{status_tag}")
-                lbl_song.setStyleSheet(
-                    f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {color}; background: transparent; border: none;"
+                self._set_text_if_changed(lbl_song, f"Active Song: {song_name}{status_tag}")
+                self._set_style_if_changed(
+                    lbl_song,
+                    f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {color}; background: transparent; border: none;",
                 )
             else:
                 if is_watching:
                     msg = "Active Song: None (Watching for Just Dance song start...)"
                 else:
                     msg = "Active Song: None (Awaiting Just Dance Selection)"
-                lbl_song.setText(msg)
-                lbl_song.setStyleSheet(
-                    f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['text_muted']}; background: transparent; border: none;"
+                self._set_text_if_changed(lbl_song, msg)
+                self._set_style_if_changed(
+                    lbl_song,
+                    f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['text_muted']}; background: transparent; border: none;",
                 )
 
-        if hasattr(self, "btn_vphone_log"):
+        if hasattr(self, "btn_vphone_log") and self.btn_vphone_log.isVisible():
             if st.get("is_logging"):
-                self.btn_vphone_log.setText("Stop Log (REC)")
-                self.btn_vphone_log.setStyleSheet(f"""
+                self._set_text_if_changed(self.btn_vphone_log, "Stop Log (REC)")
+                self._set_style_if_changed(
+                    self.btn_vphone_log,
+                    f"""
                     QPushButton {{
                         background-color: {PALETTE["blue_pastel"]};
                         color: {PALETTE["blue_dark"]};
@@ -269,10 +290,11 @@ class UIDeviceReadoutMixin:
                         border-radius: 6px;
                         padding: 6px 14px;
                     }}
-                """)
+                """,
+                )
             else:
-                self.btn_vphone_log.setText("Record Log")
-                self.btn_vphone_log.setStyleSheet(getattr(self, "_btn_vphone_outline_style", ""))
+                self._set_text_if_changed(self.btn_vphone_log, "Record Log")
+                self._set_style_if_changed(self.btn_vphone_log, getattr(self, "_btn_vphone_outline_style", ""))
 
         should_show_accel = getattr(self, "is_tracking_active", False)
         if self.lbl_vphone_accel.isVisible() != should_show_accel:
@@ -306,39 +328,48 @@ class UIDeviceReadoutMixin:
             batt = st.get("battery_pct", 0)
 
             if st.get("imu_frozen", False):
-                self.lbl_ds4_status.setText(
-                    f"Status: {ctrl_name} ({conn_type}) — [!] IMU SENSOR FROZEN (0G): Connect via USB cable!"
+                self._set_text_if_changed(
+                    self.lbl_ds4_status,
+                    f"Status: {ctrl_name} ({conn_type}) — [!] IMU SENSOR FROZEN (0G): Connect via USB cable!",
                 )
-                self.lbl_ds4_status.setStyleSheet(
-                    f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['status_err']}; background: transparent; border: none;"
-                )
-            else:
-                self.lbl_ds4_status.setText(
-                    f"Status: {ctrl_name} ({conn_type} • {rate:.0f} Hz • Battery: {batt}%{charging_str})"
-                )
-                self.lbl_ds4_status.setStyleSheet(
-                    f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['ps_blue']}; background: transparent; border: none;"
-                )
-
-            ax, ay, az = st.get("accel_g", (0.0, 0.0, 0.0))
-            tot = st.get("total_g", 0.0)
-            act_btns = st.get("buttons", [])
-            btn_str = f"  |  Buttons: {', '.join(act_btns)}" if act_btns else ""
-
-            if st.get("imu_frozen", False):
-                self.lbl_ds4_accel.setText(
-                    f"3D Accelerometer: 0.00G (IMU Inactive/Zeroed over BT)  |  Buttons: {', '.join(act_btns) if act_btns else 'None'}"
-                )
-                self.lbl_ds4_accel.setStyleSheet(
-                    f"font-family: '{self.font_body}'; font-size: 11px; font-weight: 600; color: {PALETTE['status_err']}; background: transparent; border: none;"
+                self._set_style_if_changed(
+                    self.lbl_ds4_status,
+                    f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['status_err']}; background: transparent; border: none;",
                 )
             else:
-                self.lbl_ds4_accel.setText(
-                    f"3D Accelerometer: X: {ax:+.2f}G  |  Y: {ay:+.2f}G  |  Z: {az:+.2f}G  |  |G|: {tot:.2f}G{btn_str}"
+                self._set_text_if_changed(
+                    self.lbl_ds4_status,
+                    f"Status: {ctrl_name} ({conn_type} • {rate:.0f} Hz • Battery: {batt}%{charging_str})",
                 )
-                self.lbl_ds4_accel.setStyleSheet(
-                    f"font-family: '{self.font_body}'; font-size: 11px; font-weight: 600; color: {PALETTE['text_main']}; background: transparent; border: none;"
+                self._set_style_if_changed(
+                    self.lbl_ds4_status,
+                    f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['ps_blue']}; background: transparent; border: none;",
                 )
+
+            if self.lbl_ds4_accel.isVisible():
+                ax, ay, az = st.get("accel_g", (0.0, 0.0, 0.0))
+                tot = st.get("total_g", 0.0)
+                act_btns = st.get("buttons", [])
+                btn_str = f"  |  Buttons: {', '.join(act_btns)}" if act_btns else ""
+
+                if st.get("imu_frozen", False):
+                    self._set_text_if_changed(
+                        self.lbl_ds4_accel,
+                        f"3D Accelerometer: 0.00G (IMU Inactive/Zeroed over BT)  |  Buttons: {', '.join(act_btns) if act_btns else 'None'}",
+                    )
+                    self._set_style_if_changed(
+                        self.lbl_ds4_accel,
+                        f"font-family: '{self.font_body}'; font-size: 11px; font-weight: 600; color: {PALETTE['status_err']}; background: transparent; border: none;",
+                    )
+                else:
+                    self._set_text_if_changed(
+                        self.lbl_ds4_accel,
+                        f"3D Accelerometer: X: {ax:+.2f}G  |  Y: {ay:+.2f}G  |  Z: {az:+.2f}G  |  |G|: {tot:.2f}G{btn_str}",
+                    )
+                    self._set_style_if_changed(
+                        self.lbl_ds4_accel,
+                        f"font-family: '{self.font_body}'; font-size: 11px; font-weight: 600; color: {PALETTE['text_main']}; background: transparent; border: none;",
+                    )
         else:
             if hasattr(self, "ds4_disconnected_box"):
                 self.ds4_disconnected_box.setVisible(True)
@@ -348,17 +379,19 @@ class UIDeviceReadoutMixin:
                 det_name = st.get("controller_name", "DualShock 4")
                 det_str = st.get("connection_type", "")
                 if hasattr(self, "lbl_ds4_conn_title"):
-                    self.lbl_ds4_conn_title.setText(f"{det_name} detected {det_str}")
+                    self._set_text_if_changed(self.lbl_ds4_conn_title, f"{det_name} detected {det_str}")
                 if hasattr(self, "lbl_ds4_conn_info"):
-                    self.lbl_ds4_conn_info.setText(f"Connecting to {det_name} {det_str}...")
-                self.lbl_ds4_status.setText(f"Status: {det_name} detected {det_str} (Connecting...)")
-                self.lbl_ds4_status.setStyleSheet(
-                    f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['status_warn']}; background: transparent; border: none;"
+                    self._set_text_if_changed(self.lbl_ds4_conn_info, f"Connecting to {det_name} {det_str}...")
+                self._set_text_if_changed(self.lbl_ds4_status, f"Status: {det_name} detected {det_str} (Connecting...)")
+                self._set_style_if_changed(
+                    self.lbl_ds4_status,
+                    f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['status_warn']}; background: transparent; border: none;",
                 )
-                if not getattr(self, "_is_connecting_ds4", False) and not getattr(self, "is_tracking_active", False):
-                    self._is_connecting_ds4 = True
+                # Use DeviceController.is_connecting_ds4 as single source of truth (prevents reconnect deadlock)
+                if not self.controller.devices.is_connecting_ds4 and not getattr(self, "is_tracking_active", False):
                     def _done(_ok):
-                        self._is_connecting_ds4 = False
+                        if getattr(self, "_is_closing", False):
+                            return
                         try:
                             QtCore.QMetaObject.invokeMethod(self, "_finish_ds4_reconnect", Qt.ConnectionType.QueuedConnection)
                         except (RuntimeError, Exception):
@@ -366,17 +399,23 @@ class UIDeviceReadoutMixin:
                     self.controller.devices.connect_ds4_async(callback=_done)
             else:
                 if hasattr(self, "lbl_ds4_conn_title"):
-                    self.lbl_ds4_conn_title.setText("DualShock® 4 not connected")
+                    self._set_text_if_changed(self.lbl_ds4_conn_title, "DualShock® 4 not connected")
                 if hasattr(self, "lbl_ds4_conn_info"):
-                    self.lbl_ds4_conn_info.setText("Connect via USB cable or pair via Windows Bluetooth Settings.")
-                self.lbl_ds4_status.setText("Status: Controller Disconnected (Connect via USB cable or pair via Bluetooth.)")
-                self.lbl_ds4_status.setStyleSheet(
-                    f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['text_muted']}; background: transparent; border: none;"
+                    self._set_text_if_changed(self.lbl_ds4_conn_info, "Connect via USB cable or pair via Windows Bluetooth Settings.")
+                self._set_text_if_changed(
+                    self.lbl_ds4_status,
+                    "Status: Controller Disconnected (Connect via USB cable or pair via Bluetooth.)",
                 )
-            self.lbl_ds4_accel.setText("3D Accelerometer: Disconnected")
-            self.lbl_ds4_accel.setStyleSheet(
-                f"font-family: '{self.font_body}'; font-size: 11px; font-weight: 500; color: {PALETTE['text_muted']}; background: transparent; border: none;"
-            )
+                self._set_style_if_changed(
+                    self.lbl_ds4_status,
+                    f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['text_muted']}; background: transparent; border: none;",
+                )
+            if self.lbl_ds4_accel.isVisible():
+                self._set_text_if_changed(self.lbl_ds4_accel, "3D Accelerometer: Disconnected")
+                self._set_style_if_changed(
+                    self.lbl_ds4_accel,
+                    f"font-family: '{self.font_body}'; font-size: 11px; font-weight: 500; color: {PALETTE['text_muted']}; background: transparent; border: none;",
+                )
         self._update_start_button_state()
 
 

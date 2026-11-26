@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 from ui.theme import PALETTE, CALIB_PRESETS
-from ui.widgets import CalibPresetCard
+from ui.widgets import CalibPresetCard, SettingBlock
 
 
 class UIPagesMixin:
@@ -115,39 +115,17 @@ class UIPagesMixin:
         ps_conn_layout.addWidget(spec_badge)
 
         # Eye Sensor Selector Block (Right Eye Default / Left Eye)
-        self.block_ps_eye = QFrame(self.pscam_card)
-        self.block_ps_eye.setObjectName("settingBlockPsEye")
-        self.block_ps_eye.setFixedHeight(92)
-        self.block_ps_eye.setStyleSheet(f"""
-            QFrame#settingBlockPsEye {{
-                background-color: #FFFFFF;
-                border: 1px solid {PALETTE["border_subtle"]};
-                border-radius: 10px;
-            }}
-            QFrame#settingBlockPsEye:hover {{
-                border-color: {PALETTE["input_border"]};
-            }}
-            QFrame#settingBlockPsEye:disabled {{
-                background-color: {PALETTE["input_bg"]};
-                border-color: {PALETTE["border_subtle"]};
-            }}
-        """)
-        ps_eye_layout = QVBoxLayout(self.block_ps_eye)
-        ps_eye_layout.setContentsMargins(14, 10, 14, 10)
-        ps_eye_layout.setSpacing(4)
-
-        lbl_eye_title = QLabel("CAMERA SENSOR EYE (OV9713 STEREO)", self.block_ps_eye)
-        lbl_eye_title.setStyleSheet(
-            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent; border: none;"
+        self.block_ps_eye = SettingBlock(
+            "CAMERA SENSOR EYE (OV9713 STEREO)",
+            "Select which lens feeds body tracking (Right Eye is the standard default).",
+            object_name="settingBlockPsEye",
+            font_heading=self.font_heading,
+            font_body=self.font_body,
+            min_height=92,
+            disabled_style=True,
+            parent=self.pscam_card,
         )
-        ps_eye_layout.addWidget(lbl_eye_title)
-
-        lbl_eye_sub = QLabel("Select which lens feeds body tracking (Right Eye is the standard default).", self.block_ps_eye)
-        lbl_eye_sub.setWordWrap(True)
-        lbl_eye_sub.setStyleSheet(
-            f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
-        )
-        ps_eye_layout.addWidget(lbl_eye_sub)
+        ps_eye_layout = self.block_ps_eye.content_layout
 
         self.cb_ps4_eye = QComboBox(self.block_ps_eye)
         self.cb_ps4_eye.setFixedHeight(32)
@@ -226,34 +204,16 @@ class UIPagesMixin:
         web_conn_layout.addWidget(lbl_wc_sub)
 
         # 1. Row 1: Camera Device (Full width block)
-        block_dev = QFrame(self.webcam_card)
-        block_dev.setObjectName("settingBlockDev")
-        block_dev.setFixedHeight(90)
-        block_dev.setStyleSheet(f"""
-            QFrame#settingBlockDev {{
-                background-color: #FFFFFF;
-                border: 1px solid {PALETTE["border_subtle"]};
-                border-radius: 10px;
-            }}
-            QFrame#settingBlockDev:hover {{
-                border-color: {PALETTE["input_border"]};
-            }}
-        """)
-        dev_layout = QVBoxLayout(block_dev)
-        dev_layout.setContentsMargins(14, 10, 14, 10)
-        dev_layout.setSpacing(4)
-
-        lbl_dev_title = QLabel("CAMERA DEVICE", block_dev)
-        lbl_dev_title.setStyleSheet(
-            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent; border: none;"
+        block_dev = SettingBlock(
+            "CAMERA DEVICE",
+            "Active Video Source",
+            object_name="settingBlockDev",
+            font_heading=self.font_heading,
+            font_body=self.font_body,
+            min_height=90,
+            parent=self.webcam_card,
         )
-        dev_layout.addWidget(lbl_dev_title)
-
-        lbl_dev_sub = QLabel("Active Video Source", block_dev)
-        lbl_dev_sub.setStyleSheet(
-            f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
-        )
-        dev_layout.addWidget(lbl_dev_sub)
+        dev_layout = block_dev.content_layout
 
         dev_ctrl_row = QHBoxLayout()
         dev_ctrl_row.setContentsMargins(0, 0, 0, 0)
@@ -303,35 +263,16 @@ class UIPagesMixin:
         row_res_fps.setSpacing(10)
 
         # Block 2: Resolution
-        block_res = QFrame(self.webcam_card)
-        block_res.setObjectName("settingBlockRes")
-        block_res.setFixedHeight(108)
-        block_res.setStyleSheet(f"""
-            QFrame#settingBlockRes {{
-                background-color: #FFFFFF;
-                border: 1px solid {PALETTE["border_subtle"]};
-                border-radius: 10px;
-            }}
-            QFrame#settingBlockRes:hover {{
-                border-color: {PALETTE["input_border"]};
-            }}
-        """)
-        res_layout = QVBoxLayout(block_res)
-        res_layout.setContentsMargins(14, 10, 14, 10)
-        res_layout.setSpacing(4)
-
-        lbl_res_title = QLabel("RESOLUTION", block_res)
-        lbl_res_title.setStyleSheet(
-            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent; border: none;"
+        block_res = SettingBlock(
+            "RESOLUTION",
+            "Sharper picture, but higher CPU usage. The game still receives as 640x480.",
+            object_name="settingBlockRes",
+            font_heading=self.font_heading,
+            font_body=self.font_body,
+            min_height=108,
+            parent=self.webcam_card,
         )
-        res_layout.addWidget(lbl_res_title)
-
-        lbl_res_sub = QLabel("Sharper picture, but higher CPU usage. The game still receives as 640x480.", block_res)
-        lbl_res_sub.setWordWrap(True)
-        lbl_res_sub.setStyleSheet(
-            f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent; border: none; line-height: 120%;"
-        )
-        res_layout.addWidget(lbl_res_sub)
+        res_layout = block_res.content_layout
 
         self.cb_res = QComboBox(block_res)
         self.cb_res.setFixedHeight(32)
@@ -341,35 +282,16 @@ class UIPagesMixin:
         row_res_fps.addWidget(block_res, stretch=1)
 
         # Block 3: FPS
-        block_fps = QFrame(self.webcam_card)
-        block_fps.setObjectName("settingBlockFps")
-        block_fps.setFixedHeight(108)
-        block_fps.setStyleSheet(f"""
-            QFrame#settingBlockFps {{
-                background-color: #FFFFFF;
-                border: 1px solid {PALETTE["border_subtle"]};
-                border-radius: 10px;
-            }}
-            QFrame#settingBlockFps:hover {{
-                border-color: {PALETTE["input_border"]};
-            }}
-        """)
-        fps_layout = QVBoxLayout(block_fps)
-        fps_layout.setContentsMargins(14, 10, 14, 10)
-        fps_layout.setSpacing(4)
-
-        lbl_fps_title = QLabel("FRAMERATE (FPS)", block_fps)
-        lbl_fps_title.setStyleSheet(
-            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent; border: none;"
+        block_fps = SettingBlock(
+            "FRAMERATE (FPS)",
+            "Target capture speed. 60 FPS requires camera support and more CPU.",
+            object_name="settingBlockFps",
+            font_heading=self.font_heading,
+            font_body=self.font_body,
+            min_height=108,
+            parent=self.webcam_card,
         )
-        fps_layout.addWidget(lbl_fps_title)
-
-        lbl_fps_sub = QLabel("Target capture speed. 60 FPS requires camera support and more CPU.", block_fps)
-        lbl_fps_sub.setWordWrap(True)
-        lbl_fps_sub.setStyleSheet(
-            f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent; border: none; line-height: 120%;"
-        )
-        fps_layout.addWidget(lbl_fps_sub)
+        fps_layout = block_fps.content_layout
 
         self.cb_fps = QComboBox(block_fps)
         self.cb_fps.setFixedHeight(32)
@@ -473,7 +395,7 @@ class UIPagesMixin:
         )
         lbl_steps.setWordWrap(True)
         lbl_steps.setStyleSheet(
-            f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['text_main']}; background: transparent; border: none; line-height: 132%;"
+            f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['text_main']}; background: transparent; border: none;"
         )
         instr_col.addWidget(lbl_steps)
         instr_col.addStretch()
@@ -547,28 +469,15 @@ class UIPagesMixin:
         ph_conn_layout.addWidget(lbl_ph_title)
 
         # Row 1: Connected Smartphone Info (Pulled to the top)
-        block_ph_dev = QFrame(self.phone_cam_card)
-        block_ph_dev.setObjectName("settingBlockPhoneDev")
-        block_ph_dev.setFixedHeight(64)
-        block_ph_dev.setStyleSheet(f"""
-            QFrame#settingBlockPhoneDev {{
-                background-color: #FFFFFF;
-                border: 1px solid {PALETTE["border_subtle"]};
-                border-radius: 10px;
-            }}
-            QFrame#settingBlockPhoneDev:hover {{
-                border-color: {PALETTE["input_border"]};
-            }}
-        """)
-        ph_dev_layout = QVBoxLayout(block_ph_dev)
-        ph_dev_layout.setContentsMargins(14, 10, 14, 10)
-        ph_dev_layout.setSpacing(4)
-
-        lbl_ph_dev_title = QLabel("CONNECTED SMARTPHONE", block_ph_dev)
-        lbl_ph_dev_title.setStyleSheet(
-            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent; border: none;"
+        block_ph_dev = SettingBlock(
+            "CONNECTED SMARTPHONE",
+            object_name="settingBlockPhoneDev",
+            font_heading=self.font_heading,
+            font_body=self.font_body,
+            min_height=64,
+            parent=self.phone_cam_card,
         )
-        ph_dev_layout.addWidget(lbl_ph_dev_title)
+        ph_dev_layout = block_ph_dev.content_layout
 
         self.lbl_phone_cam_ready_info = QLabel("Smartphone connected and ready (Wi-Fi WebApp)", block_ph_dev)
         self.lbl_phone_cam_ready_info.setStyleSheet(
@@ -582,35 +491,16 @@ class UIPagesMixin:
         row_ph_res_fps = QHBoxLayout()
         row_ph_res_fps.setSpacing(10)
 
-        block_ph_res = QFrame(self.phone_cam_card)
-        block_ph_res.setObjectName("settingBlockPhoneRes")
-        block_ph_res.setFixedHeight(108)
-        block_ph_res.setStyleSheet(f"""
-            QFrame#settingBlockPhoneRes {{
-                background-color: #FFFFFF;
-                border: 1px solid {PALETTE["border_subtle"]};
-                border-radius: 10px;
-            }}
-            QFrame#settingBlockPhoneRes:hover {{
-                border-color: {PALETTE["input_border"]};
-            }}
-        """)
-        ph_res_layout = QVBoxLayout(block_ph_res)
-        ph_res_layout.setContentsMargins(14, 10, 14, 10)
-        ph_res_layout.setSpacing(4)
-
-        lbl_ph_res_title = QLabel("RESOLUTION", block_ph_res)
-        lbl_ph_res_title.setStyleSheet(
-            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent; border: none;"
+        block_ph_res = SettingBlock(
+            "RESOLUTION",
+            "640x480 provides the lowest Wi-Fi latency. The game receives 640x480.",
+            object_name="settingBlockPhoneRes",
+            font_heading=self.font_heading,
+            font_body=self.font_body,
+            min_height=108,
+            parent=self.phone_cam_card,
         )
-        ph_res_layout.addWidget(lbl_ph_res_title)
-
-        lbl_ph_res_sub = QLabel("640x480 provides the lowest Wi-Fi latency. The game receives 640x480.", block_ph_res)
-        lbl_ph_res_sub.setWordWrap(True)
-        lbl_ph_res_sub.setStyleSheet(
-            f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent; border: none; line-height: 120%;"
-        )
-        ph_res_layout.addWidget(lbl_ph_res_sub)
+        ph_res_layout = block_ph_res.content_layout
 
         self.cb_phone_res = QComboBox(block_ph_res)
         self.cb_phone_res.setFixedHeight(32)
@@ -619,35 +509,16 @@ class UIPagesMixin:
         ph_res_layout.addWidget(self.cb_phone_res)
         row_ph_res_fps.addWidget(block_ph_res, stretch=1)
 
-        block_ph_fps = QFrame(self.phone_cam_card)
-        block_ph_fps.setObjectName("settingBlockPhoneFps")
-        block_ph_fps.setFixedHeight(108)
-        block_ph_fps.setStyleSheet(f"""
-            QFrame#settingBlockPhoneFps {{
-                background-color: #FFFFFF;
-                border: 1px solid {PALETTE["border_subtle"]};
-                border-radius: 10px;
-            }}
-            QFrame#settingBlockPhoneFps:hover {{
-                border-color: {PALETTE["input_border"]};
-            }}
-        """)
-        ph_fps_layout = QVBoxLayout(block_ph_fps)
-        ph_fps_layout.setContentsMargins(14, 10, 14, 10)
-        ph_fps_layout.setSpacing(4)
-
-        lbl_ph_fps_title = QLabel("FRAMERATE (FPS)", block_ph_fps)
-        lbl_ph_fps_title.setStyleSheet(
-            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent; border: none;"
+        block_ph_fps = SettingBlock(
+            "FRAMERATE (FPS)",
+            "Target wireless stream speed. 60 FPS requires strong 5 GHz Wi-Fi signal.",
+            object_name="settingBlockPhoneFps",
+            font_heading=self.font_heading,
+            font_body=self.font_body,
+            min_height=108,
+            parent=self.phone_cam_card,
         )
-        ph_fps_layout.addWidget(lbl_ph_fps_title)
-
-        lbl_ph_fps_sub = QLabel("Target wireless stream speed. 60 FPS requires strong 5 GHz Wi-Fi signal.", block_ph_fps)
-        lbl_ph_fps_sub.setWordWrap(True)
-        lbl_ph_fps_sub.setStyleSheet(
-            f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent; border: none; line-height: 120%;"
-        )
-        ph_fps_layout.addWidget(lbl_ph_fps_sub)
+        ph_fps_layout = block_ph_fps.content_layout
 
         self.cb_phone_fps = QComboBox(block_ph_fps)
         self.cb_phone_fps.setFixedHeight(32)
@@ -682,35 +553,16 @@ class UIPagesMixin:
         disp_layout.addWidget(lbl_disp_sub)
 
         # Block: Camera Orientation
-        block_orient = QFrame(self.display_card)
-        block_orient.setObjectName("settingBlockOrient")
-        block_orient.setFixedHeight(92)
-        block_orient.setStyleSheet(f"""
-            QFrame#settingBlockOrient {{
-                background-color: #FFFFFF;
-                border: 1px solid {PALETTE["border_subtle"]};
-                border-radius: 10px;
-            }}
-            QFrame#settingBlockOrient:hover {{
-                border-color: {PALETTE["input_border"]};
-            }}
-        """)
-        orient_layout = QVBoxLayout(block_orient)
-        orient_layout.setContentsMargins(14, 10, 14, 10)
-        orient_layout.setSpacing(4)
-
-        lbl_orient_title = QLabel("CAMERA ORIENTATION", block_orient)
-        lbl_orient_title.setStyleSheet(
-            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent; border: none;"
+        block_orient = SettingBlock(
+            "CAMERA ORIENTATION",
+            "Rotation angle if your camera is physically mounted sideways or inverted.",
+            object_name="settingBlockOrient",
+            font_heading=self.font_heading,
+            font_body=self.font_body,
+            min_height=92,
+            parent=self.display_card,
         )
-        orient_layout.addWidget(lbl_orient_title)
-
-        lbl_orient_sub = QLabel("Rotation angle if your camera is physically mounted sideways or inverted.", block_orient)
-        lbl_orient_sub.setWordWrap(True)
-        lbl_orient_sub.setStyleSheet(
-            f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
-        )
-        orient_layout.addWidget(lbl_orient_sub)
+        orient_layout = block_orient.content_layout
 
         self.cb_orient = QComboBox(block_orient)
         self.cb_orient.setFixedHeight(32)
@@ -826,38 +678,17 @@ class UIPagesMixin:
         card_layout.addWidget(self.two_player_warn_box)
 
         # Players Mode Selector Block (1 Player Solo / 2 Players Duo)
-        self.block_players_mode = QFrame(main_card)
-        self.block_players_mode.setObjectName("settingBlockPlayersMode")
-        self.block_players_mode.setFixedHeight(96)
-        self.block_players_mode.setStyleSheet(f"""
-            QFrame#settingBlockPlayersMode {{
-                background-color: #FFFFFF;
-                border: 1px solid {PALETTE["border_subtle"]};
-                border-radius: 10px;
-            }}
-            QFrame#settingBlockPlayersMode:hover {{
-                border-color: {PALETTE["input_border"]};
-            }}
-        """)
-        pm_layout = QVBoxLayout(self.block_players_mode)
-        pm_layout.setContentsMargins(14, 10, 14, 10)
-        pm_layout.setSpacing(3)
-
-        lbl_pm_title = QLabel("PLAYERS MODE", self.block_players_mode)
-        lbl_pm_title.setStyleSheet(
-            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent; border: none;"
-        )
-        pm_layout.addWidget(lbl_pm_title)
-
-        lbl_pm_sub = QLabel(
+        self.block_players_mode = SettingBlock(
+            "PLAYERS MODE",
             "Choose whether to play by yourself or dance with a friend. The sensor tracks both players smoothly without mixing anyone up, even when dancing close together.",
-            self.block_players_mode,
+            object_name="settingBlockPlayersMode",
+            font_heading=self.font_heading,
+            font_body=self.font_body,
+            min_height=96,
+            spacing=3,
+            parent=main_card,
         )
-        lbl_pm_sub.setWordWrap(True)
-        lbl_pm_sub.setStyleSheet(
-            f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
-        )
-        pm_layout.addWidget(lbl_pm_sub)
+        pm_layout = self.block_players_mode.content_layout
 
         self.cb_players_mode = QComboBox(self.block_players_mode)
         self.cb_players_mode.setFixedHeight(32)
@@ -1297,7 +1128,7 @@ class UIPagesMixin:
         )
         lbl_warn_text.setWordWrap(True)
         lbl_warn_text.setStyleSheet(
-            f"font-family: '{self.font_body}'; font-size: 11px; font-weight: 500; color: #92400E; background: transparent; border: none; line-height: 1.4;"
+            f"font-family: '{self.font_body}'; font-size: 11px; font-weight: 500; color: #92400E; background: transparent; border: none;"
         )
         warn_layout.addWidget(lbl_warn_text, stretch=1)
         ds4_layout.addWidget(warn_box)
@@ -1399,34 +1230,16 @@ class UIPagesMixin:
         ds4_info_layout.setSpacing(10)
 
         # Block 1: Active Controller Device & Refresh (Full-width block matching block_dev of Webcam)
-        block_ds4_dev = QFrame(self.ds4_info_frame)
-        block_ds4_dev.setObjectName("settingBlockDs4Dev")
-        block_ds4_dev.setFixedHeight(90)
-        block_ds4_dev.setStyleSheet(f"""
-            QFrame#settingBlockDs4Dev {{
-                background-color: #FFFFFF;
-                border: 1px solid {PALETTE["border_subtle"]};
-                border-radius: 10px;
-            }}
-            QFrame#settingBlockDs4Dev:hover {{
-                border-color: {PALETTE["input_border"]};
-            }}
-        """)
-        ds4_dev_layout = QVBoxLayout(block_ds4_dev)
-        ds4_dev_layout.setContentsMargins(14, 10, 14, 10)
-        ds4_dev_layout.setSpacing(4)
-
-        lbl_dev_title = QLabel("CONTROLLER HARDWARE", block_ds4_dev)
-        lbl_dev_title.setStyleSheet(
-            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent; border: none;"
+        block_ds4_dev = SettingBlock(
+            "CONTROLLER HARDWARE",
+            "Active Wireless / USB Motion Device",
+            object_name="settingBlockDs4Dev",
+            font_heading=self.font_heading,
+            font_body=self.font_body,
+            min_height=90,
+            parent=self.ds4_info_frame,
         )
-        ds4_dev_layout.addWidget(lbl_dev_title)
-
-        lbl_dev_sub = QLabel("Active Wireless / USB Motion Device", block_ds4_dev)
-        lbl_dev_sub.setStyleSheet(
-            f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
-        )
-        ds4_dev_layout.addWidget(lbl_dev_sub)
+        ds4_dev_layout = block_ds4_dev.content_layout
 
         dev_ctrl_row = QHBoxLayout()
         dev_ctrl_row.setContentsMargins(0, 0, 0, 0)
@@ -1487,34 +1300,16 @@ class UIPagesMixin:
         row_settings.setSpacing(10)
 
         # Hand block
-        block_hand = QFrame(self.ds4_info_frame)
-        block_hand.setObjectName("settingBlockDs4Hand")
-        block_hand.setFixedHeight(108)
-        block_hand.setStyleSheet(f"""
-            QFrame#settingBlockDs4Hand {{
-                background-color: #FFFFFF;
-                border: 1px solid {PALETTE["border_subtle"]};
-                border-radius: 10px;
-            }}
-            QFrame#settingBlockDs4Hand:hover {{
-                border-color: {PALETTE["input_border"]};
-            }}
-        """)
-        hand_layout = QVBoxLayout(block_hand)
-        hand_layout.setContentsMargins(14, 10, 14, 10)
-        hand_layout.setSpacing(4)
-
-        lbl_hand = QLabel("TRACKED HAND", block_hand)
-        lbl_hand.setStyleSheet(
-            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent; border: none;"
+        block_hand = SettingBlock(
+            "TRACKED HAND",
+            "Holding Controller",
+            object_name="settingBlockDs4Hand",
+            font_heading=self.font_heading,
+            font_body=self.font_body,
+            min_height=108,
+            parent=self.ds4_info_frame,
         )
-        hand_layout.addWidget(lbl_hand)
-
-        lbl_hand_sub = QLabel("Holding Controller", block_hand)
-        lbl_hand_sub.setStyleSheet(
-            f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
-        )
-        hand_layout.addWidget(lbl_hand_sub)
+        hand_layout = block_hand.content_layout
 
         self.cb_ds4_hand = QComboBox(block_hand)
         self.cb_ds4_hand.setFixedHeight(32)
@@ -1527,34 +1322,16 @@ class UIPagesMixin:
         row_settings.addWidget(block_hand, stretch=1)
 
         # Sensitivity block
-        block_sens = QFrame(self.ds4_info_frame)
-        block_sens.setObjectName("settingBlockDs4Sens")
-        block_sens.setFixedHeight(108)
-        block_sens.setStyleSheet(f"""
-            QFrame#settingBlockDs4Sens {{
-                background-color: #FFFFFF;
-                border: 1px solid {PALETTE["border_subtle"]};
-                border-radius: 10px;
-            }}
-            QFrame#settingBlockDs4Sens:hover {{
-                border-color: {PALETTE["input_border"]};
-            }}
-        """)
-        sens_layout = QVBoxLayout(block_sens)
-        sens_layout.setContentsMargins(14, 10, 14, 10)
-        sens_layout.setSpacing(4)
-
-        lbl_sens = QLabel("MOTION SENSITIVITY", block_sens)
-        lbl_sens.setStyleSheet(
-            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent; border: none;"
+        block_sens = SettingBlock(
+            "MOTION SENSITIVITY",
+            "Hardware Accelerometer Gain",
+            object_name="settingBlockDs4Sens",
+            font_heading=self.font_heading,
+            font_body=self.font_body,
+            min_height=108,
+            parent=self.ds4_info_frame,
         )
-        sens_layout.addWidget(lbl_sens)
-
-        lbl_sens_sub = QLabel("Hardware Accelerometer Gain", block_sens)
-        lbl_sens_sub.setStyleSheet(
-            f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
-        )
-        sens_layout.addWidget(lbl_sens_sub)
+        sens_layout = block_sens.content_layout
 
         self.cb_ds4_sens = QComboBox(block_sens)
         self.cb_ds4_sens.setFixedHeight(32)
@@ -1638,7 +1415,7 @@ class UIPagesMixin:
         )
         lbl_instructions.setWordWrap(True)
         lbl_instructions.setStyleSheet(
-            f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['text_muted']}; line-height: 1.4; background: transparent; border: none;"
+            f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
         )
         ds4_info_layout.addWidget(lbl_instructions)
 
@@ -1670,8 +1447,8 @@ class UIPagesMixin:
         sb_layout.addWidget(lbl_sb_title)
 
         self.lbl_ds4_sb_desc = QLabel(
-            "Emulates a smartphone connected to Just Dance via WebSocket/TLS (/smartphone) and converts your hand motion "
-            "in the camera into 3D accelerometer commands for songs that only support hand controllers.",
+            "Connects to Just Dance via WebSocket/TLS (/smartphone) and streams the DualShock 4's built-in 3D "
+            "accelerometer (IMU) telemetry directly into the game's smartphone scoring channel.",
             self.scoring_bridge_box
         )
         self.lbl_ds4_sb_desc.setWordWrap(True)

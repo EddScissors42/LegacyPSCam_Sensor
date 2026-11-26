@@ -51,14 +51,13 @@ A PlayStation 4 Camera (modelos CUH-ZEY1 e **PlayStation 4 Camera Slim** CUH-ZEY
 
 ---
 
-## 3. Configuração do Just Dance PC (Emulate Kinect & Shared Memory IPC Bridge)
+## 3. Integração Automática com Just Dance PC (Emulação em Memória & IPC Bridge)
 
-Para que o jogo Just Dance PC leia os movimentos gerados pelo sensor através da Ponte de Memória Compartilhada sem substituir nenhum arquivo na pasta do jogo:
+O **Legacy PSCam Sensor** conecta-se ao Just Dance PC automaticamente através da Ponte de Memória Compartilhada do Windows sem substituir nenhum arquivo na pasta do jogo:
 
-1. Abra o **Legacy PSCam Sensor** e vá para a aba **Experimental**.
-2. Marque a opção **"Emulate Kinect"**.
-3. Inicie o Just Dance normalmente (`Legacy.exe`, `JustDance.exe` ou `jd2022.exe`).
-4. O sensor detecta a instância do jogo aberta e redireciona a API do Kinect diretamente na memória RAM (`Legacy10.dll`), sem precisar colar ou substituir o `Kinect10.dll` na pasta do jogo!
+1. Abra o **Legacy PSCam Sensor** (a emulação em memória é inicializada automaticamente em segundo plano).
+2. Inicie o Just Dance PC normalmente (`Legacy.exe` ou `JustDance.exe` 32-bit).
+3. O daemon `KinectEmulatorDaemon` detecta a instância do jogo aberta e roteia a API do Kinect diretamente na memória RAM (`tools/Legacy10.dll`), mantendo a `Kinect10.dll` original no disco 100% intacta.
 
 ---
 
@@ -73,21 +72,24 @@ Você também pode usar o launcher local (`LegacySensor.exe`) ou executar direta
 LegacyPSCam.exe
 ```
 
-- Abre o menu visual escuro instantaneamente, sem nenhuma janela de console/terminal.
-- Permite alternar entre **PlayStation Camera** e **Webcam Padrão**.
-- Permite escolher a resolução e taxa de quadros (ex: `1280x800 @ 60 FPS`).
-- Ajusta a sensibilidade do rastreador e calibração de altura.
-- Clique em **`▶ INICIAR RASTREAMENTO`** para iniciar a captura.
+- Abre a interface gráfica moderna estilo PlayStation (Qt 6 — Crisp White & PlayStation Blue) sem janela de console/terminal.
+- Permite alternar na barra lateral entre **PlayStation®Camera**, **Standard Webcam**, **DualShock 4** e **Phone Camera (Wi-Fi WebApp)**.
+- Permite escolher resolução, taxa de quadros (ex.: `1280x800 @ 60 FPS`), modo de jogadores (**1 Player** ou **2 Players [Experimental]**) e perfil de IA (**Competitive Lite** recomendado ou **Balanced Full**).
+- Clique em **`START TRACKING`** para iniciar a captura.
 
 ### Linha de Comando (CLI Avançada)
 Você também pode iniciar via terminal passando parâmetros específicos:
 
 ```powershell
-# Iniciar com a PS4 Camera no preset padrão
-python main.py --mode pscam
+# Verificar versão instalada
+python main.py --version
 
-# Iniciar forçando o uso de uma webcam específica (ex: índice 0)
+# Iniciar GUI forçando o modo PS4 Camera ou uma webcam específica
+python main.py --mode pscam
 python main.py --mode webcam --camera 0
+
+# Iniciar diretamente em modo portátil (armazena config.json e logs/ na pasta do app)
+python main.py --portable --start --mode pscam
 ```
 
 ---
@@ -108,7 +110,7 @@ Por padrão, o executável do driver PSCam4Win (`PSCam4WinTray.exe`) possui uma 
 
 ---
 
-## 5. Pareamento e Uso do DualShock 4 e Controles Compatíveis (Bluetooth / USB)
+## 6. Pareamento e Uso do DualShock 4 e Controles Compatíveis (Bluetooth / USB)
 
 Para utilizar o controle DualShock 4 ou controles compatíveis (Nível A) como controle de mão (rastreando os movimentos pelo acelerômetro físico interno):
 
@@ -129,7 +131,7 @@ Para utilizar o controle DualShock 4 ou controles compatíveis (Nível A) como c
 
 ---
 
-## 6. Pareamento do Phone Camera via Wi-Fi (QR Code & Firewall do Windows)
+## 7. Pareamento do Phone Camera via Wi-Fi (QR Code & Firewall do Windows)
 
 Para usar qualquer smartphone Android ou iOS como câmera de rastreamento sem instalar aplicativo:
 
@@ -140,20 +142,21 @@ Para usar qualquer smartphone Android ou iOS como câmera de rastreamento sem in
    - Clique no botão **`Allow Firewall`** ao lado do seletor de IP e confirme a elevação UAC do Windows. Isso cria automaticamente a regra de entrada TCP (porta `8443`, perfis **Private e Public**) no Windows Defender Firewall.
    - Caso o erro persista, verifique no roteador se a opção **AP Isolation / Isolamento de Clientes** está desativada.
 5. Escaneie o QR Code com a câmera do celular, aceite o aviso de certificado local HTTPS (*Avançado → Prosseguir*) e permita o acesso à câmera.
+   - Em celulares **Android**, o **Cool Mode** (economia térmica) inicia ativado automaticamente com Auto-Dim e Standby Frio para evitar aquecimento prolongado.
 
 ---
 
-## 7. Como Jogar no Just Dance PC
+## 8. Como Jogar no Just Dance PC
 
 1. Com o rastreador ativo (janela com esqueleto e contadores de FPS visível), abra o **Just Dance PC**.
 2. Na tela de seleção de controle do jogo, escolha a opção **Kinect Sensor**.
-3. O jogo detectará imediatamente o simulador através da memória compartilhada `Local\LegacyWebcamKinectPose`.
+3. O jogo detectará imediatamente o sensor através da memória compartilhada `Local\LegacyWebcamKinectPose`.
 4. Posicione-se em frente à câmera a uma distância de aproximadamente **1,8 a 2,5 metros** para que todo o seu corpo (da cabeça aos tornozelos) fique visível.
 5. Selecione sua música e dance! O esqueleto responderá a cada movimento e pontuará no jogo.
 
 ---
 
-## 8. Armazenamento Centralizado no AppData e Modo Portátil
+## 9. Armazenamento Centralizado no AppData e Modo Portátil
 
 O **Legacy PSCam Sensor** armazena todas as configurações e arquivos de log no diretório de dados do usuário:
 

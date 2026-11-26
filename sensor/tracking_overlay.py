@@ -524,7 +524,7 @@ class TrackingOverlay:
         cam_fps: float,
         track_fps: float,
         is_calibrated: bool,
-        is_mirrored: bool,
+        is_mirrored: bool = True,
         calibration_tier: str = "full_body",
         max_players: int = 1,
         tracked_mask: Optional[int] = None,
@@ -652,7 +652,7 @@ class TrackingOverlay:
 
         cv2.putText(frame, "LEGACY PSCAM SENSOR", (left_x + 36, left_y + 20), cv2.FONT_HERSHEY_DUPLEX, 0.44, COLOR_TEXT_WHITE, 1, cv2.LINE_AA)
         mode_tag = "[2P DUO]" if max_players >= 2 else "[1P SOLO]"
-        cam_sub = f"{camera_info_str} {mode_tag} {'[MIRROR]' if is_mirrored else ''}"
+        cam_sub = f"{camera_info_str} {mode_tag}"
         if len(cam_sub) > 30 and left_w < 260:
             cam_sub = cam_sub[:28] + ".."
         cv2.putText(frame, cam_sub, (left_x + 36, left_y + 36), cv2.FONT_HERSHEY_SIMPLEX, 0.34, COLOR_TEXT_DIM, 1, cv2.LINE_AA)
@@ -665,7 +665,7 @@ class TrackingOverlay:
         bot_y = max(60, fh - bot_h - 12)
         draw_rounded_glass_pill(frame, bot_x, bot_y, bot_w, bot_h, radius=10, bg_color=COLOR_GLASS_BG, alpha=0.78, border_color=COLOR_GLASS_BORDER)
 
-        controls_text = "[C] Calibrate  •  [M] Mirror  •  [H] HUD  •  [P] PiP  •  [Q/ESC] Exit"
+        controls_text = "[C] Calibrate  •  [H] HUD  •  [P] PiP  •  [Q/ESC] Exit"
         t_sz = cv2.getTextSize(controls_text, cv2.FONT_HERSHEY_SIMPLEX, 0.36, 1)[0]
         tx = bot_x + (bot_w - t_sz[0]) // 2
         cv2.putText(frame, controls_text, (tx, bot_y + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (225, 230, 240), 1, cv2.LINE_AA)

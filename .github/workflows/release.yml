@@ -19,6 +19,9 @@ jobs:
     name: Build Standalone Windows Executable
     runs-on: windows-latest
 
+    env:
+      QT_QPA_PLATFORM: offscreen
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -29,14 +32,32 @@ jobs:
           python-version: "3.11"
           cache: "pip"
 
+      - name: Read Version Metadata & Validate Tag
+        shell: pwsh
+        run: |
+          $ver = python -c "from version import __version__; print(__version__)"
+          $verStr = python -c "from version import VERSION_STRING; print(VERSION_STRING)"
+          $stage = python -c "from version import STAGE; print(STAGE)"
+          $expectedTag = "v$ver"
+          echo "APP_VER=$expectedTag" >> $env:GITHUB_ENV
+          echo "APP_VERSION_STRING=$verStr" >> $env:GITHUB_ENV
+          echo "APP_STAGE=$stage" >> $env:GITHUB_ENV
+          if ("${{ github.ref }}".StartsWith("refs/tags/v")) {
+            if ("${{ github.ref_name }}" -ne $expectedTag) {
+              Write-Error "Git tag '${{ github.ref_name }}' does not match version.py ('$expectedTag')."
+              exit 1
+            }
+          }
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt pyinstaller
 
-      - name: Run Test Suite
+      - name: Run Test Suite & Modular Unit Tests
         run: |
           python -u test_suite.py
+          python -m unittest discover -s tests -v
 
       - name: Build Standalone Executable (--onefile with Splash)
         run: |
@@ -49,11 +70,33 @@ jobs:
           pyinstaller --noconfirm legacy_pscam_sensor.spec
           Compress-Archive -Path "dist/LegacyPSCam/*" -DestinationPath "dist/LegacyPSCam-Portable-Windows.zip" -Force
 
-      - name: Set Release Metadata
+      - name: Smoke Test Built Executables (--version)
         shell: pwsh
         run: |
-          $ver = python -c "from version import __version__; print(__version__)"
-          echo "APP_VER=v$ver" >> $env:GITHUB_ENV
+          $p1 = Start-Process -FilePath "dist/LegacyPSCam/LegacyPSCam.exe" -ArgumentList "--version" -Wait -PassThru
+          if ($p1.ExitCode -ne 0) {
+            Write-Error "Onedir executable smoke test failed with exit code $($p1.ExitCode)"
+            exit 1
+          }
+          $p2 = Start-Process -FilePath "dist/LegacyPSCam.exe" -ArgumentList "--version" -Wait -PassThru
+          if ($p2.ExitCode -ne 0) {
+            Write-Error "Onefile executable smoke test failed with exit code $($p2.ExitCode)"
+            exit 1
+          }
+
+      - name: Generate SHA-256 Checksums
+        shell: pwsh
+        run: |
+          $files = @(
+            "dist/LegacyPSCam.exe",
+            "dist/LegacyPSCam-Portable-Windows.zip"
+          )
+          $lines = foreach ($f in $files) {
+            $h = (Get-FileHash -Path $f -Algorithm SHA256).Hash.ToLower()
+            "$h  $(Split-Path -Leaf $f)"
+          }
+          $lines | Out-File -FilePath "dist/SHA256SUMS.txt" -Encoding ascii
+          Get-Content "dist/SHA256SUMS.txt"
 
       - name: Upload Artifact (Accessible on all workflow runs)
         uses: actions/upload-artifact@v4
@@ -62,16 +105,19 @@ jobs:
           path: |
             dist/LegacyPSCam.exe
             dist/LegacyPSCam-Portable-Windows.zip
+            dist/SHA256SUMS.txt
           if-no-files-found: error
 
       - name: Create or Update GitHub Release
         if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.create_release == 'true'
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.APP_VER }}
           files: |
             dist/LegacyPSCam.exe
             dist/LegacyPSCam-Portable-Windows.zip
-          name: Legacy PSCam Sensor ${{ env.APP_VER }} (Alpha)
+            dist/SHA256SUMS.txt
+          name: Legacy PSCam Sensor ${{ env.APP_VERSION_STRING }}
           body: ""
           generate_release_notes: false
           draft: false

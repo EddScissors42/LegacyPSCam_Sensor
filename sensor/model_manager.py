@@ -89,35 +89,45 @@ class ModelManager:
                 h.update(chunk)
         return h.hexdigest().lower()
 
+    _VALIDATION_CACHE: Dict[Tuple[str, int, int, str, bool], bool] = {}
+
     @staticmethod
     def validate_model_file(path: Path, model_variant: str = "lite", strict_hash: bool = False) -> bool:
         """
         Validates that a `.task` bundle exists, meets the minimum expected byte size,
         starts with the ZIP archive magic header (`PK\\x03\\x04` used by MediaPipe Task bundles),
-        and checks SHA-256 integrity.
+        and checks SHA-256 integrity (cached by path + mtime_ns + size to avoid redundant disk hashing).
         """
         variant = ModelManager.normalize_variant(model_variant)
         spec = MODEL_SPECS[variant]
         if not path or not path.is_file():
             return False
         try:
-            size = path.stat().st_size
+            st = path.stat()
+            size = st.st_size
             if size < int(spec["min_size_bytes"]):
                 return False
+            cache_key = (str(path.resolve()).lower(), int(st.st_mtime_ns), int(size), variant, bool(strict_hash))
+            cached = ModelManager._VALIDATION_CACHE.get(cache_key)
+            if cached is not None:
+                return cached
             with open(path, "rb") as f:
                 header = f.read(64)
             # MediaPipe `.task` bundles are zipaligned ZIP archives (often prefixed with `\x00\x00PK\x03\x04`)
             if b"PK\x03\x04" not in header and not zipfile.is_zipfile(path):
+                ModelManager._VALIDATION_CACHE[cache_key] = False
                 return False
             expected_sha = str(spec["sha256"]).lower()
             actual_sha = ModelManager.compute_sha256(path)
             if actual_sha != expected_sha:
                 if strict_hash:
+                    ModelManager._VALIDATION_CACHE[cache_key] = False
                     return False
                 print(
                     f"[MODELS] Notice: '{path.name}' SHA-256 differs from pinned hash "
                     f"(got {actual_sha[:12]}..., expected {expected_sha[:12]}...); accepting valid .task bundle."
                 )
+            ModelManager._VALIDATION_CACHE[cache_key] = True
             return True
         except Exception:
             return False
@@ -194,14 +204,18 @@ class ModelManager:
                 continue
 
             if stage_to_cache and candidate.resolve() != target_cache.resolve():
-                try:
-                    target_cache.parent.mkdir(parents=True, exist_ok=True)
-                    tmp_path = target_cache.with_suffix(".task.part")
-                    shutil.copy2(candidate, tmp_path)
-                    os.replace(tmp_path, target_cache)
-                    return target_cache
-                except Exception:
-                    return candidate
+                lock = ModelManager._LOCKS.setdefault(variant, threading.Lock())
+                with lock:
+                    try:
+                        if ModelManager.validate_model_file(target_cache, variant, strict_hash=False):
+                            return target_cache
+                        target_cache.parent.mkdir(parents=True, exist_ok=True)
+                        tmp_path = target_cache.with_suffix(".task.part")
+                        shutil.copy2(candidate, tmp_path)
+                        os.replace(tmp_path, target_cache)
+                        return target_cache
+                    except Exception:
+                        return candidate
             return candidate
         return None
 
@@ -227,7 +241,7 @@ class ModelManager:
         cache_dir: Optional[Path] = None,
         urls: Optional[Tuple[str, ...]] = None,
         timeout: float = 30.0,
-        strict_hash: bool = False,
+        strict_hash: bool = True,
     ) -> Optional[Path]:
         """
         Downloads the requested MediaPipe Pose `.task` model into the persistent AppData cache
@@ -253,9 +267,13 @@ class ModelManager:
             for url in download_urls:
                 try:
                     print(f"[MODELS] Downloading '{target_path.name}' to persistent cache: {target_path.parent}")
+                    try:
+                        from version import __version__ as _app_ver
+                    except Exception:
+                        _app_ver = "0.10.2"
                     req = urllib.request.Request(
                         url,
-                        headers={"User-Agent": "LegacyPSCam-Sensor/0.10.0"},
+                        headers={"User-Agent": f"LegacyPSCam-Sensor/{_app_ver}"},
                     )
                     with urllib.request.urlopen(req, timeout=timeout) as resp:
                         hdr_len = resp.headers.get("Content-Length")

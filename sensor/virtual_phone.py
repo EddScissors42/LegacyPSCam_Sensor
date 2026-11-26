@@ -15,6 +15,7 @@ import json
 import math
 import os
 import queue
+import re
 import socket
 import threading
 import time
@@ -784,7 +785,7 @@ class VirtualPhoneController:
                 get_session_logger().map_active_controller(
                     "vphone",
                     self.phone_name,
-                    details=f"WebSocket paired, Hand: {self.scoring_hand}",
+                    details=f"WebSocket paired, Hand: {self.accelerometer.hand}",
                 )
             except Exception:
                 pass

@@ -351,22 +351,38 @@ class PS4DriverInstaller:
         sei.lpDirectory = str(Path(sys_root) / "System32")
         sei.nShow = SW_HIDE
 
-        shell32 = ctypes.windll.shell32
-        kernel32 = ctypes.windll.kernel32
+        shell32 = ctypes.WinDLL("shell32", use_last_error=True)
+        shell32.ShellExecuteExW.argtypes = [ctypes.POINTER(SHELLEXECUTEINFOW)]
+        shell32.ShellExecuteExW.restype = ctypes.wintypes.BOOL
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.WaitForSingleObject.argtypes = [ctypes.wintypes.HANDLE, ctypes.wintypes.DWORD]
+        kernel32.WaitForSingleObject.restype = ctypes.wintypes.DWORD
+        kernel32.GetExitCodeProcess.argtypes = [ctypes.wintypes.HANDLE, ctypes.POINTER(ctypes.wintypes.DWORD)]
+        kernel32.GetExitCodeProcess.restype = ctypes.wintypes.BOOL
+        kernel32.CloseHandle.argtypes = [ctypes.wintypes.HANDLE]
+        kernel32.CloseHandle.restype = ctypes.wintypes.BOOL
 
         if not shell32.ShellExecuteExW(ctypes.byref(sei)):
-            err = kernel32.GetLastError()
+            err = ctypes.get_last_error()
             if err == 1223:  # ERROR_CANCELLED
                 return False, "Administrator UAC prompt was cancelled by the user."
             return False, f"Failed to launch administrative helper (Win32 error {err})."
 
         if sei.hProcess:
             try:
-                kernel32.WaitForSingleObject(sei.hProcess, int(timeout_s * 1000))
+                WAIT_OBJECT_0 = 0x00000000
+                WAIT_TIMEOUT = 0x00000102
+                wait_res = kernel32.WaitForSingleObject(sei.hProcess, int(timeout_s * 1000))
+                if wait_res == WAIT_TIMEOUT:
+                    return False, f"PnPUtil timed out after {timeout_s:.0f}s (process still active)."
+                if wait_res != WAIT_OBJECT_0:
+                    return False, f"Failed waiting for PnPUtil completion (wait code {wait_res})."
                 exit_code = ctypes.wintypes.DWORD(0)
-                kernel32.GetExitCodeProcess(sei.hProcess, ctypes.byref(exit_code))
+                if not kernel32.GetExitCodeProcess(sei.hProcess, ctypes.byref(exit_code)):
+                    return False, f"Could not retrieve PnPUtil exit code (Win32 error {ctypes.get_last_error()})."
                 code = exit_code.value
-                # pnputil exit code 0 = installed, 259 = staged (device not currently plugged), 3010 = reboot needed
+                # Only after confirmed process exit: 0 = installed, 259 = ERROR_NO_MORE_ITEMS (staged, device unplugged), 3010 = reboot needed
                 if code in (0, 259, 3010):
                     return True, f"WinUSB driver package staged successfully (code {code})."
                 return False, f"PnPUtil returned exit code {code} (package may require catalog signature in production builds)."

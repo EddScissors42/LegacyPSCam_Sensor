@@ -52,9 +52,9 @@ All non-essential overhead has been removed while perfecting the core components
 ## System Requirements
 
 - Operating System: Windows 10 or Windows 11 (64-bit).
-- Python: Version 3.10, 3.11, or 3.12 (64-bit).
+- Python: Version 3.10+ (64-bit).
 - Dependencies: `opencv-python`, `mediapipe`, `numpy`, `Pillow`, `PySide6`.
-- Hardware: USB webcam (720p/1080p recommended) or PlayStation 4 Camera (with AUX-to-USB3 adapter).
+- Hardware: USB webcam (720p/1080p recommended), PlayStation 4 Camera (with AUX-to-USB3 adapter), Android/iOS smartphone (Wi-Fi WebApp), or DualShock 4.
 - Drivers (for PS4 Camera): Built-in Native WinUSB Backend (`driver/legacy_pscam_device.inf` + `winusb.dll`).
 
 ---
@@ -63,11 +63,16 @@ All non-essential overhead has been removed while perfecting the core components
 
 ```
 LegacyPSCam_Sensor/
-├── main.py                     # CLI launcher and entry point
-├── version.py                  # Official versioning & build metadata (v0.10.1 Alpha)
-├── test_suite.py               # 19 complete automated test suites (19/19 PASSED)
-├── config.json                 # Saved user preferences
+├── main.py                     # CLI launcher and entry point (--version, --portable, --start, --mode, --camera)
+├── version.py                  # Official versioning & build metadata (v0.10.2 Alpha)
+├── test_suite.py               # 19 isolated automated test suites + modular unittest runner (19/19 PASSED)
+├── tests/                      # Modular unittest suites (test_vphone_protocol, test_tracking_math, test_controllers_and_cli)
+├── config.json                 # Local template for user preferences (stored in %APPDATA%\LegacyPSCam_Sensor\)
+├── legacy_pscam_sensor.spec    # Reproducible PyInstaller spec (--onefile / --onedir with binary pruning)
 ├── THIRD_PARTY_NOTICES.md      # Licensing & third-party attribution notices
+├── .github/workflows/
+│   ├── ci.yml                  # Automated push/PR Windows test workflow
+│   └── release.yml             # Tag-validated Windows build, smoke test, SHA256SUMS & GitHub Release workflow
 ├── driver/
 │   └── legacy_pscam_device.inf # WinUSB association package for PS4 Camera
 ├── sensor/                     # Tracking Engine and AI package
@@ -75,23 +80,32 @@ LegacyPSCam_Sensor/
 │   ├── camera_manager.py       # Camera discovery (DirectShow COM + SetupAPI) and async capture
 │   ├── stereo_matcher.py       # Stereo Vision Engine (Rectification, Sub-Pixel PyrLK 3D, Depth Mask)
 │   ├── pose_tracker.py         # MediaPipe 1P/2P engine, Hand Anchor, Calibrator & EMA
-│   ├── player_slot.py          # Per-player slot pipeline & Long-Term Identity Memory (Anti-Swap Re-ID)
-│   ├── pose_filters.py         # Kinematic filters (HandAnchor, AdaptiveSmoother, SkeletonCalibrator, Smart Body PTZ)
+│   ├── player_reid.py          # Long-Term Identity Memory (Anti-Swap Re-ID), plausibility & Pose NMS
+│   ├── player_slot.py          # Per-player slot pipeline (PlayerSlotState) & indexed mask compositor
+│   ├── pose_filters.py         # Kinematic filters (HandAnchor, dt-compensated AdaptiveSmoother, Calibrator, PTZ)
 │   ├── person_lock.py          # Modular Person Lock-In (InertialCoastingFilter, DancerIdentityLock)
-│   ├── virtual_phone.py        # UbiArt Smartphone WebSocket client & 3D Hand Accelerometer
+│   ├── gesture_detector.py     # Raised-arm ENTER gesture detector (1P & 2P)
+│   ├── model_manager.py        # Persistent %APPDATA%\models manager (strict SHA-256 + on-demand download)
+│   ├── phone_camera.py         # HTTPS/WSS Phone Camera server for iOS & Android smartphones
+│   ├── qr_encoder.py           # Pure-Python ISO/IEC 18004 QR Code encoder
+│   ├── tls_manager.py          # Per-installation RSA-2048 & X.509v3 TLS certificate manager
+│   ├── virtual_phone.py        # UbiArt Smartphone WebSocket controller orchestrator
+│   ├── vphone_protocol.py      # HandAccelerometer, RFC 6455 WS client, AdaptiveTuner & song detector
 │   ├── ds4_controller.py       # Native Bluetooth/USB HID DualShock 4 driver
 │   ├── telemetry_benchmark.py  # Comparative telemetry benchmark (Camera vs DS4)
-│   ├── kinect_emulator.py      # Read-only Shared Memory IPC Bridge & Game Process Monitor
+│   ├── kinect_emulator.py      # In-memory Kinect API emulator & Game Process Monitor
 │   ├── tracking_session.py     # Tracking loop orchestrator and hotkeys
 │   ├── tracking_overlay.py     # Skeleton, HUD, and silhouette renderer
 │   ├── kinect_shared_memory.py # Windows shared memory IPC driver (JDP1, JDP2, JMI1/2, JXC1)
-│   └── config_manager.py       # config.json persistence
+│   ├── session_logger.py       # Rotating session diagnostics & async CSV telemetry
+│   └── config_manager.py       # config.json persistence & AppData/Portable path resolution
 ├── ui/                         # User Interface package
+│   ├── controllers/            # Decoupled MVP controllers (App, Camera, Device, Session)
 │   ├── gui_qt.py               # Primary PlayStation-themed window controller (PySide6 / Qt 6)
 │   ├── pages.py                # Declarative Qt 6 page builders (Video, Tracking, Experimental, DS4)
 │   ├── styles.py               # Centralized QSS stylesheet builder
 │   ├── device_readout_mixin.py # Live device readout presentation mixin
-│   ├── widgets.py              # Reusable Qt 6 widgets (SlidingStackedWidget, DeviceNavCard, CalibPresetCard)
+│   ├── widgets.py              # Reusable Qt 6 widgets (SlidingStackedWidget, DeviceNavCard, CalibPresetCard, SettingBlock)
 │   ├── benchmark_dialog.py     # Telemetry Benchmark & Calibration Comparator dialog & 2D chart
 │   ├── theme.py                # Palette, fonts, and calibration presets
 │   └── icons.py                # Supersampled icons, SVGs, and status badges
@@ -112,7 +126,7 @@ LegacyPSCam_Sensor/
 ## Quick Steps
 
 1. Run the Sensor:
-   Launch `LegacySensor.exe` or execute `python main.py`.
+   Launch `LegacyPSCam.exe` (or `LegacySensor.exe`) or execute `python main.py`.
 2. Automatic In-Memory Kinect Emulation:
    The built-in in-memory Kinect emulator starts automatically on boot and streams poses/silhouettes via the Shared Memory IPC Bridge (zero game file replacement).
 3. Select Device & Start Tracking:
