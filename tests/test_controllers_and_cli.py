@@ -103,6 +103,147 @@ class TestControllersAndCLI(unittest.TestCase):
             dev_ctrl.cleanup()
             cam_ctrl.set_closing(True)
 
+    def test_gui_qt_mixins_and_signal_slot_wiring(self):
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        from PySide6.QtWidgets import QApplication
+        from ui.gui_qt import LegacySensorQtGUI
+        from ui.mixins import (
+            UIDeviceReadoutMixin,
+            UICameraHandlersMixin,
+            UIPhoneHandlersMixin,
+            UIDS4VPhoneHandlersMixin,
+            UITrackingHandlersMixin,
+        )
+
+        for mixin_cls in (
+            UIDeviceReadoutMixin,
+            UICameraHandlersMixin,
+            UIPhoneHandlersMixin,
+            UIDS4VPhoneHandlersMixin,
+            UITrackingHandlersMixin,
+        ):
+            self.assertTrue(issubclass(LegacySensorQtGUI, mixin_cls))
+
+        _ = QApplication.instance() or QApplication([])
+        with tempfile.TemporaryDirectory(prefix="legacy_gui_mixin_test_") as td:
+            prev_appdata = os.environ.get("APPDATA")
+            os.environ["APPDATA"] = td
+            try:
+                app_dir = Path(td) / "LegacyPSCam_Sensor"
+                app_dir.mkdir(parents=True, exist_ok=True)
+                import json
+                seed = dict(DEFAULT_CONFIG)
+                seed["phone_cam_port"] = 0
+                (app_dir / "config.json").write_text(json.dumps(seed), encoding="utf-8")
+
+                win = LegacySensorQtGUI(auto_discover=False)
+                try:
+                    # Emit cross-mixin signals to verify PySide6 @Slot binding on all mixins
+                    win.cameras_refreshed_signal.emit([])
+                    win.model_download_signal.emit("full", 50, "downloading")
+                    self.assertIn("50%", win.lbl_model_dl_status.text())
+                    win.model_download_signal.emit("full", 100, "done")
+                    self.assertIn("Ready", win.lbl_model_dl_status.text())
+                    win._select_calib_preset("competitive")
+                    self.assertEqual(win.cfg["tracking_preset"], "competitive")
+                finally:
+                    win.controller.cleanup()
+                    win.close()
+            finally:
+                if prev_appdata is None:
+                    os.environ.pop("APPDATA", None)
+                else:
+                    os.environ["APPDATA"] = prev_appdata
+
+    def test_pages_package_and_ds4_scoring_bridge_visibility(self):
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        from PySide6.QtWidgets import QApplication
+        from ui.gui_qt import LegacySensorQtGUI
+        from ui.pages import (
+            UIPagesMixin,
+            UIVideoPageMixin,
+            UITrackingPageMixin,
+            UIExperimentalPageMixin,
+            UIDS4PageMixin,
+        )
+
+        for page_mixin in (
+            UIVideoPageMixin,
+            UITrackingPageMixin,
+            UIExperimentalPageMixin,
+            UIDS4PageMixin,
+        ):
+            self.assertTrue(issubclass(UIPagesMixin, page_mixin))
+            self.assertTrue(issubclass(LegacySensorQtGUI, page_mixin))
+
+        _ = QApplication.instance() or QApplication([])
+        with tempfile.TemporaryDirectory(prefix="legacy_ds4_sb_test_") as td:
+            prev_appdata = os.environ.get("APPDATA")
+            os.environ["APPDATA"] = td
+            try:
+                app_dir = Path(td) / "LegacyPSCam_Sensor"
+                app_dir.mkdir(parents=True, exist_ok=True)
+                import json
+                seed = dict(DEFAULT_CONFIG)
+                seed["phone_cam_port"] = 0
+                (app_dir / "config.json").write_text(json.dumps(seed), encoding="utf-8")
+
+                win = LegacySensorQtGUI(auto_discover=False)
+                try:
+                    # Scoring Bridge MUST live inside ds4_info_frame so it only shows when DS4 is connected
+                    self.assertIs(win.scoring_bridge_box.parent(), win.ds4_info_frame)
+                    self.assertTrue(win.ds4_info_frame.isHidden())
+                    self.assertFalse(win.ds4_disconnected_box.isHidden())
+                    # Switching to ds4 mode without controller keeps ds4_info_frame (and Scoring Bridge) hidden
+                    win._set_mode("ds4")
+                    win._update_ds4_ui_readout()
+                    self.assertTrue(win.ds4_info_frame.isHidden())
+                    self.assertFalse(win.scoring_bridge_box.isVisible())
+                finally:
+                    win.controller.cleanup()
+                    win.close()
+            finally:
+                if prev_appdata is None:
+                    os.environ.pop("APPDATA", None)
+                else:
+                    os.environ["APPDATA"] = prev_appdata
+
+    def test_camera_cancel_warmup_nonblocking_and_serialized(self):
+        import time
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        from PySide6.QtWidgets import QApplication
+        from ui.controllers import CameraController
+
+        _ = QApplication.instance() or QApplication([])
+
+        class _SlowFakeCamera:
+            def __init__(self):
+                self.released = False
+
+            def release(self):
+                time.sleep(0.35)
+                self.released = True
+
+        with tempfile.TemporaryDirectory(prefix="legacy_warmup_cancel_test_") as td:
+            cfg_mgr = ConfigManager(config_path=Path(td) / "config.json")
+            cam_ctrl = CameraController(cfg_mgr)
+            fake_cam = _SlowFakeCamera()
+            cam_ctrl._prewarmed_camera = fake_cam
+
+            t0 = time.perf_counter()
+            cam_ctrl.cancel_warmup(sync=False)
+            elapsed = time.perf_counter() - t0
+
+            # Must return immediately without blocking the Qt UI thread
+            self.assertLess(elapsed, 0.05, f"cancel_warmup(sync=False) blocked UI thread for {elapsed*1000:.1f}ms")
+            self.assertFalse(fake_cam.released, "Slow camera release should still be running in background")
+
+            # take_prewarmed_camera() must serialize behind _closer_thread so DirectShow handles never collide
+            taken = cam_ctrl.take_prewarmed_camera()
+            self.assertIsNone(taken)
+            self.assertTrue(fake_cam.released, "take_prewarmed_camera() did not wait for closer thread to finish")
+            cam_ctrl.set_closing(True)
+
 
 if __name__ == "__main__":
     unittest.main()

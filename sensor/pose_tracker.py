@@ -4,16 +4,19 @@ Uses MediaPipe Pose Tasks API with custom Hand Anchor Filtering,
 Adaptive Dynamic EMA Smoothing, Height Normalization, 20-joint Kinect v1 mapping,
 and Multi-Player (1P/2P) Long-Term Identity Memory (Anti-Swap Re-ID).
 """
+from __future__ import annotations
+
 import sys
-import math
 import time
 from pathlib import Path
+from typing import List, Optional
 import numpy as np
 import cv2
 
 # Lightweight matplotlib mock for MediaPipe drawing_utils when excluded in binary
 if "matplotlib" not in sys.modules:
     import types
+
     _m = types.ModuleType("matplotlib")
     _plt = types.ModuleType("matplotlib.pyplot")
     _m.pyplot = _plt
@@ -24,6 +27,12 @@ import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 
+from sensor.body_mask import (
+    MORPH_KERNEL_SMALL,
+    MORPH_KERNEL_LARGE,
+    extract_joints_2d,
+    build_body_mask as _build_body_mask_geom,
+)
 from sensor.pose_filters import (
     NOSE, LEFT_EYE_INNER, LEFT_EYE, LEFT_EYE_OUTER,
     RIGHT_EYE_INNER, RIGHT_EYE, RIGHT_EYE_OUTER,
@@ -37,7 +46,7 @@ from sensor.pose_filters import (
     KINECT_CONNECTIONS, EXTREMITY_JOINTS, avg, lerp,
     HandAnchorFilter, AdaptiveSmoother, SkeletonCalibrator,
     CameraSpaceXTracker, apply_camera_space_translation,
-    apply_slot_snap, FaceFollowPTZ
+    apply_slot_snap, FaceFollowPTZ,
 )
 from sensor.stereo_matcher import (
     StereoDepthEngine,
@@ -62,8 +71,6 @@ from sensor.player_slot import (
     suppress_duplicate_poses,
 )
 from sensor.session_logger import get_session_logger
-
-
 from sensor.model_manager import ModelManager, MODEL_FILENAMES
 
 
@@ -85,14 +92,17 @@ class PoseTracker:
     supporting 1 or 2 simultaneous players with per-slot kinematic filters
     and long-term visual re-identification across crossovers and waltz turns.
     """
+
     # Native Kinect player segmentation mask resolution (320x240)
     MASK_INTERNAL_W = 320
     MASK_INTERNAL_H = 240
     # Maximum width fed into MediaPipe RGB conversion & segmentation tensor (aspect-preserving)
     INFER_MAX_W = 640
     INFER_MAX_W_2P = 640
-    _MORPH_KERNEL_SMALL = np.ones((3, 3), np.uint8)
-    _MORPH_KERNEL_LARGE = np.ones((7, 7), np.uint8)
+    _MORPH_KERNEL_SMALL = MORPH_KERNEL_SMALL
+    _MORPH_KERNEL_LARGE = MORPH_KERNEL_LARGE
+
+    _extract_joints_2d = staticmethod(extract_joints_2d)
 
     def __init__(
         self,
@@ -259,48 +269,6 @@ class PoseTracker:
             self.close()
             self._init_detector()
 
-    @staticmethod
-    def _extract_joints_2d(norm_lm, w, h):
-        """Extracts 2D pixel coordinates and confidence for key Kinect joints."""
-        def pt(idx):
-            lm = norm_lm[idx]
-            vis = getattr(lm, 'visibility', 1.0)
-            pres = getattr(lm, 'presence', 1.0)
-            return (float(lm.x * w), float(lm.y * h), min(1.0, max(0.0, min(vis, pres))))
-
-        hip_l = pt(LEFT_HIP)
-        hip_r = pt(RIGHT_HIP)
-        hip_c = ((hip_l[0] + hip_r[0]) * 0.5, (hip_l[1] + hip_r[1]) * 0.5, min(hip_l[2], hip_r[2]))
-
-        sh_l = pt(LEFT_SHOULDER)
-        sh_r = pt(RIGHT_SHOULDER)
-        sh_c = ((sh_l[0] + sh_r[0]) * 0.5, (sh_l[1] + sh_r[1]) * 0.5, min(sh_l[2], sh_r[2]))
-
-        spine = (hip_c[0] * 0.48 + sh_c[0] * 0.52, hip_c[1] * 0.48 + sh_c[1] * 0.52, min(hip_c[2], sh_c[2]))
-
-        return {
-            0: hip_c,
-            1: spine,
-            2: sh_c,
-            3: pt(NOSE),
-            4: sh_l,
-            5: pt(LEFT_ELBOW),
-            6: pt(LEFT_WRIST),
-            7: pt(LEFT_INDEX),
-            8: sh_r,
-            9: pt(RIGHT_ELBOW),
-            10: pt(RIGHT_WRIST),
-            11: pt(RIGHT_INDEX),
-            12: hip_l,
-            13: pt(LEFT_KNEE),
-            14: pt(LEFT_ANKLE),
-            15: pt(LEFT_FOOT_INDEX),
-            16: hip_r,
-            17: pt(RIGHT_KNEE),
-            18: pt(RIGHT_ANKLE),
-            19: pt(RIGHT_FOOT_INDEX),
-        }
-
     def recalibrate(self):
         for slot in self.slots:
             slot.reset(reset_identity=True)
@@ -308,192 +276,16 @@ class PoseTracker:
         self.face_ptz.reset()
         self.stereo_engine.reset_calibration()
 
-    def build_body_mask(self, norm_landmarks, width, height):
-        """
-        Builds an anatomical silhouette mask from 33 MediaPipe pose landmarks.
-        Connects torso polygon, head circle, neck, and limb capsules.
-        Resilient to partial body / desk framing by synthesizing torso down to bottom frame.
-        """
-        mask = np.zeros((height, width), dtype=np.uint8)
-        scale_factor = min(width, height) / 480.0
+    def build_body_mask(self, norm_landmarks, width: int, height: int) -> np.ndarray:
+        """Builds an anatomical silhouette mask from 33 MediaPipe pose landmarks."""
+        return _build_body_mask_geom(norm_landmarks, width, height)
 
-        def pt(idx):
-            if idx < len(norm_landmarks):
-                lm = norm_landmarks[idx]
-                vis = getattr(lm, 'visibility', 1.0)
-                pres = getattr(lm, 'presence', 1.0)
-                if min(vis, pres) >= 0.15:
-                    return (int(round(lm.x * width)), int(round(lm.y * height)))
-            return None
-
-        # 1. Torso polygon (Left Shoulder 11, Right Shoulder 12, Right Hip 24, Left Hip 23)
-        ls, rs = pt(11), pt(12)
-        lh, rh = pt(23), pt(24)
-
-        if ls and rs:
-            sh_w = max(10.0 * scale_factor, math.hypot(rs[0] - ls[0], rs[1] - ls[1]))
-            torso_h = int(sh_w * 1.45)
-            bottom_y = min(height - 1, int(max(ls[1], rs[1]) + torso_h))
-
-            if not lh or lh[1] >= height - 2:
-                lh = (max(0, int(ls[0] - 0.10 * (rs[0] - ls[0]))), bottom_y)
-            if not rh or rh[1] >= height - 2:
-                rh = (min(width - 1, int(rs[0] + 0.10 * (rs[0] - ls[0]))), bottom_y)
-
-            torso_pts = np.array([ls, rs, rh, lh], dtype=np.int32)
-            cv2.fillConvexPoly(mask, torso_pts, 255)
-
-            pad_x = max(8, int(15 * scale_factor))
-            if bottom_y >= height - max(3, int(6 * scale_factor)):
-                bot_poly = np.array(
-                    [lh, rh, (min(width - 1, rh[0] + pad_x), height - 1), (max(0, lh[0] - pad_x), height - 1)],
-                    dtype=np.int32,
-                )
-                cv2.fillConvexPoly(mask, bot_poly, 255)
-
-        # 2. Head, Jaw & Neck
-        nose = pt(0)
-        ear_l, ear_r = pt(7), pt(8)
-        eye_l, eye_r = pt(2), pt(5)
-        mouth_l, mouth_r = pt(9), pt(10)
-
-        if ls and rs:
-            shoulder_dist = max(10.0 * scale_factor, math.hypot(rs[0] - ls[0], rs[1] - ls[1]))
-            mid_shoulder = ((ls[0] + rs[0]) // 2, (ls[1] + rs[1]) // 2)
-
-            ref_head = None
-            if ear_l and ear_r:
-                ref_head = ((ear_l[0] + ear_r[0]) // 2, (ear_l[1] + ear_r[1]) // 2)
-            elif eye_l and eye_r:
-                ref_head = ((eye_l[0] + eye_r[0]) // 2, (eye_l[1] + eye_r[1]) // 2)
-            elif nose:
-                ref_head = nose
-
-            if ref_head:
-                dx = ref_head[0] - mid_shoulder[0]
-                dy = ref_head[1] - mid_shoulder[1]
-                dist = math.hypot(dx, dy)
-                if dist > 1e-3:
-                    ux, uy = dx / dist, dy / dist
-                else:
-                    ux, uy = 0.0, -1.0
-            else:
-                ux, uy = 0.0, -1.0
-
-            px, py = -uy, ux
-
-            if ear_l and ear_r:
-                cranial_center = ((ear_l[0] + ear_r[0]) // 2, (ear_l[1] + ear_r[1]) // 2)
-            elif eye_l and eye_r:
-                eye_mid = ((eye_l[0] + eye_r[0]) // 2, (eye_l[1] + eye_r[1]) // 2)
-                cranial_center = (
-                    int(round(eye_mid[0] + ux * (shoulder_dist * 0.05))),
-                    int(round(eye_mid[1] + uy * (shoulder_dist * 0.05))),
-                )
-            elif nose:
-                cranial_center = (
-                    int(round(nose[0] + ux * (shoulder_dist * 0.14))),
-                    int(round(nose[1] + uy * (shoulder_dist * 0.14))),
-                )
-            else:
-                cranial_center = (
-                    int(round(mid_shoulder[0] + ux * (shoulder_dist * 0.45))),
-                    int(round(mid_shoulder[1] + uy * (shoulder_dist * 0.45))),
-                )
-
-            axis_x = max(5, int(shoulder_dist * 0.18))
-            axis_y = max(7, int(shoulder_dist * 0.24))
-            tilt_deg = math.degrees(math.atan2(uy, ux)) + 90.0
-
-            cv2.ellipse(mask, cranial_center, (axis_x, axis_y), tilt_deg, 0, 360, 255, -1)
-
-            if mouth_l and mouth_r:
-                mid_mouth = ((mouth_l[0] + mouth_r[0]) // 2, (mouth_l[1] + mouth_r[1]) // 2)
-                chin = (
-                    int(round(mid_mouth[0] - ux * (shoulder_dist * 0.05))),
-                    int(round(mid_mouth[1] - uy * (shoulder_dist * 0.05))),
-                )
-            elif nose:
-                chin = (
-                    int(round(nose[0] - ux * (shoulder_dist * 0.12))),
-                    int(round(nose[1] - uy * (shoulder_dist * 0.12))),
-                )
-            else:
-                chin = (
-                    int(round(cranial_center[0] - ux * (axis_y * 1.10))),
-                    int(round(cranial_center[1] - uy * (axis_y * 1.10))),
-                )
-
-            jaw_l = (
-                int(round(cranial_center[0] - px * (axis_x * 0.85) - ux * (axis_y * 0.15))),
-                int(round(cranial_center[1] - py * (axis_x * 0.85) - uy * (axis_y * 0.15))),
-            )
-            jaw_r = (
-                int(round(cranial_center[0] + px * (axis_x * 0.85) - ux * (axis_y * 0.15))),
-                int(round(cranial_center[1] + py * (axis_x * 0.85) - uy * (axis_y * 0.15))),
-            )
-
-            chin_w = max(3, int(axis_x * 0.35))
-            chin_l = (int(round(chin[0] - px * chin_w)), int(round(chin[1] - py * chin_w)))
-            chin_r = (int(round(chin[0] + px * chin_w)), int(round(chin[1] + py * chin_w)))
-
-            jaw_poly = np.array([jaw_l, jaw_r, chin_r, chin_l], dtype=np.int32)
-            cv2.fillConvexPoly(mask, jaw_poly, 255)
-
-            neck_top = (
-                int(round(chin[0] + ux * (axis_y * 0.20))),
-                int(round(chin[1] + uy * (axis_y * 0.20))),
-            )
-            neck_thick = max(4, int(shoulder_dist * 0.15))
-            cv2.line(mask, mid_shoulder, neck_top, 255, neck_thick, cv2.LINE_AA)
-        elif nose:
-            r = max(7, int(20.0 * scale_factor))
-            cran_y = max(0, int(nose[1] - r * 0.4))
-            cv2.ellipse(mask, (nose[0], cran_y), (int(r * 0.8), r), 0, 0, 360, 255, -1)
-
-        # 3. Limbs (Capsules proportional to body size)
-        if ls and rs:
-            sh_w = max(10.0 * scale_factor, math.hypot(rs[0] - ls[0], rs[1] - ls[1]))
-            thick_arm = max(6, int(sh_w * 0.22))
-            thick_forearm = max(5, int(sh_w * 0.18))
-            thick_hand = max(4, int(sh_w * 0.15))
-            thick_thigh = max(8, int(sh_w * 0.28))
-            thick_calf = max(7, int(sh_w * 0.22))
-            thick_foot = max(6, int(sh_w * 0.18))
-        else:
-            thick_arm = max(8, int(18 * scale_factor))
-            thick_forearm = max(6, int(14 * scale_factor))
-            thick_hand = max(5, int(12 * scale_factor))
-            thick_thigh = max(10, int(22 * scale_factor))
-            thick_calf = max(8, int(18 * scale_factor))
-            thick_foot = max(6, int(14 * scale_factor))
-
-        limbs = [
-            (11, 13, thick_arm), (13, 15, thick_forearm), (15, 19, thick_hand),
-            (12, 14, thick_arm), (14, 16, thick_forearm), (16, 20, thick_hand),
-            (23, 25, thick_thigh), (25, 27, thick_calf), (27, 31, thick_foot),
-            (24, 26, thick_thigh), (26, 28, thick_calf), (28, 32, thick_foot),
-        ]
-
-        for idx_a, idx_b, thick in limbs:
-            pa, pb = pt(idx_a), pt(idx_b)
-            if pa and pb:
-                cv2.line(mask, pa, pb, 255, thick, cv2.LINE_AA)
-                cv2.circle(mask, pa, max(2, thick // 2), 255, -1)
-                cv2.circle(mask, pb, max(2, thick // 2), 255, -1)
-
-        # 4. Smooth and fuse into a continuous player contour
-        kernel = self._MORPH_KERNEL_SMALL if width <= 360 else self._MORPH_KERNEL_LARGE
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-        mask = cv2.dilate(mask, kernel, iterations=1)
-        return mask
-
-    def process_frame_multi(self, frame_bgr, frame_left=None, primary_eye: str = "right") -> MultiPoseFrame:
-        """
-        Processes a BGR camera frame (or stereo pair) for 1 or 2 simultaneous players.
-        Returns a MultiPoseFrame containing per-slot PlayerFrames, tracked_mask bitmask (bit 0 = P1, bit 1 = P2),
-        and a combined 320x240 player_index_mask (0=bg, 1=P1, 2=P2).
-        """
+    # ------------------------------------------------------------------
+    # Frame Pipeline Helpers (called per frame in process_frame_multi)
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _unpack_frame_input(frame_bgr, frame_left):
+        """Normalizes dict/tuple/ndarray stereo inputs into (frame_bgr, frame_left)."""
         if isinstance(frame_bgr, dict):
             if frame_left is None:
                 frame_left = frame_bgr.get("left_bgr")
@@ -502,10 +294,14 @@ class PoseTracker:
             if frame_left is None:
                 frame_left = frame_bgr[1]
             frame_bgr = frame_bgr[0]
+        return frame_bgr, frame_left
 
+    def _prepare_inference_buffer(self, frame_bgr):
+        """
+        Pre-downscales raw (un-mirrored) BGR frame into pre-allocated RGB buffer for MediaPipe
+        and applies peripheral ROI attenuation in 1P mode. Returns sample_bgr for appearance sampling.
+        """
         h, w = frame_bgr.shape[:2]
-
-        # Dynamic pre-downscale width: 640px in 1P mode, configurable 480px in 2P mode to sustain 30-60 FPS on CPU
         max_infer_w = (
             int(self.cfg.get("infer_max_w_2p", self.INFER_MAX_W_2P))
             if self.max_players >= 2
@@ -531,9 +327,10 @@ class PoseTracker:
         if self.max_players == 1:
             self.slots[0].person_lock.apply_pre_inference_roi(self._infer_rgb)
 
-        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=self._infer_rgb)
+        return sample_bgr
 
-        # Strictly monotonic timestamp in milliseconds for VIDEO running mode
+    def _next_monotonic_timestamp(self) -> tuple[int, Optional[float], float]:
+        """Advances strictly monotonic VIDEO-mode timestamp in ms and returns (ts_ms, dt_infer, now_perf)."""
         self.frame_index += 1
         now_perf = time.perf_counter()
         dt_infer = (now_perf - self.last_infer_perf) if self.last_infer_perf is not None else None
@@ -544,9 +341,10 @@ class PoseTracker:
         if timestamp_ms <= self.last_timestamp_ms:
             timestamp_ms = self.last_timestamp_ms + 1
         self.last_timestamp_ms = timestamp_ms
+        return timestamp_ms, dt_infer, now_perf
 
-        result = self.detector.detect_for_video(mp_image, timestamp_ms)
-
+    def _extract_valid_candidates(self, result, w: int, h: int):
+        """Filters MediaPipe detections through plausibility gate and 2P Pose NMS."""
         world_list = list(result.pose_world_landmarks) if getattr(result, "pose_world_landmarks", None) else []
         norm_list = list(result.pose_landmarks) if getattr(result, "pose_landmarks", None) else []
         seg_list = list(result.segmentation_masks) if getattr(result, "segmentation_masks", None) else []
@@ -564,9 +362,7 @@ class PoseTracker:
                 if is_plausible:
                     candidates.append((score, (w_lm, n_lm, seg_obj)))
 
-        # Sort candidates by anatomical plausibility score descending and suppress overlapping duplicates
         candidates.sort(key=lambda c: c[0], reverse=True)
-        nms_suppressed = 0
         if self.max_players >= 2 and len(candidates) > 1:
             candidates, nms_suppressed = suppress_duplicate_poses(candidates, max_players=self.max_players)
             if nms_suppressed > 0:
@@ -579,41 +375,149 @@ class PoseTracker:
                 )
 
         # In 1P mode take top 1; in 2P mode pass ALL NMS-filtered candidates to MultiPlayerAssociator
-        # so enrolled players are matched by position + appearance rather than blind top-2 truncation.
         valid_dets = [c[1] for c in (candidates[:1] if self.max_players == 1 else candidates)]
+        return valid_dets, raw_pose_count, norm_list
 
-        active_slots = self.slots[: self.max_players]
+    def _handle_no_detections(
+        self, active_slots, raw_pose_count: int, norm_list, dt_infer: Optional[float], w: int, h: int
+    ) -> List[Optional[PlayerFrame]]:
+        """Handles coasting and drop diagnostics when no plausible detections are present."""
         players_out: List[Optional[PlayerFrame]] = [None] * self.max_players
+        if self.max_players == 1 and raw_pose_count > 0:
+            reason = explain_plausibility_rejection(norm_list[0], w, h) if norm_list else "empty"
+            get_session_logger().log_throttled(
+                "1p_plaus_reject",
+                "INFO",
+                "TRACKING_1P",
+                f"Pose detected by MediaPipe (raw={raw_pose_count}) rejected by plausibility gate ({reason}).",
+                interval_s=3.0,
+            )
 
-        if not valid_dets:
-            if self.max_players == 1 and raw_pose_count > 0:
-                reason = explain_plausibility_rejection(norm_list[0], w, h) if norm_list else "empty"
+        crowded_fallback = self.max_players >= 2 and self.associator.was_crowded
+        for s_idx, slot in enumerate(active_slots):
+            was_tracked_1p = (
+                self.max_players == 1
+                and slot.person_lock.coasting.last_joints_3d is not None
+            )
+            pf_miss = slot.handle_missing(
+                dt=dt_infer, frame_w=w, frame_h=h, is_crowded=crowded_fallback
+            )
+            players_out[s_idx] = pf_miss
+            if was_tracked_1p and pf_miss is None:
+                dt_ms = round((dt_infer or 0.0) * 1000.0, 1)
                 get_session_logger().log_throttled(
-                    "1p_plaus_reject",
-                    "INFO",
+                    "1p_drop",
+                    "WARN",
                     "TRACKING_1P",
-                    f"Pose detected by MediaPipe (raw={raw_pose_count}) rejected by plausibility gate ({reason}).",
-                    interval_s=3.0,
+                    f"1P tracking dropped after coasting (raw_poses={raw_pose_count}, dt={dt_ms}ms).",
+                    interval_s=2.5,
                 )
-            crowded_fallback = self.max_players >= 2 and self.associator.was_crowded
-            for s_idx, slot in enumerate(active_slots):
-                was_tracked_1p = (
-                    self.max_players == 1
-                    and slot.person_lock.coasting.last_joints_3d is not None
+        return players_out
+
+    def _dispatch_two_players(
+        self,
+        active_slots,
+        valid_dets,
+        raw_pose_count: int,
+        frame_bgr,
+        frame_left,
+        sample_bgr,
+        dt_infer: Optional[float],
+        now_perf: float,
+        w: int,
+        h: int,
+        primary_eye: str,
+    ) -> List[Optional[PlayerFrame]]:
+        """Associates detections to persistent P1/P2 slots with Long-Term Identity Memory."""
+        players_out: List[Optional[PlayerFrame]] = [None] * self.max_players
+        assignments, is_crowded = self.associator.match(
+            slots=active_slots,
+            detections_norm_lm=[d[1] for d in valid_dets],
+            sample_bgr=sample_bgr,
+            dt=dt_infer,
+            now=now_perf,
+        )
+        if self.associator.last_swap_audit_triggered:
+            get_session_logger().log_throttled(
+                "2p_swap_audit",
+                "INFO",
+                "TRACKING_2P",
+                "Post-Separation Re-ID Audit corrected a P1/P2 identity swap.",
+                interval_s=2.0,
+            )
+
+        for s_idx, slot in enumerate(active_slots):
+            if s_idx in assignments:
+                d_idx = assignments[s_idx]
+                w_lm, n_lm, seg_obj = valid_dets[d_idx]
+                other_idx = 1 - s_idx
+                other_nlm = (
+                    valid_dets[assignments[other_idx]][1]
+                    if other_idx in assignments
+                    else active_slots[other_idx].last_norm_landmarks
                 )
+                players_out[s_idx] = slot.process_detection(
+                    world_lm=w_lm,
+                    norm_lm=n_lm,
+                    seg_mask_obj=seg_obj,
+                    frame_bgr=frame_bgr,
+                    frame_left=frame_left,
+                    stereo_engine=self.stereo_engine,
+                    stereo_mode=self.stereo_mode,
+                    extract_joints_2d_fn=self._extract_joints_2d,
+                    build_body_mask_fn=self.build_body_mask,
+                    dt_infer=dt_infer,
+                    w=w,
+                    h=h,
+                    enforce_single_person_gate=False,
+                    sample_bgr=sample_bgr,
+                    primary_eye=primary_eye,
+                    other_norm_lm=other_nlm,
+                    is_crowded=is_crowded,
+                )
+            else:
+                was_active = slot.identity_profile.active
                 pf_miss = slot.handle_missing(
-                    dt=dt_infer, frame_w=w, frame_h=h, is_crowded=crowded_fallback
+                    dt=dt_infer, frame_w=w, frame_h=h, is_crowded=is_crowded
                 )
                 players_out[s_idx] = pf_miss
-                if was_tracked_1p and pf_miss is None:
-                    dt_ms = round((dt_infer or 0.0) * 1000.0, 1)
+                if pf_miss is not None and pf_miss.coasting and is_crowded:
                     get_session_logger().log_throttled(
-                        "1p_drop",
-                        "WARN",
-                        "TRACKING_1P",
-                        f"1P tracking dropped after coasting (raw_poses={raw_pose_count}, dt={dt_ms}ms).",
+                        f"2p_crowd_coast_p{s_idx + 1}",
+                        "INFO",
+                        "TRACKING_2P",
+                        f"Player {s_idx + 1} entered overlap coasting (raw_poses={raw_pose_count}, kept={len(valid_dets)}, crowded={is_crowded}).",
                         interval_s=2.5,
                     )
+                elif was_active and pf_miss is None:
+                    get_session_logger().log_throttled(
+                        f"2p_drop_p{s_idx + 1}",
+                        "WARN",
+                        "TRACKING_2P",
+                        f"Player {s_idx + 1} tracking dropped after coasting (raw_poses={raw_pose_count}, kept={len(valid_dets)}, crowded={is_crowded}).",
+                        interval_s=2.5,
+                    )
+        return players_out
+
+    def process_frame_multi(self, frame_bgr, frame_left=None, primary_eye: str = "right") -> MultiPoseFrame:
+        """
+        Processes a BGR camera frame (or stereo pair) for 1 or 2 simultaneous players.
+        Returns a MultiPoseFrame containing per-slot PlayerFrames, tracked_mask bitmask (bit 0 = P1, bit 1 = P2),
+        and a combined 320x240 player_index_mask (0=bg, 1=P1, 2=P2).
+        """
+        frame_bgr, frame_left = self._unpack_frame_input(frame_bgr, frame_left)
+        h, w = frame_bgr.shape[:2]
+
+        sample_bgr = self._prepare_inference_buffer(frame_bgr)
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=self._infer_rgb)
+        timestamp_ms, dt_infer, now_perf = self._next_monotonic_timestamp()
+
+        result = self.detector.detect_for_video(mp_image, timestamp_ms)
+        valid_dets, raw_pose_count, norm_list = self._extract_valid_candidates(result, w, h)
+
+        active_slots = self.slots[: self.max_players]
+        if not valid_dets:
+            players_out = self._handle_no_detections(active_slots, raw_pose_count, norm_list, dt_infer, w, h)
         elif self.max_players == 1:
             w_lm, n_lm, seg_obj = valid_dets[0]
             pf0 = active_slots[0].process_detection(
@@ -633,7 +537,7 @@ class PoseTracker:
                 sample_bgr=sample_bgr,
                 primary_eye=primary_eye,
             )
-            players_out[0] = pf0
+            players_out = [pf0]
             if pf0 is None or pf0.coasting:
                 get_session_logger().log_throttled(
                     "1p_impostor_gate",
@@ -643,74 +547,10 @@ class PoseTracker:
                     interval_s=2.5,
                 )
         else:
-            # 2-Player mode: associate detections to persistent slots with Long-Term Identity Memory
-            assignments, is_crowded = self.associator.match(
-                slots=active_slots,
-                detections_norm_lm=[d[1] for d in valid_dets],
-                sample_bgr=sample_bgr,
-                dt=dt_infer,
-                now=now_perf,
+            players_out = self._dispatch_two_players(
+                active_slots, valid_dets, raw_pose_count, frame_bgr, frame_left,
+                sample_bgr, dt_infer, now_perf, w, h, primary_eye,
             )
-            if self.associator.last_swap_audit_triggered:
-                get_session_logger().log_throttled(
-                    "2p_swap_audit",
-                    "INFO",
-                    "TRACKING_2P",
-                    "Post-Separation Re-ID Audit corrected a P1/P2 identity swap.",
-                    interval_s=2.0,
-                )
-
-            for s_idx, slot in enumerate(active_slots):
-                if s_idx in assignments:
-                    d_idx = assignments[s_idx]
-                    w_lm, n_lm, seg_obj = valid_dets[d_idx]
-                    other_idx = 1 - s_idx
-                    other_nlm = (
-                        valid_dets[assignments[other_idx]][1]
-                        if other_idx in assignments
-                        else active_slots[other_idx].last_norm_landmarks
-                    )
-                    players_out[s_idx] = slot.process_detection(
-                        world_lm=w_lm,
-                        norm_lm=n_lm,
-                        seg_mask_obj=seg_obj,
-                        frame_bgr=frame_bgr,
-                        frame_left=frame_left,
-                        stereo_engine=self.stereo_engine,
-                        stereo_mode=self.stereo_mode,
-                        extract_joints_2d_fn=self._extract_joints_2d,
-                        build_body_mask_fn=self.build_body_mask,
-                        dt_infer=dt_infer,
-                        w=w,
-                        h=h,
-                        enforce_single_person_gate=False,
-                        sample_bgr=sample_bgr,
-                        primary_eye=primary_eye,
-                        other_norm_lm=other_nlm,
-                        is_crowded=is_crowded,
-                    )
-                else:
-                    was_active = slot.identity_profile.active
-                    pf_miss = slot.handle_missing(
-                        dt=dt_infer, frame_w=w, frame_h=h, is_crowded=is_crowded
-                    )
-                    players_out[s_idx] = pf_miss
-                    if pf_miss is not None and pf_miss.coasting and is_crowded:
-                        get_session_logger().log_throttled(
-                            f"2p_crowd_coast_p{s_idx + 1}",
-                            "INFO",
-                            "TRACKING_2P",
-                            f"Player {s_idx + 1} entered overlap coasting (raw_poses={raw_pose_count}, kept={len(valid_dets)}, crowded={is_crowded}).",
-                            interval_s=2.5,
-                        )
-                    elif was_active and pf_miss is None:
-                        get_session_logger().log_throttled(
-                            f"2p_drop_p{s_idx + 1}",
-                            "WARN",
-                            "TRACKING_2P",
-                            f"Player {s_idx + 1} tracking dropped after coasting (raw_poses={raw_pose_count}, kept={len(valid_dets)}, crowded={is_crowded}).",
-                            interval_s=2.5,
-                        )
 
         tracked_mask = sum(
             (1 << i)

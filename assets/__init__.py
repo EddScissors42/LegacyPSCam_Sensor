@@ -33,6 +33,7 @@ ICON_ARROW_DOWN_PATH = ICONS_DIR / "arrow_down.png" if (ICONS_DIR / "arrow_down.
 ICON_DUALSHOCK4_PATH = ICONS_DIR / "officialdualshock.png"
 ICON_CONTROLLER_PATH = ICONS_DIR / "controller.svg"
 ICON_PHONE_PATH = ICONS_DIR / "phone.svg"
+ICON_RELOAD_PATH = ICONS_DIR / "reload.svg"
 
 MODEL_POSE_LITE_PATH = MODELS_DIR / "pose_landmarker_lite.task"
 MODEL_POSE_FULL_PATH = MODELS_DIR / "pose_landmarker_full.task"
@@ -63,6 +64,7 @@ __all__ = [
     "ICON_DUALSHOCK4_PATH",
     "ICON_CONTROLLER_PATH",
     "ICON_PHONE_PATH",
+    "ICON_RELOAD_PATH",
     "MODELS_DIR",
     "MODEL_POSE_PATH",
     "MODEL_POSE_LITE_PATH",

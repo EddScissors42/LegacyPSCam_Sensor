@@ -758,8 +758,15 @@ def test_project_structure():
     print("[TEST] Modular Project Structure (sensor/, ui/, assets/)...")
     assert (BASE_DIR / "sensor").is_dir(), "Directory sensor/ must exist"
     assert (BASE_DIR / "sensor" / "pose_filters.py").exists(), "sensor/pose_filters.py must exist"
+    assert (BASE_DIR / "sensor" / "body_mask.py").exists(), "sensor/body_mask.py must exist"
+    assert (BASE_DIR / "sensor" / "camera_win32.py").exists(), "sensor/camera_win32.py must exist"
+    assert (BASE_DIR / "sensor" / "framebus_reader.py").exists(), "sensor/framebus_reader.py must exist"
+    assert (BASE_DIR / "sensor" / "camera_capture.py").exists(), "sensor/camera_capture.py must exist"
     assert (BASE_DIR / "ui").is_dir(), "Directory ui/ must exist"
-    assert (BASE_DIR / "ui" / "pages.py").exists(), "ui/pages.py must exist"
+    assert not (BASE_DIR / "ui" / "pages.py").exists(), "Legacy monolithic ui/pages.py must be removed"
+    assert (BASE_DIR / "ui" / "pages").is_dir(), "Package directory ui/pages/ must exist"
+    for page_mod in ("__init__.py", "video_page.py", "tracking_page.py", "experimental_page.py", "ds4_page.py"):
+        assert (BASE_DIR / "ui" / "pages" / page_mod).exists(), f"ui/pages/{page_mod} must exist"
     assert (BASE_DIR / "ui" / "theme.py").exists(), "ui/theme.py must exist"
     assert (BASE_DIR / "ui" / "icons.py").exists(), "ui/icons.py must exist"
     assert (BASE_DIR / "assets").is_dir(), "Directory assets/ must exist"
@@ -771,6 +778,7 @@ def test_project_structure():
     assert (BASE_DIR / "assets" / "icons" / "mode_balanced.svg").exists(), "Asset mode_balanced.svg must exist in assets/icons/"
     assert (BASE_DIR / "assets" / "icons" / "mode_competitive.svg").exists(), "Asset mode_competitive.svg must exist in assets/icons/"
     assert (BASE_DIR / "assets" / "icons" / "lab.svg").exists(), "Asset lab.svg must exist in assets/icons/"
+    assert (BASE_DIR / "assets" / "icons" / "reload.svg").exists(), "Asset reload.svg must exist in assets/icons/"
     assert (BASE_DIR / "assets" / "icons" / "arrow_down.png").exists() or (BASE_DIR / "assets" / "icons" / "arrow_down.svg").exists(), "Asset arrow_down must exist in assets/icons/"
     assert (BASE_DIR / "assets" / "webapp" / "mobile_webapp.html").exists(), "Asset mobile_webapp.html must exist in assets/webapp/"
     assert (BASE_DIR / "assets" / "webapp" / "expired_session.html").exists(), "Asset expired_session.html must exist in assets/webapp/"
@@ -801,7 +809,13 @@ def test_project_structure():
     assert (BASE_DIR / "sensor" / "tls_manager.py").exists(), "sensor/tls_manager.py must exist"
     assert (BASE_DIR / "sensor" / "vphone_protocol.py").exists(), "sensor/vphone_protocol.py must exist"
     assert (BASE_DIR / "ui" / "styles.py").exists(), "ui/styles.py must exist"
-    assert (BASE_DIR / "ui" / "device_readout_mixin.py").exists(), "ui/device_readout_mixin.py must exist"
+    assert (BASE_DIR / "ui" / "mixins").is_dir(), "ui/mixins/ package must exist"
+    assert (BASE_DIR / "ui" / "mixins" / "device_readout.py").exists(), "ui/mixins/device_readout.py must exist"
+    assert (BASE_DIR / "ui" / "mixins" / "camera_handlers.py").exists(), "ui/mixins/camera_handlers.py must exist"
+    assert (BASE_DIR / "ui" / "mixins" / "phone_handlers.py").exists(), "ui/mixins/phone_handlers.py must exist"
+    assert (BASE_DIR / "ui" / "mixins" / "ds4_vphone_handlers.py").exists(), "ui/mixins/ds4_vphone_handlers.py must exist"
+    assert (BASE_DIR / "ui" / "mixins" / "tracking_handlers.py").exists(), "ui/mixins/tracking_handlers.py must exist"
+    assert not (BASE_DIR / "ui" / "device_readout_mixin.py").exists(), "Legacy ui/device_readout_mixin.py must be moved into ui/mixins/"
     assert hasattr(sensor, "ArmRaiseGestureDetector")
     assert hasattr(sensor, "check_arm_raised")
 
@@ -843,6 +857,11 @@ def test_project_structure():
         assert "competitive" in win.mode_pixmaps and not win.mode_pixmaps["competitive"][0].isNull(), "Mode icon competitive must not be null"
         assert "stable" not in win.calib_cards and len(win.calib_cards) == 2, "Only Balanced and Competitive cards should exist"
         assert not win.pix_status_err.isNull(), "Status X icon pixmap must not be null"
+        assert not win.pix_reload_act.isNull(), "Reload SVG icon pixmap must not be null"
+        assert not win.btn_refresh.icon().isNull(), "Webcam reload button must use reload.svg icon"
+        assert not win.btn_refresh_phone_qr.icon().isNull(), "Phone QR reload button must use reload.svg icon"
+        assert not win.btn_refresh_ds4_icon.icon().isNull(), "DS4 reload button must use reload.svg icon"
+        assert "border: 1px solid #94A3B8" in win.styleSheet(), "Dropdown menus must have crisp visible thin border"
         assert win.font_title == "Kanit", f"Expected Kanit title font, got {win.font_title}"
         assert win.font_heading == "National Park", f"Expected National Park heading font, got {win.font_heading}"
         assert win.font_body == "Inter Tight", f"Expected Inter Tight body font, got {win.font_body}"
@@ -1587,10 +1606,12 @@ def test_kinect_emulator():
     assert "emulate_kinect_enabled" in cm.config
     assert isinstance(cm.config["emulate_kinect_enabled"], bool)
 
-    # 2. Test Proxy DLL Presence & Validity (Legacy10.dll present, manual Kinect10.dll & x64 artifacts removed)
+    # 2. Test Proxy DLL Presence & Validity (32-bit Legacy10.dll + 64-bit Legacy10_x64.dll present; manual Kinect10.dll removed)
     base_dir = Path(__file__).parent
     assert not (base_dir / "tools" / "Kinect10.dll").exists(), "Manual tools/Kinect10.dll must be removed"
-    assert not (base_dir / "tools" / "Legacy10_x64.dll").exists(), "Unused tools/Legacy10_x64.dll must be removed"
+    proxy_x64_path = base_dir / "tools" / "Legacy10_x64.dll"
+    assert proxy_x64_path.exists(), f"64-bit Legacy10_x64.dll not found at {proxy_x64_path}"
+    assert proxy_x64_path.stat().st_size > 100_000, f"Legacy10_x64.dll unexpected size: {proxy_x64_path.stat().st_size}"
     proxy_path = base_dir / "tools" / "Legacy10.dll"
     assert proxy_path.exists(), f"Legacy10.dll not found at {proxy_path}"
     assert proxy_path.stat().st_size == 121344, f"Legacy10.dll unexpected size: {proxy_path.stat().st_size}"
@@ -1599,10 +1620,10 @@ def test_kinect_emulator():
         data = f.read()
     assert data[:2] == b"MZ", "Legacy10.dll is not a valid PE binary"
 
-    # 3. Test Ordinal and target definitions (exclusively 32-bit Just Dance Legacy) & AV anti-false-positive hardening
+    # 3. Test Ordinal and target definitions (32-bit Legacy + 64-bit Legacy Lab) & AV anti-false-positive hardening
     import sensor.kinect_emulator as ke_mod
     assert KINECT_ORDINALS_ORDER == [16, 5, 6, 21, 22, 9, 17, 26]
-    assert TARGET_PROCESS_NAMES == ["legacy.exe", "justdance.exe"]
+    assert TARGET_PROCESS_NAMES == ["legacy.exe", "legacy lab.exe", "justdance.exe"]
     assert not hasattr(ke_mod, "PAGE_EXECUTE_READWRITE"), "PAGE_EXECUTE_READWRITE must not be used for IAT data patching"
     assert not hasattr(ke_mod, "PROCESS_ALL_ACCESS"), "PROCESS_ALL_ACCESS must not be requested by KinectEmulatorDaemon"
     ke_src = (base_dir / "sensor" / "kinect_emulator.py").read_text(encoding="utf-8")
@@ -1610,6 +1631,7 @@ def test_kinect_emulator():
     assert "PROCESS_ALL_ACCESS" not in ke_src, "kinect_emulator.py must use minimal PROCESS_INJECT_ACCESS"
     spec_src = (base_dir / "legacy_pscam_sensor.spec").read_text(encoding="utf-8")
     assert "VSVersionInfo" in spec_src and "version=pe_version_info" in spec_src, "PyInstaller spec must embed VSVersionInfo PE metadata"
+    assert "Legacy10_x64.dll" in spec_src, "PyInstaller spec must bundle tools/Legacy10_x64.dll for 64-bit Legacy Lab"
 
     # 4. Test Daemon Instantiation & Lifecycle
     daemon = KinectEmulatorDaemon({"emulate_kinect_enabled": False})
@@ -1619,12 +1641,22 @@ def test_kinect_emulator():
     assert status["connected"] is False
     assert "last_error_code" in status and "last_error_message" in status
     assert hasattr(ke_mod, "LIST_MODULES_32BIT") and ke_mod.LIST_MODULES_32BIT == 0x01
+    assert hasattr(ke_mod, "LIST_MODULES_64BIT") and ke_mod.LIST_MODULES_64BIT == 0x02
     assert hasattr(ke_mod, "TARGET_PROCESS_ALIASES") and "justdance2017.exe" in ke_mod.TARGET_PROCESS_ALIASES
     assert hasattr(daemon, "_stage_proxy_dll") and hasattr(daemon, "_resolve_iat_via_ilt")
+    assert hasattr(daemon, "_hook_running_game_64") and hasattr(daemon, "_find_kinect_delay_iat_descriptor_64")
     assert hasattr(daemon, "_validate_fallback_iat_rva")
-    # Exact process name matching must reject unrelated substring processes
+    assert daemon.proxy_dll_x64_path.is_file(), f"64-bit proxy DLL missing: {daemon.proxy_dll_x64_path}"
+    # Verify PE32+ magic on tools/Legacy10_x64.dll
+    x64_bytes = daemon.proxy_dll_x64_path.read_bytes()
+    x64_lfanew = struct.unpack_from("<I", x64_bytes, 0x3C)[0]
+    assert struct.unpack_from("<H", x64_bytes, x64_lfanew + 24)[0] == 0x020B, "Legacy10_x64.dll must be PE32+ (64-bit)"
+    # Exact process name matching must include Legacy Lab and reject launcher / unrelated processes
     assert KinectEmulatorDaemon.is_target_process_name("Legacy.exe") is True
+    assert KinectEmulatorDaemon.is_target_process_name("Legacy Lab.exe") is True
+    assert KinectEmulatorDaemon.is_target_process_name("LegacyLab.exe") is True
     assert KinectEmulatorDaemon.is_target_process_name("JustDance2017.exe") is True
+    assert KinectEmulatorDaemon.is_target_process_name("legacylab-launcher.exe") is False
     assert KinectEmulatorDaemon.is_target_process_name("SomeAppLegacy.exe") is False
     assert KinectEmulatorDaemon.is_target_process_name("LegacyPSCam.exe") is False
     assert KinectEmulatorDaemon.is_target_process_name("LegacySensor.exe") is False

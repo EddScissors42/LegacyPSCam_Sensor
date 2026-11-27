@@ -28,9 +28,13 @@ LegacyPSCam_Sensor/
 │   │   ├── usb_device.py       # Ciclo de vida USB (Interfaces 0 e 1, Probe/Commit UVC, Auto-Exposure)
 │   │   ├── frame_streamer.py   # Anel isócrono de 8 URBs (EP 0x81), depacketizer e demux de olhos
 │   │   └── driver_installer.py # Verificação PnP e instalação/reparo via pnputil com UAC sob demanda
-│   ├── camera_manager.py       # Descoberta, negociação DirectShow/WinUSB e captura assíncrona
+│   ├── camera_manager.py       # Descoberta, máquina de estados PS4 Camera e fachada de re-export
+│   ├── camera_win32.py         # Interop Win32 ctypes (CfgMgr32 PnP <3ms, SetupAPI ~3ms, Toolhelp32 e UAC)
+│   ├── framebus_reader.py      # Leitor IPC seqlock de memória compartilhada PSCam4Win (FrameBus YUY2 -> BGR)
+│   ├── camera_capture.py       # LatestFrameCamera: captura assíncrona multi-backend (Phone, PS4 WinUSB, FrameBus, DirectShow)
 │   ├── stereo_matcher.py       # Motor de Visão Estéreo (Retificação, Triangulação Esparsa 3D e Máscara Densa)
-│   ├── pose_tracker.py         # Motor MediaPipe Pose (1P & 2P) e máscara anatômica 320x240
+│   ├── pose_tracker.py         # Motor MediaPipe Pose (1P & 2P) e despacho por slot
+│   ├── body_mask.py            # Geometria pura da máscara anatômica 320x240 e projeção 2D de 20 joints
 │   ├── model_manager.py        # Gerenciador persistente de modelos .task em %APPDATA%\models (SHA-256 + download sob demanda)
 │   ├── player_reid.py          # Memória de identidade anti-swap (AppearanceSignature, LongTermIdentityProfile, MultiPlayerAssociator) e Pose NMS
 │   ├── player_slot.py          # Estado por jogador (PlayerSlotState), pipeline 20 joints e compositor de máscara indexada (com re-exports de player_reid)
@@ -51,10 +55,21 @@ LegacyPSCam_Sensor/
 │   └── config_manager.py       # Gerenciamento de configurações e resolução de caminhos (%APPDATA% / logs / portable)
 ├── ui/                         # Pacote da Interface Gráfica
 │   ├── __init__.py             # Exporta LegacySensorGUI, UIPagesMixin, widgets reutilizáveis e launch_app
-│   ├── gui_qt.py               # Janela principal View em PySide6 / Qt 6 (desacoplada e delegada a controllers)
-│   ├── pages.py                # Construtores declarativos das 4 páginas Qt 6 (UIPagesMixin)
+│   ├── gui_qt.py               # Casca principal da janela em PySide6 / Qt 6 (sinais, layout base, pixmaps e ciclo de vida)
+│   ├── pages/                  # Pacote declarativo das 4 páginas Qt 6 (UIPagesMixin)
+│   │   ├── __init__.py         # Combina os 4 mixins de página + helpers (_create_scroll_page, _create_reload_button)
+│   │   ├── video_page.py       # Página 0: Video Settings (PS4 Camera, Webcam, Phone Camera QR e Display Options)
+│   │   ├── tracking_page.py    # Página 1: Tracking & Motion Profiles (1P/2P, Auto-Height e gaveta avançada)
+│   │   ├── experimental_page.py# Página 2: Experimental Features (Auto-Frame PTZ e Virtual Phone)
+│   │   └── ds4_page.py         # Página 3: DualShock 4 Controller Settings (com Scoring Bridge condicionado à conexão)
 │   ├── styles.py               # Construtor centralizado da folha de estilos QSS (PlayStation Blue / Crisp White)
-│   ├── device_readout_mixin.py # Mixin de apresentação de readouts ao vivo (DS4, Virtual Phone, Phone Camera)
+│   ├── mixins/                 # Mixins modulares de apresentação e handlers de eventos da janela Qt 6
+│   │   ├── __init__.py         # Exports unificados dos 5 mixins da interface
+│   │   ├── device_readout.py   # UIDeviceReadoutMixin (readouts ao vivo de DS4, Virtual Phone e Phone Camera)
+│   │   ├── camera_handlers.py  # UICameraHandlersMixin (modos, abas, PS4 Camera state, Webcam e presets)
+│   │   ├── phone_handlers.py   # UIPhoneHandlersMixin (Phone Camera QR, IP LAN, Firewall e desconexão)
+│   │   ├── ds4_vphone_handlers.py # UIDS4VPhoneHandlersMixin (DualShock 4, Scoring Bridge, Benchmark e Logs)
+│   │   └── tracking_handlers.py   # UITrackingHandlersMixin (calibração, 2P, download de modelos AI e Start/Stop)
 │   ├── widgets.py              # Componentes Qt 6 reutilizáveis (SlidingStackedWidget, DeviceNavCard, CalibPresetCard, SettingBlock)
 │   ├── benchmark_dialog.py     # Diálogo e gráfico 2D QPainter de benchmark comparativo (Câmera vs DS4)
 │   ├── theme.py                # Paleta de cores, tipografia e presets (Competitive Lite AI recomendado por padrão)
@@ -74,6 +89,8 @@ LegacyPSCam_Sensor/
 │   └── pose_landmarker_full.task  # Modelo MediaPipe Pose Full (Perfil Equilibrado — cache sob demanda em %APPDATA%\models)
 └── tools/
     ├── Legacy10.dll               # DLL proxy de 32 bits injetada em memória pelo Emulate Kinect (Legacy.exe)
+    ├── Legacy10_x64.dll           # DLL proxy de 64 bits injetada em memória pelo Emulate Kinect (Legacy Lab.exe)
+    ├── legacy10_x64_src/          # Código-fonte C++ e arquivo .def da Legacy10_x64.dll (ABI Kinect SDK v1.8 x64)
     └── get_cameras.ps1            # Script PowerShell auxiliar para enumeração de câmeras WinRT
 ```
 
@@ -148,20 +165,20 @@ flowchart TD
 - **Responsabilidade:** Inicialização da aplicação, parsing de parâmetros da linha de comando (`--version`, `--portable`, `--start`, `--mode`, `--camera`) e carregamento da GUI (com aplicação de `cli_overrides`) ou da sessão de rastreamento direto.
 - **Relações:** Instancia `ConfigManager` e aciona `ui.launch_app(cli_overrides=...)` ou `tracking_session.py`.
 
-### 2. `gui_qt.py` e `pages.py` — Interface do Usuário (Painel de Controle PlayStation em Qt 6)
-- **Responsabilidade:** Interface visual moderna desenvolvida em **PySide6 (Qt 6)**, dividida entre o controlador principal de janela/eventos (`gui_qt.py`), os construtores declarativos das 4 páginas de navegação (`pages.py` / `UIPagesMixin`) e os componentes reutilizáveis (`widgets.py`, incluindo `SettingBlock`). Conta com animações fluidas de transição entre abas (`SlidingStackedWidget`), layout dividido com barra lateral estilizada de seleção de dispositivo (PlayStation 4 Camera, Webcam Padrão, DualShock 4 e Phone Camera), abas superiores centralizadas ("Video Settings", "Tracking", "Controller Settings", "Experimental"), paleta oficial PlayStation Blue (`#00439C`), cards com sombras suaves e ícones vetoriais anti-aliased. Permite selecionar entre os 2 perfis de rastreamento (**Competitive — Lite AI recomendado** e **Balanced — Full AI**), conta com calibração automática, pílula dedicada de Scoring Bridge integrada em Controller Settings (DualShock 4) e aba Experimental contextual por modo.
+### 2. `gui_qt.py`, `ui/mixins/` e `ui/pages/` — Interface do Usuário (Painel de Controle PlayStation em Qt 6)
+- **Responsabilidade:** Interface visual moderna desenvolvida em **PySide6 (Qt 6)**, dividida entre a casca principal da janela (`gui_qt.py`), os 5 mixins de eventos e readouts (`ui/mixins/`), o pacote declarativo das 4 páginas de navegação (`ui/pages/`: `video_page.py`, `tracking_page.py`, `experimental_page.py`, `ds4_page.py` expostos via `UIPagesMixin`) e os componentes reutilizáveis (`widgets.py`, incluindo `SettingBlock`). Conta com animações fluidas de transição entre abas (`SlidingStackedWidget`), layout dividido com barra lateral estilizada de seleção de dispositivo (PlayStation 4 Camera, Webcam Padrão, DualShock 4 e Phone Camera), abas superiores centralizadas ("Video Settings", "Tracking", "Controller Settings", "Experimental"), paleta oficial PlayStation Blue (`#00439C`), cards com sombras suaves e ícones vetoriais anti-aliased. Permite selecionar entre os 2 perfis de rastreamento (**Competitive — Lite AI recomendado** e **Balanced — Full AI**), conta com calibração automática, pílula dedicada de Scoring Bridge integrada dentro de `ds4_info_frame` (exibida somente quando um DualShock 4 está conectado) e aba Experimental contextual por modo.
 - **Ciclo de Vida do Driver e Hotplug Reativo:** Monitora a cada 1.0 segundo o hardware PnP e o ciclo de vida da PS4 Camera (`NOT_INSTALLED`, `DISCONNECTED`, `DRIVER_STOPPED`, `BOOTLOADER_UPLOADING`, `WAITING_VCAM`, `READY`).
-- **Threading Não-Bloqueante:** Tanto a enumeração de câmeras do OpenCV quanto a sessão de rastreamento executam em threads assíncronas dedicadas, mantendo a janela do Qt 6 totalmente fluida a 60 FPS e sem congelamentos na UI.
+- **Threading Não-Bloqueante:** Tanto a enumeração de câmeras do OpenCV quanto o desligamento de câmeras pré-aquecidas em standby (`CameraController.cancel_warmup(sync=False)` com thread `CameraPrewarmCloser` serializada) e a sessão de rastreamento executam em threads assíncronas dedicadas, mantendo a janela do Qt 6 totalmente fluida a 60 FPS e sem congelamentos ao trocar de modo (ex.: `Webcam → DualShock 4` ou `Phone Camera`).
 
-### 3. `camera_manager.py` — Gerenciamento de Câmera e Captura Assíncrona
-- **Classe `LatestFrameCamera`:** Executa um loop contínuo de captura de quadros em thread separada com um buffer atômico de profundidade 1 e contador monotônico de sequência (`frame_seq`). Com `read(only_new=True)`, o loop de rastreamento consome apenas quadros de hardware inéditos, eliminando 100% do reprocessamento de frames duplicados quando o loop roda mais rápido que a câmera.
-- **Leitura Direta do FrameBus com Bypass DirectShow (`FrameBusReader`):** Conecta-se diretamente à memória compartilhada `Global\PSCam4Win{slot}.FrameBus` para ler frames `YUY2` sem cópias intermediárias. Quando o `FrameBus` já está ativo e transmitindo, o `LatestFrameCamera._open_and_negotiate()` ignora a negociação de 1 a 2 segundos da câmera virtual DirectShow (`cv2.VideoCapture`) e inicia a captura imediatamente, mantendo o DirectShow apenas como fallback preguiçoso (*lazy fallback*).
-- **Snapshot Rápido de Hardware PnP (`get_hardware_snapshot`):** Utiliza diretamente a DLL nativa `cfgmgr32.dll` (`CM_Get_Device_ID_ListW`) com filtro de dispositivos presentes, retornando uma assinatura de hardware em menos de **3 milissegundos**, sem a sobrecarga de subprocessos como `pnputil`.
+### 3. `camera_manager.py`, `camera_win32.py`, `framebus_reader.py` e `camera_capture.py` — Subsistema de Câmera e Captura Assíncrona
+- **Classe `LatestFrameCamera` (`camera_capture.py`, re-exportada por `camera_manager.py`):** Executa um loop contínuo de captura de quadros em thread separada com um buffer atômico de profundidade 1 e contador monotônico de sequência (`frame_seq`). Com `read(only_new=True)`, o loop de rastreamento consome apenas quadros de hardware inéditos, eliminando 100% do reprocessamento de frames duplicados quando o loop roda mais rápido que a câmera.
+- **Leitura Direta do FrameBus com Bypass DirectShow (`FrameBusReader` em `framebus_reader.py`):** Conecta-se diretamente à memória compartilhada `Global\PSCam4Win{slot}.FrameBus` para ler frames `YUY2` sem cópias intermediárias. Quando o `FrameBus` já está ativo e transmitindo, o `LatestFrameCamera._open_and_negotiate()` ignora a negociação de 1 a 2 segundos da câmera virtual DirectShow (`cv2.VideoCapture`) e inicia a captura imediatamente, mantendo o DirectShow apenas como fallback preguiçoso (*lazy fallback*).
+- **Snapshot Rápido de Hardware PnP (`get_hardware_snapshot` em `camera_win32.py`):** Utiliza diretamente a DLL nativa `cfgmgr32.dll` (`CM_Get_Device_ID_ListW`) com filtro de dispositivos presentes, retornando uma assinatura de hardware em menos de **3 milissegundos**, sem a sobrecarga de subprocessos como `pnputil`.
 - **Máquina de Estados da PS4 Camera (`get_ps4_camera_state`):** Rastreia os IDs de hardware USB (`VID_05A9&PID_0580` do bootloader e `VID_05A9&PID_058B` do sensor ativo) e a contagem de câmeras virtuais (`SWD\VCAMDEVAPI`) para determinar o status exato da câmera.
 - **Negociação de Formatos (FourCC):** Identifica a PlayStation 4 Camera (`is_pscam=True`) e preserva o stream nativo em **YUY2 / NV12**, evitando a definição forçada de `'MJPG'` que corrompe a negociação com a câmera virtual do driver.
-- **Enumeração de Dispositivos:** Cruza os índices do OpenCV com a lista de dispositivos PnP do Windows (`Get-PnpDevice -Class Camera`) para exibir nomes amigáveis na interface.
+- **Enumeração de Dispositivos:** Cruza os índices do OpenCV com a lista de dispositivos PnP do Windows via SetupAPI (`camera_win32.py`, ~3ms) com fallback WinRT/PowerShell para exibir nomes amigáveis na interface.
 
-### 4. `pose_tracker.py` e `pose_filters.py` — Motor de Pose e Cinemática
+### 4. `pose_tracker.py`, `body_mask.py` e `pose_filters.py` — Motor de Pose, Máscara Anatômica e Cinemática
 - **`PoseTracker`:** Inicializa e gerencia a rede neural `vision.PoseLandmarker` do Google MediaPipe no modo contínuo de vídeo (`RunningMode.VIDEO`), preservando as proporções nativas de aspecto da câmera e operando com limiares otimizados (`det_c <= 0.45`, `pres_c <= 0.35`) para garantir detecção contínua e sem perda de rastreamento.
 - **Pré-Downscaling In-Place para Quadros de Alta Resolução (`>640px`):** Para streams HD como `1280x800` (PS4 Camera) ou `1920x1080` (Webcams Full HD), redimensiona in-place em buffers pré-alocados (`_infer_bgr` e `_infer_rgb`, ex.: `640x400` ou `640x360`) antes de enviar ao MediaPipe, reduzindo em 4x o custo de conversão RGB e de alocação da máscara de segmentação neural, enquanto mantém os quadros originais em resolução total (`1280x800`) para a triangulação estéreo sub-pixel (`StereoDepthEngine`).
 - **Garantia de Monotonicidade:** Força que `timestamp_ms` seja estritamente incremental a cada frame (`timestamp_ms = max(now_ms, last_ms + 1)`), prevenindo quebras em 60 FPS estáveis.
@@ -237,11 +254,11 @@ flowchart TD
   4. **Streaming de Telemetria de Dança (CSV Assíncrono):** A partir do momento do `START TRACKING`, grava em buffer assíncrono em lote (batching) todas as métricas de movimento ($a_x, a_y, a_z, |G|$, velocidade da mão, coordenadas dos joints, FPS e feedbacks de pontuação) com impacto computacional nulo (<0,1% CPU).
   5. **Resiliência a Falhas (Crash Diagnostics):** Instala interceptores globais para `sys.excepthook` e `threading.excepthook`, garantindo que qualquer encerramento inesperado grave o stack trace completo e feche os arquivos de forma limpa.
 
-### 13. `kinect_emulator.py` — Emulador de Kinect Zero-File em Memória (RAM Hook — Just Dance Legacy 32-bit)
-- **Responsabilidade:** Detecção instantânea do processo do Just Dance Legacy (2018 / 32-bit) e injeção do sensor diretamente na memória RAM, sem modificar arquivos no disco:
-  1. **Detecção Leve via Toolhelp32:** Varredura em tempo real (< 0.5 ms a cada 0.35s) identificando processos 32-bit (`Legacy.exe` e `justdance.exe`).
-  2. **Injeção de DLL Proxy Dinâmica:** Injeta remotamente `tools/Legacy10.dll` (32 bits) através de `VirtualAllocEx`, `WriteProcessMemory` e `CreateRemoteThread(LoadLibraryW)`, com diagnóstico explícito de `ERROR_ACCESS_DENIED (5)` caso o jogo esteja rodando como Administrador e o sensor não.
-  3. **Sobrescrita Atômica da IAT (Import Address Table):** Localiza e atualiza os 8 ponteiros IAT (`16, 5, 6, 21, 22, 9, 17, 26`) para rotear as chamadas das funções do Kinect para a `Legacy10.dll`, que consome os canais `JDP2`/`JMI2` (1 e 2 jogadores) do Legacy PSCam Sensor.
+### 13. `kinect_emulator.py` — Emulador de Kinect Zero-File em Memória (RAM Hook — 32-bit Legacy & 64-bit Legacy Lab)
+- **Responsabilidade:** Detecção instantânea do processo do Just Dance Legacy (32-bit `Legacy.exe`) e **Legacy Lab (64-bit `Legacy Lab.exe`)** e injeção do sensor diretamente na memória RAM, sem modificar arquivos no disco:
+  1. **Detecção Leve via Toolhelp32:** Varredura em tempo real (< 0.5 ms) identificando processos 32-bit (`Legacy.exe`, `JustDance.exe`) e 64-bit (`Legacy Lab.exe`), rejeitando launchers (`legacylab-launcher.exe`).
+  2. **Injeção de DLL Proxy Dinâmica (x86 / x64):** Injeta remotamente `tools/Legacy10.dll` (32 bits) ou `tools/Legacy10_x64.dll` (64 bits) através de `VirtualAllocEx`, `WriteProcessMemory` e `CreateRemoteThread(LoadLibraryW)`, com diagnóstico explícito de `ERROR_ACCESS_DENIED (5)` caso o jogo esteja rodando como Administrador e o sensor não.
+  3. **Sobrescrita Atômica da IAT & Delay-IAT (Import Address Table):** Localiza e atualiza os 8 ponteiros IAT ou Delay-IAT (`16, 5, 6, 21, 22, 9, 17, 26` + cache `HMODULE` do delay-loader em x64) para rotear as chamadas das funções do Kinect para o proxy em memória, que consome os canais `JDP2`/`JMI2`/`JDP1`/`JMI1`/`JXC1` (1 e 2 jogadores) do Legacy PSCam Sensor.
 
 ### 14. `player_slot.py` e `player_reid.py` — Pipeline Multi-Jogador (1P/2P) & Memória Re-ID Anti-Swap
 - **Responsabilidade:** Separação modular entre o estado cinemático/máscara por slot (`player_slot.py`: `PlayerSlotState`, `PlayerFrame`, `MultiPoseFrame`, `compose_player_index_mask`) e o motor de re-identificação/plausibilidade (`player_reid.py`: `AppearanceSignature`, `LongTermIdentityProfile`, `MultiPlayerAssociator`, `is_plausible_human_dancer`, `suppress_duplicate_poses`):

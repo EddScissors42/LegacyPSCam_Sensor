@@ -36,6 +36,8 @@ class CameraController(QObject):
         # Camera pre-warming state (instant 0s startup for START TRACKING)
         self._prewarmed_camera: Optional[LatestFrameCamera] = None
         self._warmup_thread: Optional[threading.Thread] = None
+        self._closer_thread: Optional[threading.Thread] = None
+        self._warmup_gen: int = 0
         self._warmup_lock = threading.Lock()
         self._warmup_timer = QTimer(self)
         self._warmup_timer.setSingleShot(True)
@@ -50,7 +52,7 @@ class CameraController(QObject):
     def set_closing(self, closing: bool):
         self._is_closing = bool(closing)
         if closing:
-            self.cancel_warmup()
+            self.cancel_warmup(sync=True)
 
     # =========================================================================
     # HARDWARE & PNP DISCOVERY
@@ -180,26 +182,55 @@ class CameraController(QObject):
             self._prewarmed_camera = None
             th = self._warmup_thread
             self._warmup_thread = None
+            prev_closer = self._closer_thread
 
-        if sync and th is not None and th.is_alive():
-            try:
-                th.join(timeout=1.5)
-            except Exception:
-                pass
-
-        if cam is not None:
-            if sync:
+        if sync:
+            if prev_closer is not None and prev_closer.is_alive():
+                try:
+                    prev_closer.join(timeout=2.0)
+                except Exception:
+                    pass
+            if th is not None and th.is_alive():
+                try:
+                    th.join(timeout=1.5)
+                except Exception:
+                    pass
+            if cam is not None:
                 try:
                     cam.release()
                 except Exception:
                     pass
-            else:
-                def _close_cam():
+            return
+
+        if cam is None and (th is None or not th.is_alive()):
+            return
+
+        def _close_cam():
+            try:
+                if prev_closer is not None and prev_closer.is_alive():
+                    try:
+                        prev_closer.join(timeout=2.0)
+                    except Exception:
+                        pass
+                if th is not None and th.is_alive():
+                    try:
+                        th.join(timeout=1.5)
+                    except Exception:
+                        pass
+                if cam is not None:
                     try:
                         cam.release()
                     except Exception:
                         pass
-                threading.Thread(target=_close_cam, daemon=True, name="CameraPrewarmCloser").start()
+            finally:
+                with self._warmup_lock:
+                    if self._closer_thread is threading.current_thread():
+                        self._closer_thread = None
+
+        closer = threading.Thread(target=_close_cam, daemon=True, name="CameraPrewarmCloser")
+        with self._warmup_lock:
+            self._closer_thread = closer
+        closer.start()
 
     def start_warmup_async(self):
         """Asynchronously pre-negotiates camera in low-CPU standby mode (<0.4% CPU)."""
@@ -217,6 +248,15 @@ class CameraController(QObject):
 
         def _warmup_worker():
             try:
+                # Wait for any previous background closer to finish releasing DirectShow/WinUSB handles
+                with self._warmup_lock:
+                    closer = self._closer_thread
+                if closer is not None and closer.is_alive():
+                    try:
+                        closer.join(timeout=2.0)
+                    except Exception:
+                        pass
+
                 if self._is_closing or self._is_tracking_active or my_gen != getattr(self, "_warmup_gen", 0):
                     return
 
@@ -311,7 +351,13 @@ class CameraController(QObject):
     def take_prewarmed_camera(self) -> Optional[LatestFrameCamera]:
         """Atomically extracts the pre-warmed camera instance for handoff to tracking session."""
         with self._warmup_lock:
+            closer = self._closer_thread
             th = self._warmup_thread
+        if closer is not None and closer.is_alive():
+            try:
+                closer.join(timeout=2.0)
+            except Exception:
+                pass
         if th is not None and th.is_alive():
             try:
                 th.join(timeout=1.5)

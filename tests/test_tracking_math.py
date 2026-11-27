@@ -145,6 +145,63 @@ class TestTrackingMath(unittest.TestCase):
         self.assertEqual(len(kept), 2)
         self.assertEqual(suppressed, 1)
 
+    def test_body_mask_extraction_and_desk_framing(self):
+        import numpy as np
+        from sensor import body_mask, pose_tracker
+
+        # PoseTracker staticmethod must point directly to sensor.body_mask.extract_joints_2d
+        self.assertIs(pose_tracker.PoseTracker._extract_joints_2d, body_mask.extract_joints_2d)
+
+        pose_full = _make_standing_pose(0.50)
+        j2d = body_mask.extract_joints_2d(pose_full, 640, 480)
+        self.assertEqual(len(j2d), 20)
+        self.assertAlmostEqual(j2d[3][0], 320.0, delta=1e-3)  # Head/Nose X
+
+        mask_full = body_mask.build_body_mask(pose_full, 320, 240)
+        self.assertEqual(mask_full.shape, (240, 320))
+        self.assertEqual(mask_full.dtype, np.uint8)
+        self.assertGreater(int(np.count_nonzero(mask_full)), 500)
+
+        # Desk framing: hips & legs invisible -> torso polygon must still synthesize down to bottom
+        pose_desk = _make_standing_pose(0.50)
+        for idx in (23, 24, 25, 26, 27, 28, 31, 32):
+            pose_desk[idx] = _LM(0.50, 0.99, visibility=0.0, presence=0.0)
+        mask_desk = body_mask.build_body_mask(pose_desk, 320, 240)
+        self.assertEqual(mask_desk.shape, (240, 320))
+        self.assertGreater(int(np.count_nonzero(mask_desk)), 300)
+
+    def test_camera_submodules_backwards_compat_and_helpers(self):
+        import numpy as np
+        from sensor import camera_manager, camera_capture, framebus_reader, camera_win32
+
+        self.assertIs(camera_manager.LatestFrameCamera, camera_capture.LatestFrameCamera)
+        self.assertIs(camera_manager.FrameBusReader, framebus_reader.FrameBusReader)
+        self.assertIs(camera_manager._CAMERA_HW_LOCK, camera_capture._CAMERA_HW_LOCK)
+        self.assertIs(
+            camera_manager.CameraManager._get_windows_camera_names_win32,
+            camera_win32.get_windows_camera_names_win32,
+        )
+
+        # Fast strided black-frame check
+        self.assertTrue(camera_capture.LatestFrameCamera._is_black_frame(None))
+        self.assertTrue(camera_capture.LatestFrameCamera._is_black_frame(np.zeros((48, 64, 3), dtype=np.uint8)))
+        self.assertFalse(camera_capture.LatestFrameCamera._is_black_frame(np.full((48, 64, 3), 120, dtype=np.uint8)))
+
+        # Orientation helper across 0 / 90 / 180 / 270 degrees without opening hardware
+        cam = camera_capture.LatestFrameCamera.__new__(camera_capture.LatestFrameCamera)
+        img = np.zeros((40, 60, 3), dtype=np.uint8)
+        img[0, 0] = (10, 20, 30)
+        cam.orientation = 0
+        self.assertEqual(cam._apply_orientation(img).shape, (40, 60, 3))
+        cam.orientation = 90
+        self.assertEqual(cam._apply_orientation(img).shape, (60, 40, 3))
+        cam.orientation = 180
+        rot180 = cam._apply_orientation(img)
+        self.assertEqual(rot180.shape, (40, 60, 3))
+        self.assertEqual(tuple(rot180[-1, -1]), (10, 20, 30))
+        cam.orientation = 270
+        self.assertEqual(cam._apply_orientation(img).shape, (60, 40, 3))
+
 
 if __name__ == "__main__":
     unittest.main()

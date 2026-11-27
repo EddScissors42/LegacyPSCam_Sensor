@@ -24,7 +24,7 @@ O projeto segue estritamente as convenções padrão do ecossistema Python (PEP 
 O projeto adota uma convenção estrita de versionamento semântico pragmático centralizada em `version.py`:
 
 ```python
-__version__ = "0.10.2"
+__version__ = "0.11.0"
 STAGE = "Alpha"
 VERSION_STRING = f"v{__version__} ({STAGE})"
 WINDOW_TITLE = f"Legacy PSCam Sensor {VERSION_STRING}"
@@ -107,9 +107,9 @@ A suíte cobre 19 áreas integradas (`19/19 PASSED`) mais os módulos dedicados 
 | `test_hand_anchor` | `sensor/pose_filters.py` | Extrapolação correta do antebraço em coordenadas 3D e 2D. |
 | `test_adaptive_smoother` | `sensor/pose_filters.py` | Alpha baixo para jitter em repouso (< 0.002) vs alpha alto em alta velocidade (> 0.5) e constante de tempo física compensada por `dt` em 30/60/120 FPS. |
 | `test_calibrator` | `sensor/pose_filters.py` | Validação de eixos do Kinect: `ShoulderRight` positivo no X e `ShoulderLeft` negativo no X, nos 3 tiers. |
-| `test_pose_tracker` | `sensor/pose_tracker.py` | Rajada de frames com intervalo < 1ms sem disparar exceção de timestamp e auto-framing `FaceFollowPTZ`. |
+| `test_pose_tracker` | `sensor/pose_tracker.py` & `body_mask.py` | Rajada de frames com intervalo < 1ms sem disparar exceção de timestamp, máscara anatômica 320x240 e auto-framing `FaceFollowPTZ`. |
 | `test_overlay` | `sensor/tracking_overlay.py` | Renderização do HUD, silhueta ROI e esqueleto sem falhas numpy. |
-| `test_camera_manager` | `sensor/camera_manager.py` | Snapshot PnP ultrarrápido (< 3ms via `cfgmgr32.dll`), máquina de estados da PS4 Camera, enumeração OpenCV, leitor `FrameBusReader`, detecção rápida de quadro preto e auto-crop de stereo Side-by-Side. |
+| `test_camera_manager` | `sensor/camera_manager.py`, `camera_win32.py`, `framebus_reader.py` & `camera_capture.py` | Snapshot PnP ultrarrápido (< 3ms via `cfgmgr32.dll`), máquina de estados da PS4 Camera, enumeração OpenCV/SetupAPI, leitor `FrameBusReader`, detecção rápida de quadro preto e auto-crop de stereo Side-by-Side. |
 | `test_telemetry_and_adaptive_benchmark` | `sensor/telemetry_benchmark.py` | Correlação cruzada de telemetria, parsing de CSV, auto-registro por ciclo de dança, detecção de processo e mapa em memória, e calibração adaptativa. |
 | `test_ps4_native_backend` | `sensor/ps4_backend/` | Verificação de pacote INF, validação SHA-1/SHA-256 do firmware OV580, depacketizer UVC, demultiplexação independente dos dois sensores (Olho Direito e Esquerdo) e captura ao vivo em hardware físico a 60 FPS. |
 | `test_stereo_vision_engine` | `sensor/stereo_matcher.py` | Calibração de fábrica rígida ($B=85.2\text{ mm}$), sinal correto de `stereoRectify`, triangulação sub-pixel `PyrLK` (curta ~1m em 1280x800 e longa >3.2m no olho direito) + auto-calibração vertical epipolar, máscara de profundidade densa (320x240) e integração com `SkeletonCalibrator`. |

@@ -64,7 +64,7 @@ All non-essential overhead has been removed while perfecting the core components
 ```
 LegacyPSCam_Sensor/
 ├── main.py                     # CLI launcher and entry point (--version, --portable, --start, --mode, --camera)
-├── version.py                  # Official versioning & build metadata (v0.10.2 Alpha)
+├── version.py                  # Official versioning & build metadata (v0.11.0 Alpha)
 ├── test_suite.py               # 19 isolated automated test suites + modular unittest runner (19/19 PASSED)
 ├── tests/                      # Modular unittest suites (test_vphone_protocol, test_tracking_math, test_controllers_and_cli)
 ├── config.json                 # Local template for user preferences (stored in %APPDATA%\LegacyPSCam_Sensor\)
@@ -77,9 +77,13 @@ LegacyPSCam_Sensor/
 │   └── legacy_pscam_device.inf # WinUSB association package for PS4 Camera
 ├── sensor/                     # Tracking Engine and AI package
 │   ├── ps4_backend/            # Native WinUSB PlayStation 4 Camera Backend
-│   ├── camera_manager.py       # Camera discovery (DirectShow COM + SetupAPI) and async capture
+│   ├── camera_manager.py       # Camera discovery, PS4 state machine & compatibility facade
+│   ├── camera_win32.py         # Win32 ctypes helpers (CfgMgr32 PnP <3ms, SetupAPI ~3ms, Toolhelp32)
+│   ├── framebus_reader.py      # Direct seqlock IPC reader for PSCam4Win FrameBus YUY2 memory
+│   ├── camera_capture.py       # Zero-latency threaded LatestFrameCamera (Phone, PS4 WinUSB, FrameBus, DirectShow)
 │   ├── stereo_matcher.py       # Stereo Vision Engine (Rectification, Sub-Pixel PyrLK 3D, Depth Mask)
-│   ├── pose_tracker.py         # MediaPipe 1P/2P engine, Hand Anchor, Calibrator & EMA
+│   ├── pose_tracker.py         # MediaPipe 1P/2P engine & multi-player slot dispatch
+│   ├── body_mask.py            # Pure geometric anatomical silhouette mask & 2D Kinect joint projection
 │   ├── player_reid.py          # Long-Term Identity Memory (Anti-Swap Re-ID), plausibility & Pose NMS
 │   ├── player_slot.py          # Per-player slot pipeline (PlayerSlotState) & indexed mask compositor
 │   ├── pose_filters.py         # Kinematic filters (HandAnchor, dt-compensated AdaptiveSmoother, Calibrator, PTZ)
@@ -101,10 +105,10 @@ LegacyPSCam_Sensor/
 │   └── config_manager.py       # config.json persistence & AppData/Portable path resolution
 ├── ui/                         # User Interface package
 │   ├── controllers/            # Decoupled MVP controllers (App, Camera, Device, Session)
-│   ├── gui_qt.py               # Primary PlayStation-themed window controller (PySide6 / Qt 6)
-│   ├── pages.py                # Declarative Qt 6 page builders (Video, Tracking, Experimental, DS4)
+│   ├── gui_qt.py               # Lean PlayStation-themed Qt 6 window shell (signals, layout shell, pixmaps, lifecycle)
+│   ├── pages/                  # Declarative Qt 6 page builders package (video, tracking, experimental, ds4)
 │   ├── styles.py               # Centralized QSS stylesheet builder
-│   ├── device_readout_mixin.py # Live device readout presentation mixin
+│   ├── mixins/                 # Modular Qt 6 event/readout mixins (device_readout, camera, phone, ds4_vphone, tracking)
 │   ├── widgets.py              # Reusable Qt 6 widgets (SlidingStackedWidget, DeviceNavCard, CalibPresetCard, SettingBlock)
 │   ├── benchmark_dialog.py     # Telemetry Benchmark & Calibration Comparator dialog & 2D chart
 │   ├── theme.py                # Palette, fonts, and calibration presets
@@ -116,8 +120,10 @@ LegacyPSCam_Sensor/
 ├── models/                     # Pre-trained neural network models
 │   ├── pose_landmarker_lite.task  # Google MediaPipe Pose Lite model (Competitive preset)
 │   └── pose_landmarker_full.task  # Google MediaPipe Pose Full model (Balanced preset)
-└── tools/                      # Setup utilities & in-memory proxy DLL
-    ├── Legacy10.dll            # 32-bit in-memory proxy DLL for Emulate Kinect
+└── tools/                      # Setup utilities & in-memory proxy DLLs
+    ├── Legacy10.dll            # 32-bit in-memory proxy DLL for Just Dance Legacy (Legacy.exe)
+    ├── Legacy10_x64.dll        # 64-bit in-memory proxy DLL for Just Dance Legacy Lab (Legacy Lab.exe)
+    ├── legacy10_x64_src/       # C++ source & .def for Legacy10_x64.dll (Kinect SDK v1.8 x64 ABI)
     └── get_cameras.ps1         # WinRT camera enumeration fallback script
 ```
 

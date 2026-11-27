@@ -112,22 +112,26 @@ def build_main_stylesheet(font_body: str, font_heading: str, arrow_url: str) -> 
             background-color: {PALETTE["input_bg"]};
             color: {PALETTE["text_main"]};
             font-family: '{font_body}', sans-serif;
-            border: 1px solid {PALETTE["input_border"]};
+            border: 1px solid #94A3B8;
             border-radius: 6px;
-            padding: 6px 12px;
+            padding: 5px 12px;
             font-size: 12px;
         }}
-        QComboBox:hover {{
+        QComboBox:hover, QComboBox:on {{
             border-color: {PALETTE["ps_blue"]};
+        }}
+        QComboBox:disabled {{
+            border-color: {PALETTE["border_subtle"]};
+            color: {PALETTE["text_muted"]};
         }}
         QComboBox::drop-down {{
             subcontrol-origin: padding;
             subcontrol-position: top right;
             width: 24px;
-            border-left: 1px solid {PALETTE["input_border"]};
+            border-left: 1px solid #94A3B8;
             background-color: {PALETTE["blue_pastel"]};
-            border-top-right-radius: 6px;
-            border-bottom-right-radius: 6px;
+            border-top-right-radius: 5px;
+            border-bottom-right-radius: 5px;
         }}
         QComboBox::drop-down:hover {{
             background-color: {PALETTE["blue_pastel_hover"]};

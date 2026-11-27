@@ -58,6 +58,8 @@ import importlib
 _LAZY_SYMBOL_MAP = {
     # Heavy AI / Tracking
     "PoseTracker": (".pose_tracker", "PoseTracker"),
+    "build_body_mask": (".body_mask", "build_body_mask"),
+    "extract_joints_2d": (".body_mask", "extract_joints_2d"),
     "ModelManager": (".model_manager", "ModelManager"),
     "MODEL_SPECS": (".model_manager", "MODEL_SPECS"),
     "run_tracking_session": (".tracking_session", "run_tracking_session"),
@@ -108,6 +110,10 @@ _LAZY_SYMBOL_MAP = {
 
 _LAZY_SUBMODULES = {
     "pose_tracker",
+    "body_mask",
+    "camera_capture",
+    "camera_win32",
+    "framebus_reader",
     "model_manager",
     "player_reid",
     "tracking_session",
@@ -157,6 +163,8 @@ __all__ = [
     "ISP_GEOMETRIES",
     "find_isp_geometry",
     "PoseTracker",
+    "build_body_mask",
+    "extract_joints_2d",
     "HandAnchorFilter",
     "AdaptiveSmoother",
     "SkeletonCalibrator",

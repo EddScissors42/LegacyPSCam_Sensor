@@ -709,6 +709,44 @@ def generate_phone_cam_icons_pil(target_box=(38, 26), scale: int = 4):
     return phone_act, phone_inact
 
 
+def generate_reload_icon_pil(size=(15, 15), scale: int = 4):
+    """
+    Renders supersampled PIL.Image RGBA icons for reload/refresh buttons across the UI.
+    Loads assets/icons/reload.svg tinted in PlayStation Blue (active) and Muted Slate (disabled),
+    with a crisp vector arc fallback if the SVG cannot be rendered.
+    Returns (pil_reload_act, pil_reload_disabled) rendered at size * scale.
+    """
+    base_dir = Path(__file__).resolve().parent
+    svg_candidates = [
+        base_dir.parent / "assets" / "icons" / "reload.svg",
+        base_dir.parent / "assets" / "reload.svg",
+        base_dir / "assets" / "icons" / "reload.svg",
+        base_dir / "assets" / "reload.svg",
+    ]
+    svg_path = next((p for p in svg_candidates if p.exists()), None)
+
+    reload_act = render_svg_icon_pil(svg_path, size=size, color_hex="#00439C", scale=scale) if svg_path else None
+    reload_dis = render_svg_icon_pil(svg_path, size=size, color_hex="#94A3B8", scale=scale) if svg_path else None
+
+    if reload_act is None or reload_dis is None:
+        w, h = size[0] * scale, size[1] * scale
+
+        def make_reload(col):
+            img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+            d = ImageDraw.Draw(img)
+            pad = int(w * 0.16)
+            lw = max(2, int(2.0 * scale))
+            d.arc([pad, pad, w - pad, h - pad], start=35, end=330, fill=col, width=lw)
+            return img
+
+        if reload_act is None:
+            reload_act = make_reload((0, 67, 156, 255))
+        if reload_dis is None:
+            reload_dis = make_reload((148, 163, 184, 255))
+
+    return reload_act, reload_dis
+
+
 def generate_status_icons(size=(38, 38), scale: int = 4):
     """Alias for generate_status_icons_pil returning supersampled PIL.Image status badges."""
     return generate_status_icons_pil(size=size, scale=scale)
