@@ -20,6 +20,7 @@
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <mmsystem.h>
 #include <oleauto.h>
 #include <unknwn.h>
 #include <stdint.h>
@@ -473,8 +474,8 @@ static bool isDepthStreamType(NUI_IMAGE_TYPE t) {
 }
 
 static inline NUI_SKELETON_POSITION_TRACKING_STATE confToState(float conf) {
-    if (conf >= 0.45f) return NUI_SKELETON_POSITION_TRACKED;
-    if (conf >= 0.15f) return NUI_SKELETON_POSITION_INFERRED;
+    if (conf >= 0.50f) return NUI_SKELETON_POSITION_TRACKED;
+    if (conf >= 0.20f) return NUI_SKELETON_POSITION_INFERRED;
     return NUI_SKELETON_POSITION_NOT_TRACKED;
 }
 
@@ -488,7 +489,7 @@ struct StreamSlot {
     NUI_IMAGE_RESOLUTION resolution  = NUI_IMAGE_RESOLUTION_640x480;
     DWORD                flags       = 0;
     HANDLE               nextEvent   = nullptr;
-    DWORD                lastDeliveredFrame = 0;
+    DWORD                frameNumber = 0;
     LegacyFrameTexture*  textures[2] = {nullptr, nullptr};
     int                  texIndex    = 0;
 };
@@ -497,6 +498,7 @@ class LegacyKinectSensor final : public INuiSensor {
 public:
     LegacyKinectSensor() : m_refCount(1) {
         InitializeCriticalSection(&m_cs);
+        m_startTickMs = GetTickCount64();
         m_connId   = SysAllocString(L"USB\\VID_045E&PID_02AE\\LEGACYPSCAM001");
         m_uniqueId = SysAllocString(L"LEGACYPSCAM001");
         m_audioId  = SysAllocString(L"LEGACYPSCAM_AUDIO001");
@@ -509,12 +511,10 @@ public:
 
         m_tmpBgra = static_cast<uint8_t*>(VirtualAlloc(nullptr, IPC_BGRA_BYTES, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
         m_tmpMask = static_cast<uint8_t*>(VirtualAlloc(nullptr, IPC_MASK_BYTES, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
-        m_tickEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     }
 
     ~LegacyKinectSensor() {
         NuiShutdown();
-        if (m_tickEvent) CloseHandle(m_tickEvent);
         if (m_tmpBgra) VirtualFree(m_tmpBgra, 0, MEM_RELEASE);
         if (m_tmpMask) VirtualFree(m_tmpMask, 0, MEM_RELEASE);
         if (m_connId) SysFreeString(m_connId);
@@ -625,13 +625,13 @@ public:
         int bpp = isDepthStreamType(eImageType) ? 2 : 4;
 
         StreamSlot& st = m_streams[slotIdx];
-        st.active     = true;
-        st.type       = eImageType;
-        st.resolution = eResolution;
-        st.flags      = dwImageFrameFlags;
-        st.nextEvent  = hNextFrameEvent;
-        st.lastDeliveredFrame = 0;
-        st.texIndex   = 0;
+        st.active      = true;
+        st.type        = eImageType;
+        st.resolution  = eResolution;
+        st.flags       = dwImageFrameFlags;
+        st.nextEvent   = hNextFrameEvent;
+        st.frameNumber = 0;
+        st.texIndex    = 0;
         for (int t = 0; t < 2; ++t) {
             if (st.textures[t]) st.textures[t]->Release();
             st.textures[t] = new LegacyFrameTexture(w, h, bpp);
@@ -668,18 +668,12 @@ public:
 
     HRESULT STDMETHODCALLTYPE NuiImageStreamGetNextFrame(
         HANDLE hStream,
-        DWORD dwMillisecondsToWait,
+        DWORD /*dwMillisecondsToWait*/,
         NUI_IMAGE_FRAME* pImageFrame
     ) override {
         if (!pImageFrame) return E_POINTER;
         int idx = streamHandleToIndex(hStream);
         if (idx < 0) return E_INVALIDARG;
-
-        DWORD curFrame = static_cast<DWORD>(InterlockedCompareExchange(&m_frameCounter, 0, 0));
-        if (curFrame == m_streams[idx].lastDeliveredFrame && dwMillisecondsToWait > 0 && m_tickEvent) {
-            WaitForSingleObject(m_tickEvent, dwMillisecondsToWait > 50 ? 50 : dwMillisecondsToWait);
-            curFrame = static_cast<DWORD>(InterlockedCompareExchange(&m_frameCounter, 0, 0));
-        }
 
         EnterCriticalSection(&m_cs);
         StreamSlot& st = m_streams[idx];
@@ -687,7 +681,11 @@ public:
             LeaveCriticalSection(&m_cs);
             return E_FAIL;
         }
-        st.lastDeliveredFrame = curFrame;
+        // Reset manual-reset stream event so WaitForSingleObject paces strictly at 30 FPS (matches Kinect10.dll)
+        if (st.nextEvent) {
+            ResetEvent(st.nextEvent);
+        }
+        DWORD frameNum = ++st.frameNumber;
 
         LegacyFrameTexture* tex = st.textures[st.texIndex];
         st.texIndex ^= 1;
@@ -699,12 +697,12 @@ public:
         fillStreamTexture(st, tex);
 
         memset(pImageFrame, 0, sizeof(NUI_IMAGE_FRAME));
-        pImageFrame->liTimeStamp.QuadPart = static_cast<LONGLONG>(GetTickCount64());
-        pImageFrame->dwFrameNumber        = curFrame;
-        pImageFrame->eImageType           = st.type;
-        pImageFrame->eResolution          = st.resolution;
-        pImageFrame->pFrameTexture        = tex;
-        pImageFrame->dwFrameFlags         = st.flags;
+        pImageFrame->liTimeStamp.QuadPart  = static_cast<LONGLONG>(GetTickCount64() - m_startTickMs);
+        pImageFrame->dwFrameNumber         = frameNum;
+        pImageFrame->eImageType            = st.type;
+        pImageFrame->eResolution           = st.resolution;
+        pImageFrame->pFrameTexture         = tex;
+        pImageFrame->dwFrameFlags          = st.flags;
         pImageFrame->ViewArea.eDigitalZoom = 0;
         pImageFrame->ViewArea.lCenterX     = 0;
         pImageFrame->ViewArea.lCenterY     = 0;
@@ -814,25 +812,30 @@ public:
     }
 
     HRESULT STDMETHODCALLTYPE NuiSkeletonGetNextFrame(
-        DWORD dwMillisecondsToWait,
+        DWORD /*dwMillisecondsToWait*/,
         NUI_SKELETON_FRAME* pSkeletonFrame
     ) override {
         if (!pSkeletonFrame) return E_POINTER;
 
-        DWORD curFrame = static_cast<DWORD>(InterlockedCompareExchange(&m_frameCounter, 0, 0));
-        if (curFrame == m_lastSkelFrame && dwMillisecondsToWait > 0 && m_tickEvent) {
-            WaitForSingleObject(m_tickEvent, dwMillisecondsToWait > 50 ? 50 : dwMillisecondsToWait);
-            curFrame = static_cast<DWORD>(InterlockedCompareExchange(&m_frameCounter, 0, 0));
+        // Reset manual-reset skeleton event (CRITICAL: UbiArt waits on hNextSkeletonEvent;
+        // without ResetEvent the game thread busy-spins at 1000 Hz and destroys move timing/scoring)
+        HANDLE hSkelEv = nullptr;
+        EnterCriticalSection(&m_cs);
+        hSkelEv = m_skelEvent;
+        LeaveCriticalSection(&m_cs);
+        if (hSkelEv) {
+            ResetEvent(hSkelEv);
         }
-        m_lastSkelFrame = curFrame;
+
+        DWORD frameNum = static_cast<DWORD>(InterlockedIncrement(&m_skelFrameNumber));
 
         memset(pSkeletonFrame, 0, sizeof(NUI_SKELETON_FRAME));
-        pSkeletonFrame->liTimeStamp.QuadPart = static_cast<LONGLONG>(GetTickCount64());
-        pSkeletonFrame->dwFrameNumber        = curFrame;
+        pSkeletonFrame->liTimeStamp.QuadPart = static_cast<LONGLONG>(GetTickCount64() - m_startTickMs);
+        pSkeletonFrame->dwFrameNumber        = frameNum;
         pSkeletonFrame->dwFlags              = 0;
-        // Standard horizontal floor plane at y = -1.0m below sensor origin
-        pSkeletonFrame->vFloorClipPlane      = {0.0f, 1.0f, 0.0f, 1.0f};
-        pSkeletonFrame->vNormalToGravity     = {0.0f, 1.0f, 0.0f, 0.0f};
+        // Exact Kinect v1.8 & Legacy10.dll convention: floor plane normal +Y (D=0), gravity vector -Y
+        pSkeletonFrame->vFloorClipPlane      = {0.0f,  1.0f, 0.0f, 0.0f};
+        pSkeletonFrame->vNormalToGravity     = {0.0f, -1.0f, 0.0f, 0.0f};
 
         // Optional CoachX offset (disabled by default in Legacy PSCam Sensor)
         float coachOffsetX = 0.0f;
@@ -944,9 +947,9 @@ private:
         float coachOffsetX
     ) {
         dst.eTrackingState    = NUI_SKELETON_TRACKED;
-        dst.dwTrackingID      = static_cast<DWORD>(101 + slotIdx);
-        dst.dwEnrollmentIndex = static_cast<DWORD>(slotIdx);
-        dst.dwUserIndex       = static_cast<DWORD>(slotIdx);
+        dst.dwTrackingID      = static_cast<DWORD>(1 + slotIdx);
+        dst.dwEnrollmentIndex = 0;
+        dst.dwUserIndex       = static_cast<DWORD>(1 + slotIdx);
         dst.dwQualityFlags    = 0;
 
         float hipX = joints[0].x + coachOffsetX;
@@ -1017,7 +1020,7 @@ private:
         }
 
         const bool includePlayerIdx = (st.type == NUI_IMAGE_TYPE_DEPTH_AND_PLAYER_INDEX);
-        const uint16_t baseDepthShifted = static_cast<uint16_t>(2000u << 3);
+        const uint16_t baseDepthShifted = static_cast<uint16_t>(2200u << 3);
 
         if (outW == IPC_MASK_W && outH == IPC_MASK_H) {
             for (int i = 0; i < IPC_MASK_W * IPC_MASK_H; ++i) {
@@ -1054,14 +1057,11 @@ private:
     static DWORD WINAPI pacerThreadProc(LPVOID param) {
         LegacyKinectSensor* self = static_cast<LegacyKinectSensor*>(param);
         // 30 FPS standard Kinect v1 pacer (33 ms) — required by Just Dance scoring engine
+        timeBeginPeriod(1);
         while (self->m_pacerRunning) {
             Sleep(33);
             if (!self->m_pacerRunning) break;
             InterlockedIncrement(&self->m_frameCounter);
-
-            if (self->m_tickEvent) {
-                PulseEvent(self->m_tickEvent);
-            }
 
             EnterCriticalSection(&self->m_cs);
             for (int i = 0; i < MAX_STREAMS; ++i) {
@@ -1077,22 +1077,23 @@ private:
             }
             LeaveCriticalSection(&self->m_cs);
         }
+        timeEndPeriod(1);
         return 0;
     }
 
     volatile LONG     m_refCount;
     CRITICAL_SECTION  m_cs;
-    volatile bool     m_initialized   = false;
-    volatile bool     m_pacerRunning  = false;
-    HANDLE            m_pacerThread   = nullptr;
-    HANDLE            m_tickEvent     = nullptr;
-    HANDLE            m_skelEvent     = nullptr;
-    HANDLE            m_frameEndEvent = nullptr;
-    DWORD             m_initFlags     = 0;
-    DWORD             m_skelFlags     = 0;
-    LONG              m_elevation     = 0;
-    volatile LONG     m_frameCounter  = 0;
-    DWORD             m_lastSkelFrame = 0;
+    volatile bool     m_initialized     = false;
+    volatile bool     m_pacerRunning    = false;
+    HANDLE            m_pacerThread     = nullptr;
+    HANDLE            m_skelEvent       = nullptr;
+    HANDLE            m_frameEndEvent   = nullptr;
+    DWORD             m_initFlags       = 0;
+    DWORD             m_skelFlags       = 0;
+    LONG              m_elevation       = 0;
+    volatile LONG     m_frameCounter    = 0;
+    volatile LONG     m_skelFrameNumber = 0;
+    ULONGLONG         m_startTickMs     = 0;
 
     BSTR m_connId   = nullptr;
     BSTR m_uniqueId = nullptr;

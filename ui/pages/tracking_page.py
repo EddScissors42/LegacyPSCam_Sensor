@@ -1,12 +1,13 @@
 """
-Declarative Qt 6 Page 1 Builder: Tracking & Motion Profile.
-Constructs the Competitive/Balanced profile cards, model download banner,
-1P/2P selector, automatic height calibration callout, and hidden advanced drawer.
+Declarative Qt 6 Page 1 Builder: Tracking & Quality Presets.
+Constructs the 2x2 Quality Presets grid (Performance, Balanced, High, Custom),
+model download & 2P warning banners, 1P/2P selector, automatic height calibration callout,
+and the 2x2 Custom Tracking Options card (AI Model, Inference Quality, Silhouette Cutout, Player Lock).
 """
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
     QComboBox, QFrame, QSlider
 )
 
@@ -18,11 +19,11 @@ class UITrackingPageMixin:
     """Declarative builder for Page 1 (Tracking & Calibration)."""
 
     def _build_calib_view(self):
-        """Constructs Page 1: Calibration & Motion Profile."""
+        """Constructs Page 1: Tracking Quality Presets & Custom Options."""
         self.page_calib = QWidget()
         layout = QVBoxLayout(self.page_calib)
         layout.setContentsMargins(0, 4, 6, 0)
-        layout.setSpacing(10)
+        layout.setSpacing(12)
 
         main_card = QFrame(self.page_calib)
         main_card.setProperty("class", "card")
@@ -30,29 +31,31 @@ class UITrackingPageMixin:
         card_layout.setContentsMargins(16, 14, 16, 14)
         card_layout.setSpacing(10)
 
-        lbl_head = QLabel("TRACKING & MOTION PROFILE", main_card)
+        lbl_head = QLabel("TRACKING QUALITY PRESETS", main_card)
         lbl_head.setStyleSheet(
             f"font-family: '{self.font_heading}'; font-size: 12px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent; border: none;"
         )
-        lbl_sub = QLabel("Select the profile that best fits your playstyle and camera setup.", main_card)
+        lbl_sub = QLabel("Choose a hardware preset or customize individual tracking options below.", main_card)
         lbl_sub.setStyleSheet(
             f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
         )
         card_layout.addWidget(lbl_head)
         card_layout.addWidget(lbl_sub)
 
-        # 2 Profile cards (Balanced / Competitive)
-        cards_row = QHBoxLayout()
-        cards_row.setSpacing(10)
+        # 4 Quality Preset cards in a crisp 2x2 grid (Performance, Balanced, High, Custom)
+        cards_grid = QGridLayout()
+        cards_grid.setSpacing(10)
+        cards_grid.setColumnStretch(0, 1)
+        cards_grid.setColumnStretch(1, 1)
 
-        for pid, pdata in CALIB_PRESETS.items():
+        for idx, (pid, pdata) in enumerate(CALIB_PRESETS.items()):
             pix_act, pix_inact = self.mode_pixmaps.get(pid, (QPixmap(), QPixmap()))
             card = CalibPresetCard(pid, pdata, self.font_heading, self.font_body, pix_act, pix_inact, main_card)
             card.clicked.connect(self._select_calib_preset)
-            cards_row.addWidget(card)
+            cards_grid.addWidget(card, idx // 2, idx % 2)
             self.calib_cards[pid] = card
 
-        card_layout.addLayout(cards_row)
+        card_layout.addLayout(cards_grid)
 
         # On-demand AI Model Download Status Banner (hidden unless downloading Full AI to %APPDATA%)
         self.model_dl_box = QFrame(main_card)
@@ -97,7 +100,7 @@ class UITrackingPageMixin:
         tp_warn_layout.addWidget(lbl_tp_icon, alignment=Qt.AlignmentFlag.AlignTop)
 
         self.lbl_2p_model_warning = QLabel(
-            "2-Player Mode Active: Lite AI (Competitive) is strongly recommended to sustain stable 30–60 FPS on the CPU when tracking two dancers simultaneously.",
+            "2-Player Mode Active: Lite AI (Balanced or Performance) is strongly recommended to sustain stable 30–60 FPS on the CPU when tracking two dancers simultaneously.",
             self.two_player_warn_box,
         )
         self.lbl_2p_model_warning.setWordWrap(True)
@@ -214,12 +217,12 @@ class UITrackingPageMixin:
         adv_layout.addWidget(self.slider_conf)
         self._update_conf_label(self.cfg.get("detection_confidence", 0.50))
 
-        # Reset button row
+        # Reset button row (preserved inside hidden legacy drawer)
         adv_actions = QHBoxLayout()
-        btn_reset = QPushButton("↺ Reset to Recommended Profile (Competitive — Lite AI)", self.adv_drawer)
+        btn_reset = QPushButton("↺ Reset to Recommended Preset (Balanced — Lite AI)", self.adv_drawer)
         btn_reset.setProperty("class", "btn_secondary")
         btn_reset.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_reset.clicked.connect(lambda: self._select_calib_preset("competitive"))
+        btn_reset.clicked.connect(lambda: self._select_calib_preset("balanced"))
         adv_actions.addWidget(btn_reset)
         adv_actions.addStretch()
         adv_layout.addLayout(adv_actions)
@@ -227,8 +230,108 @@ class UITrackingPageMixin:
         self.adv_drawer.setVisible(False)
 
         layout.addWidget(main_card)
+
+        # Custom Tracking Options Card (2x2 SettingBlocks matching Video & Controller pages)
+        self.custom_tracking_card = QFrame(self.page_calib)
+        self.custom_tracking_card.setProperty("class", "card")
+        cust_layout = QVBoxLayout(self.custom_tracking_card)
+        cust_layout.setContentsMargins(16, 14, 16, 14)
+        cust_layout.setSpacing(10)
+
+        lbl_cust_head = QLabel("CUSTOM TRACKING OPTIONS", self.custom_tracking_card)
+        lbl_cust_head.setStyleSheet(
+            f"font-family: '{self.font_heading}'; font-size: 12px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent; border: none;"
+        )
+        lbl_cust_sub = QLabel(
+            "Fine-tune individual tracking parameters. Any manual change automatically switches the preset to Custom.",
+            self.custom_tracking_card,
+        )
+        lbl_cust_sub.setStyleSheet(
+            f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
+        )
+        cust_layout.addWidget(lbl_cust_head)
+        cust_layout.addWidget(lbl_cust_sub)
+
+        # Row 1: AI Model + Inference Quality
+        row_opt_1 = QHBoxLayout()
+        row_opt_1.setSpacing(10)
+
+        self.block_ai_model = SettingBlock(
+            "AI MODEL",
+            "Lite is fastest for 30–60 FPS and 2P; Full adds extra skeletal detail on strong CPUs.",
+            object_name="settingBlockAiModel",
+            font_heading=self.font_heading,
+            font_body=self.font_body,
+            min_height=108,
+            parent=self.custom_tracking_card,
+        )
+        self.cb_ai_model = QComboBox(self.block_ai_model)
+        self.cb_ai_model.setFixedHeight(32)
+        self.cb_ai_model.addItems(["Lite (Fast — Recommended)", "Full (High Detail)"])
+        self.cb_ai_model.currentIndexChanged.connect(self._on_custom_tracking_option_changed)
+        self.block_ai_model.content_layout.addWidget(self.cb_ai_model)
+        row_opt_1.addWidget(self.block_ai_model, stretch=1)
+
+        self.block_infer_quality = SettingBlock(
+            "INFERENCE QUALITY",
+            "Resolution sent to pose AI. Low (320p) maximizes FPS; Auto scales down only if CPU lags.",
+            object_name="settingBlockInferQuality",
+            font_heading=self.font_heading,
+            font_body=self.font_body,
+            min_height=108,
+            parent=self.custom_tracking_card,
+        )
+        self.cb_infer_quality = QComboBox(self.block_infer_quality)
+        self.cb_infer_quality.setFixedHeight(32)
+        self.cb_infer_quality.addItems(["Low (320p — Max FPS)", "Auto (Adaptive)", "High (640p)"])
+        self.cb_infer_quality.currentIndexChanged.connect(self._on_custom_tracking_option_changed)
+        self.block_infer_quality.content_layout.addWidget(self.cb_infer_quality)
+        row_opt_1.addWidget(self.block_infer_quality, stretch=1)
+
+        cust_layout.addLayout(row_opt_1)
+
+        # Row 2: Silhouette Cutout + Player Lock
+        row_opt_2 = QHBoxLayout()
+        row_opt_2.setSpacing(10)
+
+        self.block_silhouette = SettingBlock(
+            "SILHOUETTE CUTOUT",
+            "Fast uses a lightweight geometric silhouette (lowest CPU); Accurate uses AI background cutout.",
+            object_name="settingBlockSilhouette",
+            font_heading=self.font_heading,
+            font_body=self.font_body,
+            min_height=108,
+            parent=self.custom_tracking_card,
+        )
+        self.cb_silhouette_mode = QComboBox(self.block_silhouette)
+        self.cb_silhouette_mode.setFixedHeight(32)
+        self.cb_silhouette_mode.addItems(["Fast (Geometric — Low CPU)", "Accurate (AI Mask)"])
+        self.cb_silhouette_mode.currentIndexChanged.connect(self._on_custom_tracking_option_changed)
+        self.block_silhouette.content_layout.addWidget(self.cb_silhouette_mode)
+        row_opt_2.addWidget(self.block_silhouette, stretch=1)
+
+        self.block_player_lock = SettingBlock(
+            "PLAYER LOCK",
+            "Locks tracking onto the active dancer to ignore bystanders passing in the background.",
+            object_name="settingBlockPlayerLock",
+            font_heading=self.font_heading,
+            font_body=self.font_body,
+            min_height=108,
+            parent=self.custom_tracking_card,
+        )
+        self.cb_player_lock = QComboBox(self.block_player_lock)
+        self.cb_player_lock.setFixedHeight(32)
+        self.cb_player_lock.addItems(["Enabled (Recommended)", "Disabled"])
+        self.cb_player_lock.currentIndexChanged.connect(self._on_custom_tracking_option_changed)
+        self.block_player_lock.content_layout.addWidget(self.cb_player_lock)
+        row_opt_2.addWidget(self.block_player_lock, stretch=1)
+
+        cust_layout.addLayout(row_opt_2)
+
+        layout.addWidget(self.custom_tracking_card)
         layout.addStretch()
 
         self.scroll_calib = self._create_scroll_page(self.page_calib)
         self.stacked_view.addWidget(self.scroll_calib)
+        self._sync_tracking_option_combos()
         self._update_calib_cards_ui()

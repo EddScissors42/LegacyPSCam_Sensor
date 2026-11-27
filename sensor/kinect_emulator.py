@@ -98,6 +98,9 @@ TARGET_PROCESS_NAMES = [
 # Additional Just Dance Legacy / 2017 / Legacy Lab executable aliases detected safely alongside TARGET_PROCESS_NAMES
 TARGET_PROCESS_ALIASES = (
     "legacylab.exe",
+    "legacylab_offline.exe",
+    "legacy lab offline.exe",
+    "legacylaboffline.exe",
     "justdance2017.exe",
     "legacyoffline.exe",
     "legacy_offline.exe",

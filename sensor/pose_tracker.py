@@ -99,6 +99,8 @@ class PoseTracker:
     # Maximum width fed into MediaPipe RGB conversion & segmentation tensor (aspect-preserving)
     INFER_MAX_W = 640
     INFER_MAX_W_2P = 640
+    # Adaptive 1P inference width ladder for low-end CPUs (never degrades fast 30-60 FPS PCs)
+    _ADAPTIVE_WIDTH_TIERS = (640, 384, 320)
     _MORPH_KERNEL_SMALL = MORPH_KERNEL_SMALL
     _MORPH_KERNEL_LARGE = MORPH_KERNEL_LARGE
 
@@ -131,6 +133,13 @@ class PoseTracker:
         self.smoothing_alpha = float(smoothing_alpha)
         self.target_height_m = float(target_height_m)
 
+        # Resolve quality controls (inference resolution mode + silhouette cutout mode)
+        self.infer_quality_mode: str = "auto"
+        self.segmentation_mode: str = "accurate"
+        self._adaptive_infer_enabled: bool = True
+        self._fixed_infer_max_w: int = self.INFER_MAX_W
+        self._apply_quality_settings(self.cfg)
+
         self.detector = None
         self._init_detector()
 
@@ -155,6 +164,37 @@ class PoseTracker:
         self.last_infer_perf = None
         self._infer_bgr = None
         self._infer_rgb = None
+        # Adaptive 1P inference downscaler state (steps 640 -> 384 -> 320 only on overloaded CPUs)
+        self._adaptive_tier_idx = 0
+        self._infer_ms_ema: Optional[float] = None
+        self._slow_streak = 0
+        self._fast_streak = 0
+
+    def _apply_quality_settings(self, cfg: dict) -> bool:
+        """
+        Applies `infer_quality_mode` ('low' | 'auto' | 'high') and `segmentation_mode`
+        ('fast' | 'accurate') from config. Returns True if detector re-initialization is needed.
+        """
+        prev_seg = getattr(self, "segmentation_mode", "accurate")
+        raw_seg = str(cfg.get("segmentation_mode", "accurate")).strip().lower()
+        self.segmentation_mode = "fast" if raw_seg in ("fast", "geometric", "off", "false", "0") else "accurate"
+
+        raw_q = str(cfg.get("infer_quality_mode", "auto")).strip().lower()
+        if raw_q not in ("low", "auto", "high"):
+            raw_q = "auto"
+        self.infer_quality_mode = raw_q
+
+        if raw_q == "low":
+            self._adaptive_infer_enabled = False
+            self._fixed_infer_max_w = 320
+        elif raw_q == "high":
+            self._adaptive_infer_enabled = False
+            self._fixed_infer_max_w = int(cfg.get("infer_max_w", self.INFER_MAX_W))
+        else:
+            self._adaptive_infer_enabled = bool(cfg.get("adaptive_infer_scale", True))
+            self._fixed_infer_max_w = int(cfg.get("infer_max_w", self.INFER_MAX_W))
+
+        return self.segmentation_mode != prev_seg
 
     # --- Backwards-compatible properties delegating to Slot 0 (Player 1) ---
     @property
@@ -210,6 +250,7 @@ class PoseTracker:
             pres_c = max(0.32, min(0.54, det_c * 0.72))
             track_c = max(0.25, min(0.46, det_c * 0.56))
             detector_num_poses = 1
+        use_neural_seg = (getattr(self, "segmentation_mode", "accurate") != "fast")
         options = vision.PoseLandmarkerOptions(
             base_options=base_options,
             running_mode=vision.RunningMode.VIDEO,
@@ -217,12 +258,14 @@ class PoseTracker:
             min_pose_detection_confidence=det_c,
             min_pose_presence_confidence=pres_c,
             min_tracking_confidence=track_c,
-            output_segmentation_masks=True,
+            output_segmentation_masks=use_neural_seg,
         )
         self.detector = vision.PoseLandmarker.create_from_options(options)
         print(
             f"[TRACKER] MediaPipe Pose Landmarker ({self.model_variant}) initialized "
-            f"(model={self.model_path.name}, num_poses={detector_num_poses}, det={det_c:.2f}, pres={pres_c:.2f}, track={track_c:.2f})."
+            f"(model={self.model_path.name}, num_poses={detector_num_poses}, det={det_c:.2f}, "
+            f"pres={pres_c:.2f}, track={track_c:.2f}, infer={getattr(self, 'infer_quality_mode', 'auto')}, "
+            f"seg={getattr(self, 'segmentation_mode', 'accurate')})."
         )
 
     def update_settings(
@@ -237,6 +280,8 @@ class PoseTracker:
         if cfg is not None:
             self.cfg.update(cfg)
             self.face_ptz.cfg = self.cfg
+            if self._apply_quality_settings(self.cfg):
+                reinit_needed = True
             if "stereo_mode" in self.cfg:
                 self.stereo_mode = str(self.cfg.get("stereo_mode", STEREO_MODE_SPARSE_METRIC)).strip().lower()
             if max_players is None and "max_players" in cfg:
@@ -296,17 +341,73 @@ class PoseTracker:
             frame_bgr = frame_bgr[0]
         return frame_bgr, frame_left
 
+    def _update_adaptive_infer_width(self, infer_ms: float) -> int:
+        """
+        Adapts 1P MediaPipe input width (640 -> 384 -> 320) when CPU inference latency stays
+        above 48 ms (< ~20 FPS), matching the 320x240 native Kinect mask on low-end CPUs
+        while keeping fast 30-60 FPS PCs untouched at 640px.
+        """
+        if not self._adaptive_infer_enabled or self.max_players >= 2:
+            return self.INFER_MAX_W
+
+        if self._infer_ms_ema is None:
+            self._infer_ms_ema = float(infer_ms)
+        else:
+            self._infer_ms_ema = 0.85 * self._infer_ms_ema + 0.15 * float(infer_ms)
+
+        max_tier = len(self._ADAPTIVE_WIDTH_TIERS) - 1
+        step_down_ms = 48.0 if self._adaptive_tier_idx == 0 else 58.0
+        if self._infer_ms_ema > step_down_ms and self._adaptive_tier_idx < max_tier:
+            self._slow_streak += 1
+            self._fast_streak = 0
+            if self._slow_streak >= 15:
+                prev_w = self._ADAPTIVE_WIDTH_TIERS[self._adaptive_tier_idx]
+                self._adaptive_tier_idx += 1
+                new_w = self._ADAPTIVE_WIDTH_TIERS[self._adaptive_tier_idx]
+                self._slow_streak = 0
+                get_session_logger().log_throttled(
+                    f"adaptive_infer_down_{new_w}",
+                    "INFO",
+                    "TRACKING_1P",
+                    f"Adaptive 1P inference width stepped down: {prev_w}px -> {new_w}px (avg_infer={self._infer_ms_ema:.1f}ms).",
+                    interval_s=10.0,
+                )
+        elif self._infer_ms_ema < 24.0 and self._adaptive_tier_idx > 0:
+            self._fast_streak += 1
+            self._slow_streak = 0
+            if self._fast_streak >= 45:
+                prev_w = self._ADAPTIVE_WIDTH_TIERS[self._adaptive_tier_idx]
+                self._adaptive_tier_idx -= 1
+                new_w = self._ADAPTIVE_WIDTH_TIERS[self._adaptive_tier_idx]
+                self._fast_streak = 0
+                get_session_logger().log_throttled(
+                    f"adaptive_infer_up_{new_w}",
+                    "INFO",
+                    "TRACKING_1P",
+                    f"Adaptive 1P inference width restored: {prev_w}px -> {new_w}px (avg_infer={self._infer_ms_ema:.1f}ms).",
+                    interval_s=10.0,
+                )
+        else:
+            self._slow_streak = max(0, self._slow_streak - 1)
+            self._fast_streak = max(0, self._fast_streak - 1)
+
+        return self._ADAPTIVE_WIDTH_TIERS[self._adaptive_tier_idx]
+
     def _prepare_inference_buffer(self, frame_bgr):
         """
         Pre-downscales raw (un-mirrored) BGR frame into pre-allocated RGB buffer for MediaPipe
         and applies peripheral ROI attenuation in 1P mode. Returns sample_bgr for appearance sampling.
         """
         h, w = frame_bgr.shape[:2]
-        max_infer_w = (
-            int(self.cfg.get("infer_max_w_2p", self.INFER_MAX_W_2P))
-            if self.max_players >= 2
-            else self.INFER_MAX_W
-        )
+        if self.max_players >= 2:
+            if getattr(self, "infer_quality_mode", "auto") == "low":
+                max_infer_w = min(384, int(self.cfg.get("infer_max_w_2p", self.INFER_MAX_W_2P)))
+            else:
+                max_infer_w = int(self.cfg.get("infer_max_w_2p", self.INFER_MAX_W_2P))
+        elif self._adaptive_infer_enabled:
+            max_infer_w = int(self._ADAPTIVE_WIDTH_TIERS[self._adaptive_tier_idx])
+        else:
+            max_infer_w = int(getattr(self, "_fixed_infer_max_w", self.cfg.get("infer_max_w", self.INFER_MAX_W)))
 
         if w > max_infer_w:
             infer_w = max_infer_w
@@ -508,11 +609,16 @@ class PoseTracker:
         frame_bgr, frame_left = self._unpack_frame_input(frame_bgr, frame_left)
         h, w = frame_bgr.shape[:2]
 
+        t_infer_start = time.perf_counter()
         sample_bgr = self._prepare_inference_buffer(frame_bgr)
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=self._infer_rgb)
         timestamp_ms, dt_infer, now_perf = self._next_monotonic_timestamp()
 
         result = self.detector.detect_for_video(mp_image, timestamp_ms)
+        if self._adaptive_infer_enabled and self.max_players == 1:
+            infer_ms = (time.perf_counter() - t_infer_start) * 1000.0
+            cycle_ms = (dt_infer * 1000.0) if (dt_infer is not None and dt_infer < 0.25) else infer_ms
+            self._update_adaptive_infer_width(max(infer_ms, cycle_ms * 0.85))
         valid_dets, raw_pose_count, norm_list = self._extract_valid_candidates(result, w, h)
 
         active_slots = self.slots[: self.max_players]

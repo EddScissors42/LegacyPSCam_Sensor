@@ -144,8 +144,42 @@ class TestControllersAndCLI(unittest.TestCase):
                     self.assertIn("50%", win.lbl_model_dl_status.text())
                     win.model_download_signal.emit("full", 100, "done")
                     self.assertIn("Ready", win.lbl_model_dl_status.text())
+                    # Legacy alias 'competitive' maps cleanly to 'balanced'
                     win._select_calib_preset("competitive")
-                    self.assertEqual(win.cfg["tracking_preset"], "competitive")
+                    self.assertEqual(win.cfg["tracking_preset"], "balanced")
+
+                    # Performance preset syncs all 4 manual controls to low-end PC settings
+                    win._select_calib_preset("performance")
+                    self.assertEqual(win.cfg["tracking_preset"], "performance")
+                    self.assertEqual(win.cfg["pose_model"], "lite")
+                    self.assertEqual(win.cfg["infer_quality_mode"], "low")
+                    self.assertEqual(win.cfg["segmentation_mode"], "fast")
+                    self.assertTrue(win.cfg["person_lock_enabled"])
+                    self.assertEqual(win.cb_ai_model.currentIndex(), 0)
+                    self.assertEqual(win.cb_infer_quality.currentIndex(), 0)
+                    self.assertEqual(win.cb_silhouette_mode.currentIndex(), 0)
+                    self.assertEqual(win.cb_player_lock.currentIndex(), 0)
+
+                    # Manual dropdown change MUST automatically switch preset to 'custom'
+                    win.cb_player_lock.setCurrentIndex(1)  # Disabled
+                    self.assertEqual(win.cfg["tracking_preset"], "custom")
+                    self.assertEqual(win.current_calib_preset, "custom")
+                    self.assertFalse(win.cfg["person_lock_enabled"])
+                    self.assertFalse(win.cfg["dancer_lock_enabled"])
+                    self.assertTrue(win.calib_cards["custom"]._is_active)
+                    self.assertFalse(win.calib_cards["performance"]._is_active)
+
+                    # Missing SVG icons (high/custom) stay hidden cleanly without emojis or blank icons
+                    self.assertTrue(win.calib_cards["high"].lbl_icon.isHidden())
+                    self.assertTrue(win.calib_cards["custom"].lbl_icon.isHidden())
+
+                    # Clicking Balanced restores recommended defaults cleanly
+                    win._select_calib_preset("balanced")
+                    self.assertEqual(win.cfg["tracking_preset"], "balanced")
+                    self.assertEqual(win.cfg["infer_quality_mode"], "auto")
+                    self.assertEqual(win.cfg["segmentation_mode"], "accurate")
+                    self.assertTrue(win.cfg["person_lock_enabled"])
+                    self.assertTrue(win.calib_cards["balanced"]._is_active)
                 finally:
                     win.controller.cleanup()
                     win.close()

@@ -826,8 +826,15 @@ def test_project_structure():
     assert hasattr(ui, "launch_app")
     assert hasattr(ui, "PALETTE")
     assert hasattr(ui, "CALIB_PRESETS")
-    assert ui.CALIB_PRESETS["balanced"]["pose_model"] == "full"
-    assert ui.CALIB_PRESETS["competitive"]["pose_model"] == "lite"
+    assert set(ui.CALIB_PRESETS.keys()) == {"performance", "balanced", "high", "custom"}
+    assert ui.CALIB_PRESETS["performance"]["pose_model"] == "lite"
+    assert ui.CALIB_PRESETS["performance"]["infer_quality_mode"] == "low"
+    assert ui.CALIB_PRESETS["performance"]["segmentation_mode"] == "fast"
+    assert ui.CALIB_PRESETS["balanced"]["pose_model"] == "lite"
+    assert ui.CALIB_PRESETS["balanced"]["tag"] == "RECOMMENDED"
+    assert ui.CALIB_PRESETS["high"]["pose_model"] == "full"
+    assert ui.CALIB_PRESETS["high"]["infer_quality_mode"] == "high"
+    assert all(p.get("icon", "") == "" for p in ui.CALIB_PRESETS.values()), "Preset metadata must not contain emojis"
     assert "stable" not in ui.CALIB_PRESETS, "Ultra Stable / Heavy preset must be removed"
     assert hasattr(ui, "generate_icons")
 
@@ -853,9 +860,10 @@ def test_project_structure():
         assert not win.pix_slid_disabled.isNull(), "Disabled sliders icon pixmap must not be null"
         assert not win.pix_lab_act.isNull(), "Lab icon pixmap must not be null"
         assert win.pix_gear_act.devicePixelRatio() >= 2.0, "Icons must have High-DPI supersampling"
+        assert "performance" in win.mode_pixmaps and not win.mode_pixmaps["performance"][0].isNull(), "Mode icon performance must not be null"
         assert "balanced" in win.mode_pixmaps and not win.mode_pixmaps["balanced"][0].isNull(), "Mode icon balanced must not be null"
-        assert "competitive" in win.mode_pixmaps and not win.mode_pixmaps["competitive"][0].isNull(), "Mode icon competitive must not be null"
-        assert "stable" not in win.calib_cards and len(win.calib_cards) == 2, "Only Balanced and Competitive cards should exist"
+        assert "stable" not in win.calib_cards and set(win.calib_cards.keys()) == {"performance", "balanced", "high", "custom"}, "Performance, Balanced, High and Custom cards must exist"
+        assert hasattr(win, "cb_ai_model") and hasattr(win, "cb_infer_quality") and hasattr(win, "cb_silhouette_mode") and hasattr(win, "cb_player_lock"), "All 4 manual tracking option comboboxes must exist"
         assert not win.pix_status_err.isNull(), "Status X icon pixmap must not be null"
         assert not win.pix_reload_act.isNull(), "Reload SVG icon pixmap must not be null"
         assert not win.btn_refresh.icon().isNull(), "Webcam reload button must use reload.svg icon"
@@ -1651,14 +1659,17 @@ def test_kinect_emulator():
     assert isinstance(daemon._scan_for_game_processes(), list)
     assert hasattr(daemon, "_validate_fallback_iat_rva")
     assert daemon.proxy_dll_x64_path.is_file(), f"64-bit proxy DLL missing: {daemon.proxy_dll_x64_path}"
-    # Verify PE32+ magic on tools/Legacy10_x64.dll
+    # Verify PE32+ magic & critical 30 FPS ResetEvent pacing on tools/Legacy10_x64.dll
     x64_bytes = daemon.proxy_dll_x64_path.read_bytes()
     x64_lfanew = struct.unpack_from("<I", x64_bytes, 0x3C)[0]
     assert struct.unpack_from("<H", x64_bytes, x64_lfanew + 24)[0] == 0x020B, "Legacy10_x64.dll must be PE32+ (64-bit)"
+    assert b"ResetEvent" in x64_bytes, "Legacy10_x64.dll must import ResetEvent to pace UbiArt manual-reset events at 30 FPS"
     # Exact process name matching must include Legacy Lab and reject launcher / unrelated processes
     assert KinectEmulatorDaemon.is_target_process_name("Legacy.exe") is True
     assert KinectEmulatorDaemon.is_target_process_name("Legacy Lab.exe") is True
     assert KinectEmulatorDaemon.is_target_process_name("LegacyLab.exe") is True
+    assert KinectEmulatorDaemon.is_target_process_name("LegacyLab_Offline.exe") is True
+    assert KinectEmulatorDaemon.is_target_process_name("Legacy Lab Offline.exe") is True
     assert KinectEmulatorDaemon.is_target_process_name("JustDance2017.exe") is True
     assert KinectEmulatorDaemon.is_target_process_name("legacylab-launcher.exe") is False
     assert KinectEmulatorDaemon.is_target_process_name("SomeAppLegacy.exe") is False
@@ -2831,8 +2842,8 @@ def test_multi_player_tracking():
 
     # 6. Verify Qt 6 UI 2P Controls, Lite AI Recommended Default & 2P Warning Banner
     import ui
-    assert ui.CALIB_PRESETS["competitive"]["pose_model"] == "lite"
-    assert ui.CALIB_PRESETS["competitive"]["tag"] == "RECOMMENDED", "Lite AI (Competitive) must be the recommended default"
+    assert ui.CALIB_PRESETS["balanced"]["pose_model"] == "lite"
+    assert ui.CALIB_PRESETS["balanced"]["tag"] == "RECOMMENDED", "Lite AI (Balanced) must be the recommended default"
     if ui.HAS_QT:
         from PySide6.QtWidgets import QApplication
         _ = QApplication.instance() or QApplication([])

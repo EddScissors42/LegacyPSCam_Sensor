@@ -21,8 +21,10 @@ DEFAULT_CONFIG = {
     "phone_cam_port": 8443,
     "phone_cam_lens": "user",
     "phone_cam_processing_mode": "pc_video",
-    "tracking_preset": "competitive",
+    "tracking_preset": "balanced",  # "performance", "balanced", "high", or "custom"
     "pose_model": "lite",
+    "infer_quality_mode": "auto",   # "low" (320p), "auto" (adaptive 640p-320p), or "high" (640p)
+    "segmentation_mode": "accurate",  # "fast" (geometric) or "accurate" (MediaPipe neural mask)
     "smoothing_alpha": 0.75,
     "detection_confidence": 0.50,
     "max_players": 1,

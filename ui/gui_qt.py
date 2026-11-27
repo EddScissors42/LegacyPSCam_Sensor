@@ -138,14 +138,29 @@ class LegacySensorQtGUI(
 
         self._current_pscam_state = "DISCONNECTED"
         self.active_tab = "video"
-        self.current_calib_preset = self.cfg.get("tracking_preset", "competitive")
-        if self.current_calib_preset == "stable":
-            self.current_calib_preset = "competitive"
-            self.cfg["tracking_preset"] = "competitive"
-        if self.current_calib_preset in CALIB_PRESETS:
-            self.cfg["pose_model"] = CALIB_PRESETS[self.current_calib_preset].get("pose_model", "lite")
-        elif str(self.cfg.get("pose_model", "")).strip().lower() == "heavy":
+        raw_preset = str(self.cfg.get("tracking_preset", "balanced")).strip().lower()
+        saved_model = str(self.cfg.get("pose_model", "lite")).strip().lower()
+        if saved_model == "heavy":
+            saved_model = "full"
             self.cfg["pose_model"] = "full"
+        # Clean migration from legacy presets ('competitive' -> 'balanced', legacy 'balanced'+full -> 'high')
+        if raw_preset in ("stable", "competitive"):
+            raw_preset = "balanced"
+            self.cfg["tracking_preset"] = "balanced"
+        elif raw_preset == "balanced" and saved_model == "full":
+            raw_preset = "high"
+            self.cfg["tracking_preset"] = "high"
+        elif raw_preset not in CALIB_PRESETS:
+            raw_preset = "balanced"
+            self.cfg["tracking_preset"] = "balanced"
+        self.current_calib_preset = raw_preset
+        if self.current_calib_preset in ("performance", "balanced", "high"):
+            p = CALIB_PRESETS[self.current_calib_preset]
+            self.cfg["pose_model"] = p.get("pose_model", "lite")
+            self.cfg["infer_quality_mode"] = p.get("infer_quality_mode", "auto")
+            self.cfg["segmentation_mode"] = p.get("segmentation_mode", "accurate")
+            self.cfg["adaptive_infer_scale"] = (self.cfg["infer_quality_mode"] == "auto")
+            self.cfg["infer_max_w"] = 320 if self.cfg["infer_quality_mode"] == "low" else 640
         self.is_adv_calib_open = False
         self._is_closing = False
         self._is_preparing_tracking = False
@@ -312,7 +327,10 @@ class LegacySensorQtGUI(
         try:
             p_modes = generate_mode_icons_pil(size=(15, 15), scale=4)
             self.mode_pixmaps = {
-                pid: (pil_to_qpixmap(act, dpr=4.0), pil_to_qpixmap(inact, dpr=4.0))
+                pid: (
+                    pil_to_qpixmap(act, dpr=4.0) if act is not None else QPixmap(),
+                    pil_to_qpixmap(inact, dpr=4.0) if inact is not None else QPixmap(),
+                )
                 for pid, (act, inact) in p_modes.items()
             }
         except Exception as e:

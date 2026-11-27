@@ -100,7 +100,7 @@ class UITrackingHandlersMixin:
             return
         if not hasattr(self, "model_dl_box") or not hasattr(self, "lbl_model_dl_status"):
             return
-        label = "Balanced (Full AI)" if variant == "full" else "Competitive (Lite AI)"
+        label = "High (Full AI)" if variant == "full" else "Lite AI"
         if status == "downloading":
             self.model_dl_box.setStyleSheet(
                 "QFrame#modelDownloadBox { background-color: #EFF6FF; border: 1px solid #93C5FD; border-radius: 8px; }"
@@ -134,28 +134,102 @@ class UITrackingHandlersMixin:
             self.model_dl_box.setVisible(True)
 
     # =========================================================================
-    # CALIBRATION, 1P/2P MODE & FILTER SLIDERS
+    # QUALITY PRESETS, CUSTOM TRACKING OPTIONS & 1P/2P MODE
     # =========================================================================
+    def _sync_tracking_option_combos(self):
+        """Synchronizes the 4 Custom Tracking Option comboboxes from `self.cfg` without triggering signals."""
+        if hasattr(self, "cb_ai_model"):
+            model = str(self.cfg.get("pose_model", "lite")).strip().lower()
+            self.cb_ai_model.blockSignals(True)
+            self.cb_ai_model.setCurrentIndex(1 if model == "full" else 0)
+            self.cb_ai_model.blockSignals(False)
+
+        if hasattr(self, "cb_infer_quality"):
+            q = str(self.cfg.get("infer_quality_mode", "auto")).strip().lower()
+            q_idx = 0 if q == "low" else (2 if q == "high" else 1)
+            self.cb_infer_quality.blockSignals(True)
+            self.cb_infer_quality.setCurrentIndex(q_idx)
+            self.cb_infer_quality.blockSignals(False)
+
+        if hasattr(self, "cb_silhouette_mode"):
+            seg = str(self.cfg.get("segmentation_mode", "accurate")).strip().lower()
+            self.cb_silhouette_mode.blockSignals(True)
+            self.cb_silhouette_mode.setCurrentIndex(0 if seg == "fast" else 1)
+            self.cb_silhouette_mode.blockSignals(False)
+
+        if hasattr(self, "cb_player_lock"):
+            locked = bool(self.cfg.get("person_lock_enabled", True)) and bool(
+                self.cfg.get("dancer_lock_enabled", True)
+            )
+            self.cb_player_lock.blockSignals(True)
+            self.cb_player_lock.setCurrentIndex(0 if locked else 1)
+            self.cb_player_lock.blockSignals(False)
+
     def _select_calib_preset(self, preset_id: str):
+        # Backwards-compatible alias for legacy callers/tests
+        if preset_id == "competitive":
+            preset_id = "balanced"
         if preset_id not in CALIB_PRESETS:
             return
+
         self.current_calib_preset = preset_id
         self.cfg["tracking_preset"] = preset_id
-        p = CALIB_PRESETS[preset_id]
-        self.cfg["pose_model"] = p.get("pose_model", "lite")
-        self.cfg["smoothing_alpha"] = p["smoothing_alpha"]
-        self.cfg["detection_confidence"] = p["detection_confidence"]
 
-        self.slider_smooth.blockSignals(True)
-        self.slider_smooth.setValue(int(p["smoothing_alpha"] * 100))
-        self.slider_smooth.blockSignals(False)
-        self._update_smooth_label(p["smoothing_alpha"])
+        if preset_id != "custom":
+            p = CALIB_PRESETS[preset_id]
+            self.cfg["pose_model"] = p.get("pose_model", "lite")
+            self.cfg["infer_quality_mode"] = p.get("infer_quality_mode", "auto")
+            self.cfg["segmentation_mode"] = p.get("segmentation_mode", "accurate")
+            lock_on = bool(p.get("person_lock_enabled", True))
+            self.cfg["person_lock_enabled"] = lock_on
+            self.cfg["dancer_lock_enabled"] = lock_on
+            self.cfg["adaptive_infer_scale"] = (self.cfg["infer_quality_mode"] == "auto")
+            self.cfg["infer_max_w"] = 320 if self.cfg["infer_quality_mode"] == "low" else 640
+            self.cfg["smoothing_alpha"] = p["smoothing_alpha"]
+            self.cfg["detection_confidence"] = p["detection_confidence"]
 
-        self.slider_conf.blockSignals(True)
-        self.slider_conf.setValue(int(p["detection_confidence"] * 100))
-        self.slider_conf.blockSignals(False)
-        self._update_conf_label(p["detection_confidence"])
+            if hasattr(self, "slider_smooth"):
+                self.slider_smooth.blockSignals(True)
+                self.slider_smooth.setValue(int(p["smoothing_alpha"] * 100))
+                self.slider_smooth.blockSignals(False)
+                self._update_smooth_label(p["smoothing_alpha"])
 
+            if hasattr(self, "slider_conf"):
+                self.slider_conf.blockSignals(True)
+                self.slider_conf.setValue(int(p["detection_confidence"] * 100))
+                self.slider_conf.blockSignals(False)
+                self._update_conf_label(p["detection_confidence"])
+
+            self._sync_tracking_option_combos()
+
+        self._update_calib_cards_ui()
+        self._update_2p_warning_ui()
+        self._save_settings()
+        if str(self.cfg.get("pose_model", "lite")).strip().lower() == "full":
+            self._ensure_pose_model_async("full")
+
+    def _on_custom_tracking_option_changed(self, _idx: int = 0):
+        """Applies any manual dropdown change and automatically switches the active preset to Custom."""
+        if hasattr(self, "cb_ai_model"):
+            self.cfg["pose_model"] = "full" if self.cb_ai_model.currentIndex() == 1 else "lite"
+
+        if hasattr(self, "cb_infer_quality"):
+            q_map = {0: "low", 1: "auto", 2: "high"}
+            q_mode = q_map.get(self.cb_infer_quality.currentIndex(), "auto")
+            self.cfg["infer_quality_mode"] = q_mode
+            self.cfg["adaptive_infer_scale"] = (q_mode == "auto")
+            self.cfg["infer_max_w"] = 320 if q_mode == "low" else 640
+
+        if hasattr(self, "cb_silhouette_mode"):
+            self.cfg["segmentation_mode"] = "fast" if self.cb_silhouette_mode.currentIndex() == 0 else "accurate"
+
+        if hasattr(self, "cb_player_lock"):
+            lock_on = (self.cb_player_lock.currentIndex() == 0)
+            self.cfg["person_lock_enabled"] = lock_on
+            self.cfg["dancer_lock_enabled"] = lock_on
+
+        self.current_calib_preset = "custom"
+        self.cfg["tracking_preset"] = "custom"
         self._update_calib_cards_ui()
         self._update_2p_warning_ui()
         self._save_settings()
@@ -178,11 +252,11 @@ class UITrackingHandlersMixin:
             if cur_model == "full":
                 self.lbl_2p_model_warning.setText(
                     "2-Player Mode Active with Full AI: Tracking 2 dancers with Full AI doubles CPU load and may reduce FPS. "
-                    "Switch to 'Competitive (Lite AI)' above for optimal 2-player performance."
+                    "Switch to 'Balanced' or 'Performance' (Lite AI) above for optimal 2-player performance."
                 )
             else:
                 self.lbl_2p_model_warning.setText(
-                    "2-Player Mode Active: Lite AI (Competitive) is active and recommended to sustain stable FPS when tracking two dancers simultaneously."
+                    "2-Player Mode Active: Lite AI is active and recommended to sustain stable FPS when tracking two dancers simultaneously."
                 )
 
     def _update_calib_cards_ui(self):

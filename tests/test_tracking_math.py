@@ -202,6 +202,146 @@ class TestTrackingMath(unittest.TestCase):
         cam.orientation = 270
         self.assertEqual(cam._apply_orientation(img).shape, (60, 40, 3))
 
+    def test_plausibility_gate_desk_wide_arms_and_profile_spin(self):
+        # Desk / upper-body pose with wide arms (score=2.06 in [1.75, 2.2), aspect=0.266 in [0.22, 0.28)) MUST pass
+        lms_desk = [_LM(0.50, 0.50, visibility=0.0, presence=0.0) for _ in range(33)]
+        lms_desk[0] = _LM(0.50, 0.25, visibility=0.68, presence=0.68)   # NOSE
+        lms_desk[11] = _LM(0.62, 0.45, visibility=0.52, presence=0.52)  # LEFT_SHOULDER
+        lms_desk[12] = _LM(0.38, 0.45, visibility=0.52, presence=0.52)  # RIGHT_SHOULDER
+        lms_desk[13] = _LM(0.76, 0.49, visibility=0.18, presence=0.0)   # LEFT_ELBOW
+        lms_desk[14] = _LM(0.24, 0.49, visibility=0.18, presence=0.0)   # RIGHT_ELBOW
+        lms_desk[15] = _LM(0.88, 0.52, visibility=0.16, presence=0.0)   # LEFT_WRIST
+        lms_desk[16] = _LM(0.12, 0.52, visibility=0.16, presence=0.0)   # RIGHT_WRIST
+        ok_desk, score_desk = player_reid.is_plausible_human_dancer(lms_desk, w=640, h=480)
+        self.assertTrue(ok_desk, f"Valid desk/wide-arms dancer rejected: {player_reid.explain_plausibility_rejection(lms_desk, 640, 480)}")
+        self.assertGreaterEqual(score_desk, 1.75)
+        self.assertLess(score_desk, 2.2)
+
+        # Tall sideways/back-facing 360° spin (face occluded, score=2.90 in [2.6, 3.2)) MUST pass
+        lms_spin = [_LM(0.50, 0.50, visibility=0.0, presence=0.0) for _ in range(33)]
+        lms_spin[0] = _LM(0.50, 0.18, visibility=0.10, presence=0.10)   # NOSE (occluded during spin)
+        lms_spin[11] = _LM(0.535, 0.28, visibility=0.45, presence=0.45) # LEFT_SHOULDER
+        lms_spin[12] = _LM(0.465, 0.28, visibility=0.40, presence=0.40) # RIGHT_SHOULDER
+        lms_spin[13] = _LM(0.55, 0.44, visibility=0.35, presence=0.35)  # LEFT_ELBOW
+        lms_spin[14] = _LM(0.45, 0.44, visibility=0.30, presence=0.30)  # RIGHT_ELBOW
+        lms_spin[23] = _LM(0.53, 0.56, visibility=0.45, presence=0.45)  # LEFT_HIP
+        lms_spin[24] = _LM(0.47, 0.56, visibility=0.40, presence=0.40)  # RIGHT_HIP
+        lms_spin[25] = _LM(0.53, 0.76, visibility=0.25, presence=0.25)  # LEFT_KNEE
+        lms_spin[26] = _LM(0.47, 0.76, visibility=0.20, presence=0.20)  # RIGHT_KNEE
+        ok_spin, score_spin = player_reid.is_plausible_human_dancer(lms_spin, w=640, h=480)
+        self.assertTrue(ok_spin, f"Valid tall profile spin rejected: {player_reid.explain_plausibility_rejection(lms_spin, 640, 480)}")
+        self.assertGreaterEqual(score_spin, 2.6)
+        self.assertLess(score_spin, 3.2)
+
+        # Flat horizontal furniture artifact without strong face+shoulders MUST remain rejected
+        lms_flat = [_LM(0.50, 0.50, visibility=0.0, presence=0.0) for _ in range(33)]
+        lms_flat[0] = _LM(0.50, 0.45, visibility=0.20, presence=0.20)
+        lms_flat[11] = _LM(0.75, 0.50, visibility=0.35, presence=0.35)
+        lms_flat[12] = _LM(0.25, 0.50, visibility=0.35, presence=0.35)
+        lms_flat[13] = _LM(0.85, 0.51, visibility=0.30, presence=0.30)
+        lms_flat[14] = _LM(0.15, 0.51, visibility=0.30, presence=0.30)
+        lms_flat[23] = _LM(0.70, 0.58, visibility=0.30, presence=0.30)
+        lms_flat[24] = _LM(0.30, 0.58, visibility=0.30, presence=0.30)
+        ok_flat, _ = player_reid.is_plausible_human_dancer(lms_flat, w=640, h=480)
+        self.assertFalse(ok_flat)
+
+    def test_pose_tracker_adaptive_infer_width_hysteresis(self):
+        from sensor.pose_tracker import PoseTracker
+
+        pt = PoseTracker.__new__(PoseTracker)
+        pt.max_players = 1
+        pt._adaptive_infer_enabled = True
+        pt._adaptive_tier_idx = 0
+        pt._infer_ms_ema = None
+        pt._slow_streak = 0
+        pt._fast_streak = 0
+
+        # Fast PC (15ms = 66 FPS) stays locked at 640px
+        for _ in range(30):
+            w = pt._update_adaptive_infer_width(15.0)
+        self.assertEqual(w, 640)
+
+        # Overloaded CPU (110ms = ~9 FPS) steps down 640 -> 384 -> 320
+        for _ in range(45):
+            w = pt._update_adaptive_infer_width(110.0)
+        self.assertEqual(w, 320)
+
+        # Recovered CPU (14ms) steps back up 320 -> 384 -> 640 cleanly with hysteresis
+        for _ in range(120):
+            w = pt._update_adaptive_infer_width(14.0)
+        self.assertEqual(w, 640)
+
+    def test_pose_tracker_quality_settings_modes(self):
+        from sensor.pose_tracker import PoseTracker
+
+        pt = PoseTracker.__new__(PoseTracker)
+        pt.segmentation_mode = "accurate"
+
+        # Performance: Low (320p fixed) + Fast (geometric, requires detector reinit)
+        reinit = pt._apply_quality_settings({"infer_quality_mode": "low", "segmentation_mode": "fast"})
+        self.assertTrue(reinit)
+        self.assertEqual(pt.segmentation_mode, "fast")
+        self.assertEqual(pt.infer_quality_mode, "low")
+        self.assertFalse(pt._adaptive_infer_enabled)
+        self.assertEqual(pt._fixed_infer_max_w, 320)
+
+        # Balanced: Auto adaptive + Accurate (AI neural mask)
+        reinit2 = pt._apply_quality_settings({"infer_quality_mode": "auto", "segmentation_mode": "accurate"})
+        self.assertTrue(reinit2)
+        self.assertEqual(pt.segmentation_mode, "accurate")
+        self.assertTrue(pt._adaptive_infer_enabled)
+        self.assertEqual(pt._fixed_infer_max_w, 640)
+
+        # High: 640p fixed + Accurate (no detector reinit needed when seg unchanged)
+        reinit3 = pt._apply_quality_settings({"infer_quality_mode": "high", "segmentation_mode": "accurate"})
+        self.assertFalse(reinit3)
+        self.assertFalse(pt._adaptive_infer_enabled)
+        self.assertEqual(pt._fixed_infer_max_w, 640)
+
+    def test_calibrator_stereo_z_persistence_and_scale_clamp(self):
+        from sensor.pose_filters import SkeletonCalibrator
+
+        calib = SkeletonCalibrator(target_height_m=1.75, cfg={"baseline_z_m": 2.2, "hip_height_m": 1.0})
+        # Narrow sideways Tier 3 pose (raw_height = 0.42m) MUST clamp scale <= 1.42 (no 3.7m giant hands)
+        joints = [(0.0, 0.0, 0.0, 0.9) for _ in range(20)]
+        joints[3] = (0.0, -0.10, 0.0, 0.9)   # Head close to shoulders (sideways/lean)
+        joints[4] = (0.04, -0.05, 0.0, 0.9)  # ShL narrow
+        joints[8] = (-0.04, -0.05, 0.0, 0.9) # ShR narrow
+        joints[14] = (0.0, 0.0, 0.0, 0.0)    # Ankles hidden
+        joints[18] = (0.0, 0.0, 0.0, 0.0)
+        joints[0] = (0.0, 0.0, 0.0, 0.0)     # Hip hidden -> Tier 3
+        self.assertTrue(calib.calibrate(joints, legs_visible=False, hips_visible=False))
+        self.assertLessEqual(calib.scale, 1.42)
+        self.assertGreaterEqual(calib.scale, 0.82)
+
+        # Close-room stereo Z (1.20m) MUST clamp into Kinect v1's lobby play-zone (>= 1.75m)
+        joints[0] = (0.0, 0.0, 0.0, 0.9)
+        t_close = calib.transform(joints, stereo_depths={0: (0.0, 0.0, 1.20, 0.9), 2: (0.0, 0.4, 1.20, 0.9)})
+        self.assertGreaterEqual(t_close[0][2], 1.74)
+
+        # Stereo baseline Z (2.50m) MUST persist on frames where stereo_depths is None / empty
+        calib.reset()
+        calib.calibrate(joints)
+        t1 = calib.transform(joints, stereo_depths={0: (0.0, 0.0, 2.50, 0.9), 2: (0.0, 0.4, 2.50, 0.9)})
+        self.assertAlmostEqual(t1[0][2], 2.50, delta=0.05)
+        t2 = calib.transform(joints, stereo_depths=None)
+        self.assertAlmostEqual(t2[0][2], 2.50, delta=0.05)
+        t3 = calib.transform(joints, stereo_depths={})
+        self.assertAlmostEqual(t3[0][2], 2.50, delta=0.05)
+
+    def test_adaptive_smoother_damps_single_frame_hand_teleport(self):
+        s = AdaptiveSmoother(base_alpha=0.75, alpha_fast=0.92, speed_threshold=0.15)
+        base = [(0.0, 1.0, 2.0, 0.95) for _ in range(20)]
+        base[11] = (0.25, 1.20, 2.0, 0.95)  # HandRight
+        s.apply(base, dt=1.0 / 30.0)
+
+        # 1-frame MediaPipe L/R swap glitch: HandRight jumps -1.10m while HipCenter stays put
+        glitch = list(base)
+        glitch[11] = (-0.85, 1.20, 2.0, 0.95)
+        out_glitch = s.apply(glitch, dt=1.0 / 30.0)
+        # Displacement must be heavily damped (<0.30m instead of 1.05m teleport!)
+        self.assertLess(abs(out_glitch[11][0] - 0.25), 0.30)
+
 
 if __name__ == "__main__":
     unittest.main()

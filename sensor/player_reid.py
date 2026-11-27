@@ -191,17 +191,20 @@ def _evaluate_plausibility(
         return False, 0.0, f"narrow(sh_w={sh_w:.3f},bh={bbox_h:.2f})"
 
     # Aspect ratio check in physical pixels (accounts for 16:10 PS4 Camera 1280x800).
-    # Deep crouches with outstretched arms can reach ~0.35..0.55 aspect ratio, while flat
-    # horizontal furniture/artifacts sit near 0.0..0.22.
+    # Wide arm extensions / desk framing with a clear human upper body can dip to ~0.23..0.28,
+    # while flat horizontal furniture/artifacts without face+shoulders sit below 0.28.
+    strong_upper_body = (nose_vis >= 0.45 and sh_min >= 0.45 and sh_w >= 0.08)
     px_w = bbox_w * float(w) if (w and h) else bbox_w
     px_h = bbox_h * float(h) if (w and h) else bbox_h
     aspect = px_h / max(1e-3, px_w)
-    if aspect < 0.28:
-        return False, 0.0, f"aspect={aspect:.2f}<0.28"
+    min_aspect = 0.22 if strong_upper_body else 0.28
+    if aspect < min_aspect:
+        return False, 0.0, f"aspect={aspect:.2f}<{min_aspect:.2f}"
 
     # Calculate anatomical completeness score across core joints.
-    # When upper body is unmistakably human (strong nose + both shoulders, e.g. desk/menu framing
-    # where lower legs are off-screen), allow score >= 2.2 so the silhouette appears immediately.
+    # - Desk/half-body framing with unmistakable head + shoulders: allow score >= 1.75 (avoids 2.0-2.2 boundary drops).
+    # - Tall sideways/back-facing 360° spin where face is temporarily occluded: allow score >= 2.6.
+    # - Small/ambiguous candidates: keep strict 3.2 threshold to reject background clutter.
     core_joints = (
         NOSE, LEFT_SHOULDER, RIGHT_SHOULDER, LEFT_ELBOW, RIGHT_ELBOW,
         LEFT_WRIST, RIGHT_WRIST, LEFT_HIP, RIGHT_HIP, LEFT_KNEE, RIGHT_KNEE,
@@ -215,10 +218,15 @@ def _evaluate_plausibility(
             p = min(1.0, max(0.0, float(getattr(lm, "presence", 1.0))))
             score += 0.5 * (v + p)
 
-    strong_upper_body = (nose_vis >= 0.45 and sh_min >= 0.45 and sh_w >= 0.08)
-    min_score = 2.2 if strong_upper_body else 3.2
+    tall_profile_spin = (bbox_h >= 0.35 and sh_w >= 0.045)
+    if strong_upper_body:
+        min_score = 1.75
+    elif tall_profile_spin:
+        min_score = 2.6
+    else:
+        min_score = 3.2
     if score < min_score:
-        return False, score, f"score={score:.2f}<{min_score:.1f}(sh_w={sh_w:.2f},bw={bbox_w:.2f},bh={bbox_h:.2f},asp={aspect:.2f})"
+        return False, score, f"score={score:.2f}<{min_score:.2f}(sh_w={sh_w:.2f},bw={bbox_w:.2f},bh={bbox_h:.2f},asp={aspect:.2f})"
 
     return True, score, "ok"
 

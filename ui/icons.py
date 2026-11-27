@@ -510,10 +510,12 @@ def generate_tab_icons(size=(18, 18), scale: int = 4):
 
 def generate_mode_icons_pil(size=(15, 15), scale: int = 4):
     """
-    Renders supersampled PIL.Image RGBA icons for the calibration mode preset cards:
-    - balanced: mode_balanced.svg (active: PlayStation Blue #00439C, inactive: Slate #64748B)
-    - competitive: mode_competitive.svg (active: PlayStation Blue #00439C, inactive: Slate #64748B)
-    Returns dict: {pid: (pil_act, pil_inact)} rendered at size * scale.
+    Renders supersampled PIL.Image RGBA icons strictly from SVG assets present in `assets/icons/`:
+    - performance (and legacy 'competitive' alias): mode_competitive.svg
+    - balanced: mode_balanced.svg
+    - high: mode_high.svg (returns (None, None) when absent — no invented fallback)
+    - custom: mode_custom.svg (returns (None, None) when absent — no invented fallback)
+    Returns dict: {pid: (pil_act_or_None, pil_inact_or_None)} rendered at size * scale.
     """
     base_dir = Path(__file__).resolve().parent
 
@@ -525,66 +527,29 @@ def generate_mode_icons_pil(size=(15, 15), scale: int = 4):
                     return p
         return None
 
-    path_bal = find_icon(["mode_balanced.svg"])
-    path_comp = find_icon(["mode_competitive.svg"])
-
     col_act = "#00439C"
     col_inact = "#64748B"
 
-    bal_act = render_svg_icon_pil(path_bal, size=size, color_hex=col_act, scale=scale)
-    bal_inact = render_svg_icon_pil(path_bal, size=size, color_hex=col_inact, scale=scale)
-    comp_act = render_svg_icon_pil(path_comp, size=size, color_hex=col_act, scale=scale)
-    comp_inact = render_svg_icon_pil(path_comp, size=size, color_hex=col_inact, scale=scale)
+    def load_pair(name_candidates):
+        svg_path = find_icon(name_candidates)
+        if svg_path is None:
+            return None, None
+        return (
+            render_svg_icon_pil(svg_path, size=size, color_hex=col_act, scale=scale),
+            render_svg_icon_pil(svg_path, size=size, color_hex=col_inact, scale=scale),
+        )
 
-    # Procedural fallbacks if SVGs are missing or fail to render
-    w, h = size[0] * scale, size[1] * scale
-
-    def make_fallback_star(col_tuple):
-        img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-        d = ImageDraw.Draw(img)
-        cx, cy = w / 2, h / 2
-        pts = [
-            (cx, cy - h * 0.45),
-            (cx + w * 0.12, cy - h * 0.12),
-            (cx + w * 0.45, cy),
-            (cx + w * 0.12, cy + h * 0.12),
-            (cx, cy + h * 0.45),
-            (cx - w * 0.12, cy + h * 0.12),
-            (cx - w * 0.45, cy),
-            (cx - w * 0.12, cy - h * 0.12),
-        ]
-        d.polygon(pts, fill=col_tuple)
-        return img
-
-    def make_fallback_lightning(col_tuple):
-        img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-        d = ImageDraw.Draw(img)
-        pts = [
-            (w * 0.55, h * 0.05),
-            (w * 0.20, h * 0.52),
-            (w * 0.48, h * 0.52),
-            (w * 0.42, h * 0.95),
-            (w * 0.80, h * 0.42),
-            (w * 0.52, h * 0.42),
-        ]
-        d.polygon(pts, fill=col_tuple)
-        return img
-
-    col_act_tuple = (0, 67, 156, 255)
-    col_inact_tuple = (100, 116, 139, 255)
-
-    if bal_act is None:
-        bal_act = make_fallback_star(col_act_tuple)
-    if bal_inact is None:
-        bal_inact = make_fallback_star(col_inact_tuple)
-    if comp_act is None:
-        comp_act = make_fallback_lightning(col_act_tuple)
-    if comp_inact is None:
-        comp_inact = make_fallback_lightning(col_inact_tuple)
+    perf_pair = load_pair(["mode_performance.svg", "mode_competitive.svg"])
+    bal_pair = load_pair(["mode_balanced.svg"])
+    high_pair = load_pair(["mode_high.svg"])
+    custom_pair = load_pair(["mode_custom.svg"])
 
     return {
-        "balanced": (bal_act, bal_inact),
-        "competitive": (comp_act, comp_inact),
+        "performance": perf_pair,
+        "balanced": bal_pair,
+        "high": high_pair,
+        "custom": custom_pair,
+        "competitive": perf_pair,
     }
 
 

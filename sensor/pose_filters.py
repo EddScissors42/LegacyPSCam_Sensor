@@ -226,6 +226,13 @@ class AdaptiveSmoother:
         # Velocity scaling factor relative to 30 FPS reference (at 60 FPS, dt_scale ~ 2.0)
         dt_scale = self.REF_DT / dt_sec
 
+        # Measure torso (HipCenter) displacement to distinguish genuine whole-body motion
+        # from physically impossible 1-frame MediaPipe limb-swap teleport spikes (>0.55m in 1 frame).
+        hip_disp = 0.0
+        if len(joints) > 0 and len(self.prev_joints) > 0:
+            h0, h1 = self.prev_joints[0], joints[0]
+            hip_disp = math.sqrt((h1[0] - h0[0]) ** 2 + (h1[1] - h0[1]) ** 2 + (h1[2] - h0[2]) ** 2)
+
         smoothed = []
         for i, (curr, prev) in enumerate(zip(joints, self.prev_joints)):
             # Calculate 3D displacement normalized to reference frame rate (physical velocity)
@@ -241,7 +248,11 @@ class AdaptiveSmoother:
 
             # Boost extremities for snappy hand & foot movements
             if i in EXTREMITY_JOINTS:
-                alpha_ref = min(0.96, alpha_ref * 1.25)
+                # Guard against 1-frame MediaPipe L/R hand/foot swap glitches (>0.55m while hip is steady)
+                if disp > 0.55 and hip_disp < 0.15:
+                    alpha_ref = min(alpha_ref, 0.22)
+                else:
+                    alpha_ref = min(0.96, alpha_ref * 1.25)
 
             eff_alpha = self._dt_adjusted_alpha(alpha_ref, dt_sec)
 
@@ -358,6 +369,11 @@ class SkeletonCalibrator:
                 min(sh_l[3], sh_r[3])
             )
 
+        # MediaPipe world landmarks are already metric (~1.0 = 1m); clamp scale to sane human bounds
+        # so sideways turns / desk-framing recalibrations can never produce 3.7m giant skeletons.
+        def _clamp_scale(raw_h: float) -> float:
+            return float(np.clip(self.target_height_m / max(0.1, raw_h), 0.82, 1.42))
+
         # Tier 1: Full-body (Ankles visible & detected)
         if legs_visible and head[3] >= 0.25 and ank_l[3] >= 0.25 and ank_r[3] >= 0.25:
             ank_mid = (
@@ -371,7 +387,7 @@ class SkeletonCalibrator:
                 (head[2] - ank_mid[2])**2
             )
             if 1.05 <= raw_height <= 2.8:
-                self.scale = self.target_height_m / raw_height
+                self.scale = _clamp_scale(raw_height)
                 self.origin = [hip[0], hip[1], hip[2]]
                 self.is_calibrated = True
                 self.calibration_tier = "full_body"
@@ -391,7 +407,7 @@ class SkeletonCalibrator:
             )
             raw_height = max(torso * 3.05, head_to_hip * 1.95)
             if 0.5 <= raw_height <= 3.0:
-                self.scale = self.target_height_m / raw_height
+                self.scale = _clamp_scale(raw_height)
                 self.origin = [hip[0], hip[1], hip[2]]
                 self.is_calibrated = True
                 self.calibration_tier = "flexible_torso"
@@ -411,7 +427,7 @@ class SkeletonCalibrator:
             )
             raw_height = max(sh_w * 4.6, head_to_sh * 4.0)
             if 0.4 <= raw_height <= 3.2:
-                self.scale = self.target_height_m / raw_height
+                self.scale = _clamp_scale(raw_height)
                 if hips_visible and hip[3] >= 0.25:
                     self.origin = [hip[0], hip[1], hip[2]]
                 else:
@@ -426,11 +442,15 @@ class SkeletonCalibrator:
         out = []
         hip = joints[0]
         if self.is_calibrated:
-            origin_x, origin_y, origin_z = self.origin
-            scale = self.scale
+            scale = float(np.clip(self.scale, 0.82, 1.42))
+            # Always anchor origin to live hip when visible (prevents stale Tier-3 origin_y drift)
+            if hip[3] >= 0.25:
+                origin_x, origin_y, origin_z = hip[0], hip[1], hip[2]
+            else:
+                origin_x, origin_y, origin_z = self.origin
         else:
             origin_x, origin_y, origin_z = hip[0], hip[1], hip[2]
-            scale = self.target_height_m / 1.55
+            scale = float(np.clip(self.target_height_m / 1.55, 0.82, 1.42))
 
         hip_h = float(self.cfg.get('hip_height_m', 1.0))
         baseline_z = float(self.cfg.get('baseline_z_m', 2.0))
@@ -446,16 +466,21 @@ class SkeletonCalibrator:
                     if cand_conf >= 0.55 and 0.8 <= cand_z <= 4.5:
                         torso_zs.append(float(cand_z))
             if torso_zs:
-                ref_z = float(np.median(torso_zs))
+                # Clamp stereo baseline into Kinect v1's valid Just Dance play-zone [1.75m, 3.40m]:
+                # Real Kinect v1 rejects/delays lobby recognition below ~1.65m, while bedrooms with
+                # wide-angle PS4 Camera often measure 1.1m-1.6m physically.
+                ref_z = float(np.clip(float(np.median(torso_zs)), 1.75, 3.40))
                 if self.stereo_baseline_z is None:
                     self.stereo_baseline_z = ref_z
                 else:
                     # Physical human walk speed clamp (~2.1 m/s at 60 FPS -> max 0.035m per frame)
                     dz = max(-0.035, min(0.035, ref_z - self.stereo_baseline_z))
                     self.stereo_baseline_z = self.stereo_baseline_z + 0.12 * dz
-                baseline_z = self.stereo_baseline_z
-            elif self.stereo_baseline_z is not None:
-                baseline_z = self.stereo_baseline_z
+
+        # Persist smoothed stereo baseline even when a frame misses stereo triangulation
+        # (fixes ±0.70m single-frame Z teleports back to default baseline_z_m=2.2m!)
+        if self.stereo_baseline_z is not None:
+            baseline_z = self.stereo_baseline_z
 
         for idx, j in enumerate(joints):
             x, y, z, conf = j
@@ -465,11 +490,12 @@ class SkeletonCalibrator:
             k_y = -(y - origin_y) * scale + hip_h
             k_z = baseline_z + (z - origin_z) * scale * depth_gain
 
-            # Optional limb-level metric grounding (clamped to anatomical reach ±0.55m around torso)
-            if idx != 3 and stereo_depths and idx in stereo_depths:
+            # Optional limb-level metric grounding (skip HipCenter=0 & Head=3 so torso Position.z
+            # stays cleanly inside Kinect v1's lobby play-zone and Head.z stays zoom-stable)
+            if idx not in (0, 3) and stereo_depths and idx in stereo_depths:
                 s_x, s_y, s_z, s_conf = stereo_depths[idx]
                 if s_conf >= 0.60 and 0.8 <= s_z <= 4.5:
-                    s_z_clamped = float(np.clip(s_z, baseline_z - 0.55, baseline_z + 0.55))
+                    s_z_clamped = float(np.clip(s_z, max(1.45, baseline_z - 0.45), baseline_z + 0.45))
                     blend_w = min(0.30, s_conf * 0.35)
                     k_z = (1.0 - blend_w) * k_z + blend_w * s_z_clamped
 
@@ -553,7 +579,9 @@ class CameraSpaceXTracker:
                 self.offset = target
                 self.valid = True
             else:
-                self.offset = self.offset * (1.0 - alpha) + target * alpha
+                # Clamp single-frame lateral offset jump (prevents ±0.40m whole-body ping-pong on hip/shoulder flicker)
+                delta = float(np.clip(target - self.offset, -0.18, 0.18))
+                self.offset = self.offset + delta * alpha
 
             return self.offset
         except Exception:

@@ -347,17 +347,17 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None, prewar
     from sensor.pose_tracker import PoseTracker
     from sensor.tracking_overlay import TrackingOverlay
 
-    preset_model_map = {"balanced": "full", "competitive": "lite"}
+    preset_model_map = {"performance": "lite", "balanced": "lite", "high": "full", "competitive": "lite"}
     pose_model = str(config.get("pose_model", "")).strip().lower()
     if pose_model == "heavy":
         pose_model = "full"
     if pose_model not in ("lite", "full"):
-        pose_model = preset_model_map.get(config.get("tracking_preset", "competitive"), "lite")
+        pose_model = preset_model_map.get(config.get("tracking_preset", "balanced"), "lite")
 
     if (target_fps >= 50 or max_players >= 2) and pose_model == "full":
         print(
             f"[PERF] Rastreamento ({max_players}P @ {target_fps} FPS) com modelo '{pose_model}'. "
-            f"Para maior estabilidade de FPS na CPU, recomenda-se o perfil 'Competitive' (Lite AI)."
+            f"Para maior estabilidade de FPS na CPU, recomenda-se o perfil 'Balanced' ou 'Performance' (Lite AI)."
         )
 
     try:
@@ -426,7 +426,14 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None, prewar
 
     try:
         from sensor.session_logger import get_session_logger
-        cfg_summary = f"{w}x{h}@{target_fps}FPS, mode={mode}, players={max_players}P, model={pose_model}"
+        preset_name = str(config.get("tracking_preset", "balanced"))
+        infer_q = str(config.get("infer_quality_mode", "auto"))
+        seg_m = str(config.get("segmentation_mode", "accurate"))
+        p_lock = bool(config.get("person_lock_enabled", True))
+        cfg_summary = (
+            f"{w}x{h}@{target_fps}FPS, mode={mode}, players={max_players}P, "
+            f"preset={preset_name}, model={pose_model}, infer={infer_q}, seg={seg_m}, lock={p_lock}"
+        )
         get_session_logger().map_active_controller(
             controller_type="camera",
             name="PlayStation 4 Camera" if mode == "pscam" else ("Phone Camera (Wi-Fi)" if mode == "phone_cam" else "Standard Webcam"),

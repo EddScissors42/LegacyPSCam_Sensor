@@ -233,7 +233,7 @@ class CalibPresetCard(QFrame):
         self._is_active = False
 
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setMinimumHeight(140)
+        self.setMinimumHeight(112)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 12, 14, 12)
@@ -272,7 +272,9 @@ class CalibPresetCard(QFrame):
     def set_active(self, active: bool, hovered: bool = False):
         self._is_active = active
         if active:
-            if not self.pix_act.isNull():
+            has_icon = not self.pix_act.isNull()
+            self.lbl_icon.setVisible(has_icon)
+            if has_icon:
                 self.lbl_icon.setPixmap(self.pix_act)
             bg = PALETTE["ps_blue_tint"]
             self.setStyleSheet(f"""
@@ -295,7 +297,9 @@ class CalibPresetCard(QFrame):
                 f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_main']}; background: transparent; border: none;"
             )
         else:
-            if not self.pix_inact.isNull():
+            has_icon = not self.pix_inact.isNull()
+            self.lbl_icon.setVisible(has_icon)
+            if has_icon:
                 self.lbl_icon.setPixmap(self.pix_inact)
             bg = PALETTE["bg_card"]
             bdr = PALETTE["input_border"] if hovered else PALETTE["border_subtle"]

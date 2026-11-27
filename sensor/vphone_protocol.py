@@ -651,7 +651,16 @@ def find_just_dance_pids() -> List[int]:
         if kernel32.Process32First(hSnapshot, ctypes.byref(pe)):
             while True:
                 name = pe.szExeFile.decode("latin1", errors="ignore").lower()
-                if name in ("legacy.exe", "legacy lab.exe", "legacylab.exe") or any(
+                if name in (
+                    "legacy.exe",
+                    "legacy lab.exe",
+                    "legacylab.exe",
+                    "legacylab_offline.exe",
+                    "legacy lab offline.exe",
+                    "legacylaboffline.exe",
+                    "legacyoffline.exe",
+                    "legacy_offline.exe",
+                ) or any(
                     k in name for k in ("jd20", "jd21", "jd22", "justdance", "just dance")
                 ):
                     pids.append(pe.th32ProcessID)
