@@ -72,9 +72,11 @@ class CameraManager:
         """
         Fast, zero-overhead process check via Win32 Toolhelp API for legacy PSCam4WinTray.exe.
         """
-        win32_found = is_process_running_win32("pscam")
+        win32_found = is_process_running_win32("pscam4win")
         if win32_found is True:
             return True
+        if win32_found is False:
+            return False
 
         # Fallback via tasklist
         try:

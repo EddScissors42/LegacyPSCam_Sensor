@@ -40,6 +40,27 @@ TH32CS_SNAPPROCESS = 0x00000002
 PE32_MAGIC = 0x010B
 PE32_PLUS_MAGIC = 0x020B
 ERROR_ACCESS_DENIED = 5
+ERROR_NOT_ALL_ASSIGNED = 1300
+TOKEN_ADJUST_PRIVILEGES = 0x0020
+TOKEN_QUERY = 0x0008
+SE_PRIVILEGE_ENABLED = 0x00000002
+TOKEN_ELEVATION_CLASS = 20
+
+
+class _LUID(ctypes.Structure):
+    _fields_ = [("LowPart", wintypes.DWORD), ("HighPart", wintypes.LONG)]
+
+
+class _LUID_AND_ATTRIBUTES(ctypes.Structure):
+    _fields_ = [("Luid", _LUID), ("Attributes", wintypes.DWORD)]
+
+
+class _TOKEN_PRIVILEGES(ctypes.Structure):
+    _fields_ = [("PrivilegeCount", wintypes.DWORD), ("Privileges", _LUID_AND_ATTRIBUTES * 1)]
+
+
+class _TOKEN_ELEVATION(ctypes.Structure):
+    _fields_ = [("TokenIsElevated", wintypes.DWORD)]
 
 
 class _PROCESSENTRY32W(ctypes.Structure):
@@ -119,8 +140,13 @@ class KinectEmulatorDaemon:
         # Windows API bindings with explicit 64-bit pointer/handle signatures
         self._k32 = ctypes.WinDLL("kernel32", use_last_error=True)
         self._psapi = ctypes.WinDLL("psapi", use_last_error=True)
+        self._advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+        self._shell32 = ctypes.WinDLL("shell32", use_last_error=True)
         self._ntdll = ctypes.WinDLL("ntdll")
         self._configure_win32_signatures()
+
+        # Enable SeDebugPrivilege when running elevated so OpenProcess succeeds on launcher/restricted DACLs
+        self._se_debug_enabled: bool = self._enable_debug_privilege()
 
         # Resolve path to 32-bit (Legacy10.dll) and 64-bit (Legacy10_x64.dll) proxy DLLs, staged outside %TEMP% when frozen
         self.proxy_dll_path = self._stage_proxy_dll(self._resolve_proxy_dll_path("Legacy10.dll"), "Legacy10.dll")
@@ -217,6 +243,144 @@ class KinectEmulatorDaemon:
                 wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD)
             ]
             self._k32.QueryFullProcessImageNameW.restype = wintypes.BOOL
+
+        self._k32.GetCurrentProcess.argtypes = []
+        self._k32.GetCurrentProcess.restype = wintypes.HANDLE
+
+        self._advapi32.OpenProcessToken.argtypes = [
+            wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE)
+        ]
+        self._advapi32.OpenProcessToken.restype = wintypes.BOOL
+
+        self._advapi32.LookupPrivilegeValueW.argtypes = [
+            wintypes.LPCWSTR, wintypes.LPCWSTR, ctypes.POINTER(_LUID)
+        ]
+        self._advapi32.LookupPrivilegeValueW.restype = wintypes.BOOL
+
+        self._advapi32.AdjustTokenPrivileges.argtypes = [
+            wintypes.HANDLE, wintypes.BOOL, ctypes.POINTER(_TOKEN_PRIVILEGES),
+            wintypes.DWORD, ctypes.c_void_p, ctypes.c_void_p
+        ]
+        self._advapi32.AdjustTokenPrivileges.restype = wintypes.BOOL
+
+        self._advapi32.GetTokenInformation.argtypes = [
+            wintypes.HANDLE, wintypes.DWORD, ctypes.c_void_p,
+            wintypes.DWORD, ctypes.POINTER(wintypes.DWORD)
+        ]
+        self._advapi32.GetTokenInformation.restype = wintypes.BOOL
+
+        self._shell32.IsUserAnAdmin.argtypes = []
+        self._shell32.IsUserAnAdmin.restype = wintypes.BOOL
+
+    def _is_current_process_admin(self) -> bool:
+        """Returns True if the current Legacy PSCam Sensor process is running elevated (Administrator)."""
+        try:
+            return bool(self._shell32.IsUserAnAdmin())
+        except Exception:
+            return False
+
+    def _enable_debug_privilege(self) -> bool:
+        """
+        Enables SeDebugPrivilege on the current process token when running elevated.
+        Without this, Windows denies OpenProcess(PROCESS_VM_WRITE|PROCESS_CREATE_THREAD) on
+        processes launched with restricted DACLs even when running as Administrator.
+        """
+        h_token = wintypes.HANDLE()
+        try:
+            if not self._advapi32.OpenProcessToken(
+                self._k32.GetCurrentProcess(),
+                TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY,
+                ctypes.byref(h_token),
+            ):
+                return False
+            try:
+                luid = _LUID()
+                if not self._advapi32.LookupPrivilegeValueW(None, "SeDebugPrivilege", ctypes.byref(luid)):
+                    return False
+                tp = _TOKEN_PRIVILEGES()
+                tp.PrivilegeCount = 1
+                tp.Privileges[0].Luid = luid
+                tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED
+                ctypes.set_last_error(0)
+                ok = self._advapi32.AdjustTokenPrivileges(h_token, False, ctypes.byref(tp), 0, None, None)
+                err = ctypes.get_last_error()
+                return bool(ok and err != ERROR_NOT_ALL_ASSIGNED)
+            finally:
+                self._k32.CloseHandle(h_token)
+        except Exception:
+            return False
+
+    def _open_target_process_for_hook(self, pid: int, exe_name: str):
+        """
+        Opens the target game process with minimal PROCESS_INJECT_ACCESS.
+        If ERROR_ACCESS_DENIED occurs while elevated, retries once after enabling SeDebugPrivilege,
+        and logs detailed elevation / AV-blocking diagnostics so users get accurate guidance.
+        """
+        h_proc = self._k32.OpenProcess(PROCESS_INJECT_ACCESS, False, pid)
+        if h_proc:
+            return h_proc
+
+        err_code = ctypes.get_last_error()
+        if err_code == ERROR_ACCESS_DENIED and not self._se_debug_enabled:
+            if self._enable_debug_privilege():
+                self._se_debug_enabled = True
+                h_proc = self._k32.OpenProcess(PROCESS_INJECT_ACCESS, False, pid)
+                if h_proc:
+                    return h_proc
+                err_code = ctypes.get_last_error()
+
+        if err_code == ERROR_ACCESS_DENIED:
+            is_admin = self._is_current_process_admin()
+            can_query = False
+            can_vm_read = False
+            target_elevated = "unknown"
+
+            h_q = self._k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+            if h_q:
+                can_query = True
+                try:
+                    h_tok = wintypes.HANDLE()
+                    if self._advapi32.OpenProcessToken(h_q, TOKEN_QUERY, ctypes.byref(h_tok)):
+                        try:
+                            elev = _TOKEN_ELEVATION()
+                            ret_len = wintypes.DWORD(0)
+                            if self._advapi32.GetTokenInformation(
+                                h_tok, TOKEN_ELEVATION_CLASS, ctypes.byref(elev), ctypes.sizeof(elev), ctypes.byref(ret_len)
+                            ):
+                                target_elevated = str(bool(elev.TokenIsElevated))
+                        finally:
+                            self._k32.CloseHandle(h_tok)
+                except Exception:
+                    pass
+                finally:
+                    self._k32.CloseHandle(h_q)
+
+            h_r = self._k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ, False, pid)
+            if h_r:
+                can_vm_read = True
+                self._k32.CloseHandle(h_r)
+
+            diag_meta = (
+                f"sensor_admin={is_admin}, se_debug={self._se_debug_enabled}, "
+                f"target_elevated={target_elevated}, can_query={can_query}, can_vm_read={can_vm_read}"
+            )
+            if is_admin:
+                self._log_diag_once(
+                    pid,
+                    "ACCESS_DENIED_ADMIN",
+                    f"Access denied (Error 5) opening {exe_name} (PID {pid}) even while running as Administrator "
+                    f"({diag_meta}). Likely blocked by Antivirus/Defender/Anti-Cheat handle protection — add LegacyPSCam folder to AV exclusions.",
+                )
+            else:
+                self._log_diag_once(
+                    pid,
+                    "ACCESS_DENIED",
+                    f"Access denied (Error 5) opening {exe_name} (PID {pid}) ({diag_meta}). "
+                    f"Run LegacyPSCam.exe as Administrator (the game appears elevated or restricted).",
+                )
+        else:
+            self._log_diag_once(pid, "OPEN_PROC_FAIL", f"Failed to open {exe_name} (PID {pid}), Win32 error {err_code}.")
+        return None
 
     @staticmethod
     def _resolve_proxy_dll_path(dll_name: str = "Legacy10.dll") -> Path:
@@ -388,8 +552,8 @@ class KinectEmulatorDaemon:
                     time.sleep(0.8)
                     continue
 
-                target = self._scan_for_game_process()
-                if target:
+                targets = self._scan_for_game_processes()
+                for target in targets:
                     pid = target["pid"]
                     name = target["name"]
                     if self._is_target_32bit(pid):
@@ -415,6 +579,7 @@ class KinectEmulatorDaemon:
                             self.last_error_code = ""
                             self.last_error_message = ""
                         self._notify_status(True, name, pid)
+                        break
 
             except Exception as exc:
                 self._log_diag_once(0, "MONITOR_LOOP_ERR", f"Monitor loop error: {exc}")
@@ -463,35 +628,57 @@ class KinectEmulatorDaemon:
             return False
         return not any(excl in exe_lower for excl in _SELF_PROCESS_EXCLUDES)
 
-    def _scan_for_game_process(self) -> Optional[Dict[str, Any]]:
+    def _is_process_terminated(self, pid: int) -> bool:
         """
-        Scans active processes for target Just Dance Legacy executables using a lightweight
-        Win32 Toolhelp32 kernel snapshot (< 0.5ms) with exact executable name matching.
+        Returns True ONLY when the process can be queried and is confirmed exited (zombie handle
+        retained by a parent launcher). Returns False if still active OR if access is denied.
         """
+        h = self._k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not h:
+            return False
+        try:
+            exit_code = wintypes.DWORD()
+            res = self._k32.GetExitCodeProcess(h, ctypes.byref(exit_code))
+            STILL_ACTIVE = 259
+            return bool(res and exit_code.value != STILL_ACTIVE)
+        finally:
+            self._k32.CloseHandle(h)
+
+    def _scan_for_game_processes(self) -> List[Dict[str, Any]]:
+        """
+        Scans active processes for target Just Dance executables using a lightweight
+        Win32 Toolhelp32 kernel snapshot (< 0.5ms), filtering out terminated zombie PIDs.
+        """
+        matches: List[Dict[str, Any]] = []
         invalid_handle = ctypes.c_void_p(-1).value
         h_snap = self._k32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
         if not h_snap or h_snap == -1 or h_snap == invalid_handle:
-            return None
+            return matches
 
         try:
             pe = _PROCESSENTRY32W()
             pe.dwSize = ctypes.sizeof(_PROCESSENTRY32W)
             if not self._k32.Process32FirstW(h_snap, ctypes.byref(pe)):
-                return None
+                return matches
 
             self_pid = os.getpid()
             while True:
                 pid = int(pe.th32ProcessID)
                 if pid > 4 and pid != self_pid:
                     exe_name = pe.szExeFile
-                    if self.is_target_process_name(exe_name):
-                        return {"pid": pid, "name": exe_name}
+                    if self.is_target_process_name(exe_name) and not self._is_process_terminated(pid):
+                        matches.append({"pid": pid, "name": exe_name})
                 if not self._k32.Process32NextW(h_snap, ctypes.byref(pe)):
                     break
         finally:
             self._k32.CloseHandle(h_snap)
 
-        return None
+        return matches
+
+    def _scan_for_game_process(self) -> Optional[Dict[str, Any]]:
+        """Backwards-compatible helper returning the first live target game process."""
+        matches = self._scan_for_game_processes()
+        return matches[0] if matches else None
 
     def _hook_running_game(self, pid: int, exe_name: str) -> bool:
         """
@@ -503,17 +690,8 @@ class KinectEmulatorDaemon:
             self._log_diag_once(pid, "DLL_MISSING", f"Proxy DLL not found at {proxy_path}")
             return False
 
-        h_proc = self._k32.OpenProcess(PROCESS_INJECT_ACCESS, False, pid)
+        h_proc = self._open_target_process_for_hook(pid, exe_name)
         if not h_proc:
-            err_code = ctypes.get_last_error()
-            if err_code == ERROR_ACCESS_DENIED:
-                self._log_diag_once(
-                    pid,
-                    "ACCESS_DENIED",
-                    f"Access denied (Error 5) opening {exe_name} (PID {pid}). Run Legacy PSCam Sensor as Administrator if the game is running elevated.",
-                )
-            else:
-                self._log_diag_once(pid, "OPEN_PROC_FAIL", f"Failed to open {exe_name} (PID {pid}), Win32 error {err_code}.")
             return False
 
         try:
@@ -721,17 +899,8 @@ class KinectEmulatorDaemon:
             self._log_diag_once(pid, "DLL64_MISSING", f"64-bit proxy DLL not found at {proxy_path}")
             return False
 
-        h_proc = self._k32.OpenProcess(PROCESS_INJECT_ACCESS, False, pid)
+        h_proc = self._open_target_process_for_hook(pid, exe_name)
         if not h_proc:
-            err_code = ctypes.get_last_error()
-            if err_code == ERROR_ACCESS_DENIED:
-                self._log_diag_once(
-                    pid,
-                    "ACCESS_DENIED",
-                    f"Access denied (Error 5) opening {exe_name} (PID {pid}). Run Legacy PSCam Sensor as Administrator if the game is running elevated.",
-                )
-            else:
-                self._log_diag_once(pid, "OPEN_PROC_FAIL", f"Failed to open {exe_name} (PID {pid}), Win32 error {err_code}.")
             return False
 
         try:

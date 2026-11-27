@@ -278,6 +278,15 @@ class SessionLogger:
             win_release = platform.release()
             os_details = f"Windows {win_release} (Build {win_ver}) {cpu_arch}"
 
+            # Process elevation (Administrator vs Standard User)
+            priv_info = "Unknown"
+            if os.name == "nt":
+                try:
+                    is_admin = bool(ctypes.windll.shell32.IsUserAnAdmin())
+                    priv_info = "Administrator (Elevated)" if is_admin else "Standard User (Non-Elevated)"
+                except Exception:
+                    priv_info = "Unknown"
+
             from sensor.config_manager import get_app_data_dir, get_config_path
             app_dir = get_app_data_dir()
             cfg_p = get_config_path()
@@ -291,6 +300,7 @@ class SessionLogger:
                 f"  Operating System: {os_details}",
                 f"  Processor:        {cpu_model} ({cpu_cores} Logical Cores)",
                 f"  Memory (RAM):     {ram_info}",
+                f"  Privileges:       {priv_info}",
                 f"  Python Runtime:   {py_ver} ({'Frozen PE Executable' if is_frozen else 'Interpreted Script'})",
                 f"  Executable Path:  {exe_path}",
                 f"  App Data Dir:     {app_dir}",

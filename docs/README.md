@@ -64,7 +64,7 @@ All non-essential overhead has been removed while perfecting the core components
 ```
 LegacyPSCam_Sensor/
 ├── main.py                     # CLI launcher and entry point (--version, --portable, --start, --mode, --camera)
-├── version.py                  # Official versioning & build metadata (v0.11.0 Alpha)
+├── version.py                  # Official versioning & build metadata (v0.11.1 Alpha)
 ├── test_suite.py               # 19 isolated automated test suites + modular unittest runner (19/19 PASSED)
 ├── tests/                      # Modular unittest suites (test_vphone_protocol, test_tracking_math, test_controllers_and_cli)
 ├── config.json                 # Local template for user preferences (stored in %APPDATA%\LegacyPSCam_Sensor\)

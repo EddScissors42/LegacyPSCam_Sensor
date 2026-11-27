@@ -1645,6 +1645,10 @@ def test_kinect_emulator():
     assert hasattr(ke_mod, "TARGET_PROCESS_ALIASES") and "justdance2017.exe" in ke_mod.TARGET_PROCESS_ALIASES
     assert hasattr(daemon, "_stage_proxy_dll") and hasattr(daemon, "_resolve_iat_via_ilt")
     assert hasattr(daemon, "_hook_running_game_64") and hasattr(daemon, "_find_kinect_delay_iat_descriptor_64")
+    assert hasattr(daemon, "_enable_debug_privilege") and hasattr(daemon, "_is_current_process_admin")
+    assert hasattr(daemon, "_scan_for_game_processes") and hasattr(daemon, "_open_target_process_for_hook")
+    assert isinstance(daemon._is_current_process_admin(), bool)
+    assert isinstance(daemon._scan_for_game_processes(), list)
     assert hasattr(daemon, "_validate_fallback_iat_rva")
     assert daemon.proxy_dll_x64_path.is_file(), f"64-bit proxy DLL missing: {daemon.proxy_dll_x64_path}"
     # Verify PE32+ magic on tools/Legacy10_x64.dll

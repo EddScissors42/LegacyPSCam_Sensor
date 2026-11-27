@@ -566,7 +566,14 @@ class TrackingOverlay:
             if emu_err == "ACCESS_DENIED":
                 ipc_dot_color = COLOR_STATUS_WAIT
                 bridge_text = "GAME: Run as Administrator!"
-            elif emu_err in ("LOADLIB_RETURNED_NULL", "PROXY_NOT_LOADED", "REMOTE_THREAD_FAIL"):
+            elif emu_err == "ACCESS_DENIED_ADMIN":
+                ipc_dot_color = COLOR_STATUS_WAIT
+                bridge_text = "GAME: Blocked by AV/AntiCheat!"
+            elif emu_err in (
+                "LOADLIB_RETURNED_NULL", "LOADLIB_RETURNED_NULL_64",
+                "PROXY_NOT_LOADED", "REMOTE_THREAD_FAIL", "REMOTE_THREAD_FAIL_64",
+                "DLL_MISSING", "DLL64_MISSING",
+            ):
                 ipc_dot_color = COLOR_STATUS_WAIT
                 bridge_text = "GAME: Check Antivirus/AV!"
             elif emu_conn:

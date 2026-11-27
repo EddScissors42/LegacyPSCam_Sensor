@@ -685,6 +685,10 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
   - **Troca de Modo Instantânea (Zero Freeze) & Scoring Bridge DS4 (`ui/mixins/camera_handlers.py`, `ui/controllers/camera_controller.py`, `sensor/camera_capture.py`, `ui/pages/ds4_page.py`):** Cancelamento assíncrono não-bloqueante da webcam em standby (`CameraPrewarmCloser` serializado + evento interrompível `_stop_event`), eliminando travamentos de 1–3s ao alternar `Webcam → DualShock 4` / `Phone Camera`, e `Scoring Bridge` movido para dentro de `ds4_info_frame` (exibido apenas quando um DualShock 4 está conectado).
   - **Modularização de Monolitos (`ui/mixins/`, `ui/pages/`, `sensor/camera_win32.py`, `sensor/framebus_reader.py`, `sensor/camera_capture.py`, `sensor/body_mask.py`):** Quebra limpa de `gui_qt.py`, `pages.py`, `camera_manager.py` e `pose_tracker.py` em módulos coesos com 100% de retrocompatibilidade.
   - **Polimento Visual (`assets/icons/reload.svg`, `ui/icons.py`, `ui/styles.py`):** Ícone vetorial `reload.svg` (4× supersampled, sem recortes) nos botões de atualização e contorno fino (`1px solid #94A3B8`) na caixa fechada dos `QComboBox`.
+- **Hotfix v0.11.1 — `SeDebugPrivilege`, Anti-Zumbi PID & Diagnóstico Preciso de `ACCESS_DENIED`:**
+  - `KinectEmulatorDaemon` agora habilita automaticamente `SeDebugPrivilege` via `advapi32.AdjustTokenPrivileges` quando executado como Administrador (corrigindo `Error 5` em processos iniciados por launchers/DACLs restritas), filtra PIDs zumbis encerrados (`GetExitCodeProcess != STILL_ACTIVE`) e itera por todos os processos candidatos vivos.
+  - Diagnóstico completo de `ACCESS_DENIED` vs `ACCESS_DENIED_ADMIN` (`sensor_admin`, `se_debug`, `target_elevated`, `can_query`, `can_vm_read`) + linha `Privileges:` no cabeçalho do `session.log` e distinção clara no HUD (`GAME: Run as Administrator!` vs `GAME: Blocked by AV/AntiCheat!`).
+  - Corrigido falso positivo em `CameraManager.is_legacy_pscam4win_running()` que detectava o próprio `LegacyPSCam.exe` pela substring `"pscam"`.
 
 ---
 
