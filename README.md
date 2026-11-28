@@ -33,7 +33,7 @@ This application is written in Python with zero bloatware to deliver low-latency
 ### Security, Code Signing Policy & False Positives
 
 - **100% Open Source & Reproducible CI Builds:** Official Windows releases (`LegacyPSCam.exe` and `LegacyPSCam-Portable-Windows.zip`) are built directly from this public repository on GitHub-hosted Actions runners with verifiable `SHA256SUMS.txt` checksums.
-- **Privacy:** This program will **not** transfer any information to other networked systems unless specifically requested by the user (e.g., on-demand AI model download from Google MediaPipe or local LAN Wi-Fi pairing for Smartphone Camera). Zero telemetry, ads, or analytics are collected.
+- **Privacy:** Legacy PSCam records diagnostic session logs and motion telemetry locally on the user's PC (`session.log` and `session_telemetry.csv`) to help troubleshoot tracking issues. **Nothing is ever uploaded or sent over the internet** — the user is solely responsible for manually sharing these local files with the developer if support is needed. The program does not transfer any information to networked systems unless explicitly requested by the user (e.g., on-demand AI model download from Google MediaPipe or local LAN Wi-Fi pairing for Smartphone Camera). Zero ads or online analytics are used.
 - **Antivirus False Positives:** Standalone Python/PyInstaller `--onefile` executables (`LegacyPSCam.exe`) may occasionally trigger generic heuristic flags from a few antivirus engines due to self-extraction into `%TEMP%` and in-memory Kinect/PS Move emulation. If preferred, use the **`LegacyPSCam-Portable-Windows.zip`** (`--onedir`) build or run directly from source (`python main.py`).
 
 ### License
