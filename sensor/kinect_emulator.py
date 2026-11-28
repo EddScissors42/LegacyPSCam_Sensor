@@ -135,6 +135,7 @@ class KinectEmulatorDaemon:
         self.attached_pid: Optional[int] = None
         self.attached_game_name: Optional[str] = None
         self.attached_mode: Optional[str] = None
+        self.kinect_hooked: bool = False
         self.psmove_hooked: bool = False
         self.last_error_code: str = ""
         self.last_error_message: str = ""
@@ -514,12 +515,17 @@ class KinectEmulatorDaemon:
             self._thread = threading.Thread(target=self._monitor_loop, daemon=True, name="KinectEmulatorDaemon")
             self._thread.start()
 
+    def _is_ds4_mode(self) -> bool:
+        """Returns True when the user has selected DualShock 4 (PS Move ZCM2) mode."""
+        return str(self.cfg.get("camera_mode", "pscam")).strip().lower() == "ds4"
+
     def stop(self) -> None:
         """Stops the monitoring thread."""
         with self._lock:
             self._running = False
             self.attached_pid = None
             self.attached_game_name = None
+            self.kinect_hooked = False
             self.psmove_hooked = False
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=1.5)
@@ -535,6 +541,7 @@ class KinectEmulatorDaemon:
                 "game_name": self.attached_game_name or "",
                 "pid": self.attached_pid or 0,
                 "mode": self.attached_mode or "",
+                "kinect_hooked": self.kinect_hooked,
                 "psmove_hooked": self.psmove_hooked,
                 "last_error_code": self.last_error_code,
                 "last_error_message": self.last_error_message,
@@ -556,29 +563,55 @@ class KinectEmulatorDaemon:
                             self.attached_pid = None
                             self.attached_game_name = None
                             self.attached_mode = None
+                            self.kinect_hooked = False
                             self.psmove_hooked = False
                         self._notify_status(False, old_name, old_pid)
+                    else:
+                        # On-demand mode switch while game is already running (never double-inject upfront)
+                        want_ds4 = self._is_ds4_mode()
+                        pid = self.attached_pid
+                        name = self.attached_game_name or "Game"
+                        is_32 = self._is_target_32bit(pid)
+                        if want_ds4 and not self.psmove_hooked:
+                            if is_32 or ctypes.sizeof(ctypes.c_void_p) == 8:
+                                if self._hook_psmove_only(pid, name, is_64bit=(not is_32)):
+                                    with self._lock:
+                                        self.attached_mode = "psmove_hook_32" if is_32 else "psmove_hook_64"
+                        elif (not want_ds4) and not self.kinect_hooked:
+                            if is_32:
+                                if self._hook_running_game(pid, name):
+                                    with self._lock:
+                                        self.attached_mode = "iat_hook_32"
+                            elif ctypes.sizeof(ctypes.c_void_p) == 8:
+                                if self._hook_running_game_64(pid, name):
+                                    with self._lock:
+                                        self.attached_mode = "iat_hook_64"
                     time.sleep(0.8)
                     continue
 
+                want_ds4 = self._is_ds4_mode()
                 targets = self._scan_for_game_processes()
                 for target in targets:
                     pid = target["pid"]
                     name = target["name"]
-                    if self._is_target_32bit(pid):
-                        success = self._hook_running_game(pid, name)
-                        hook_mode = "iat_hook_32"
-                    elif ctypes.sizeof(ctypes.c_void_p) == 8:
-                        success = self._hook_running_game_64(pid, name)
-                        hook_mode = "iat_hook_64"
-                    else:
+                    is_32 = self._is_target_32bit(pid)
+                    if not is_32 and ctypes.sizeof(ctypes.c_void_p) != 8:
                         self._log_diag_once(
                             pid,
                             "ARCH_MISMATCH",
                             f"Process {name} (PID {pid}) is 64-bit; run the 64-bit build of Legacy PSCam Sensor to attach.",
                         )
-                        success = False
-                        hook_mode = ""
+                        continue
+
+                    if want_ds4:
+                        success = self._hook_psmove_only(pid, name, is_64bit=(not is_32))
+                        hook_mode = "psmove_hook_32" if is_32 else "psmove_hook_64"
+                    elif is_32:
+                        success = self._hook_running_game(pid, name)
+                        hook_mode = "iat_hook_32"
+                    else:
+                        success = self._hook_running_game_64(pid, name)
+                        hook_mode = "iat_hook_64"
 
                     if success:
                         with self._lock:
@@ -887,7 +920,8 @@ class KinectEmulatorDaemon:
                     print(
                         f"[KINECT-EMU] Attached to {exe_name} (PID {pid}): patched {len(new_iat_pointers)} Kinect10 IAT entries via {proxy_path.name}"
                     )
-                    self._inject_psmove_dll(h_proc, k32_base, pid, exe_name, is_64bit=False)
+                    with self._lock:
+                        self.kinect_hooked = True
                     return True
 
             self._log_diag_once(pid, "IAT_PATCH_FAIL", f"Failed to patch Kinect10 IAT in {exe_name} (PID {pid}).")
@@ -1085,7 +1119,8 @@ class KinectEmulatorDaemon:
                         )
 
             if patched_total > 0:
-                self._inject_psmove_dll(h_proc, k32_base, pid, exe_name, is_64bit=True)
+                with self._lock:
+                    self.kinect_hooked = True
                 return True
 
             self._log_diag_once(pid, "IAT_PATCH_FAIL_64", f"Failed to patch 64-bit Kinect10 IAT in {exe_name} (PID {pid}).")
@@ -1093,6 +1128,66 @@ class KinectEmulatorDaemon:
 
         except Exception as exc:
             self._log_diag_once(pid, "HOOK_EXCEPTION_64", f"Exception hooking 64-bit {exe_name} (PID {pid}): {exc}")
+            return False
+        finally:
+            self._k32.CloseHandle(h_proc)
+
+    def _hook_psmove_only(self, pid: int, exe_name: str, is_64bit: bool) -> bool:
+        """
+        Injects ONLY tools/LegacyMove.dll (32-bit) or tools/LegacyMove_x64.dll (64-bit)
+        into the target Just Dance process without loading Legacy10*.dll or patching Kinect10.
+        Used exclusively when DualShock 4 (PS Move) mode is active so the game never sees a
+        phantom Kinect sensor alongside the virtual PlayStation Move controller.
+        """
+        dll_path = self.psmove_dll_x64_path if is_64bit else self.psmove_dll_path
+        if not dll_path.is_file():
+            self._log_diag_once(pid, "PSMOVE_DLL_MISSING", f"PS Move proxy DLL not found at {dll_path}")
+            return False
+
+        h_proc = self._open_target_process_for_hook(pid, exe_name)
+        if not h_proc:
+            return False
+
+        try:
+            h_mods = (wintypes.HMODULE * 1024)()
+            cb_needed = wintypes.DWORD()
+            mod_flag = LIST_MODULES_64BIT if is_64bit else LIST_MODULES_32BIT
+            ok_enum = self._psapi.EnumProcessModulesEx(
+                h_proc, h_mods, ctypes.sizeof(h_mods), ctypes.byref(cb_needed), mod_flag
+            )
+            if not ok_enum or cb_needed.value == 0:
+                if not self._psapi.EnumProcessModulesEx(
+                    h_proc, h_mods, ctypes.sizeof(h_mods), ctypes.byref(cb_needed), LIST_MODULES_ALL
+                ):
+                    return False
+
+            mod_count = min(1024, cb_needed.value // ctypes.sizeof(wintypes.HMODULE))
+            mod_buf = ctypes.create_unicode_buffer(512)
+            k32_base = None
+            for i in range(mod_count):
+                try:
+                    mod_addr = int(h_mods[i] or 0)
+                    if mod_addr == 0 or (not is_64bit and mod_addr >= 0x100000000):
+                        continue
+                    self._psapi.GetModuleFileNameExW(h_proc, h_mods[i], mod_buf, 512)
+                    fn = mod_buf.value.lower()
+                    base_name = Path(fn).name
+                    if base_name == "kernel32.dll":
+                        if is_64bit and "system32" in fn:
+                            k32_base = mod_addr
+                            break
+                        if (not is_64bit) and ("system32" in fn or "syswow64" in fn):
+                            k32_base = mod_addr
+                            break
+                except Exception:
+                    pass
+
+            if not k32_base:
+                return False
+
+            return self._inject_psmove_dll(h_proc, k32_base, pid, exe_name, is_64bit=is_64bit)
+        except Exception as exc:
+            self._log_diag_once(pid, "PSMOVE_HOOK_EXCEPTION", f"Exception attaching PS Move proxy to {exe_name} (PID {pid}): {exc}")
             return False
         finally:
             self._k32.CloseHandle(h_proc)

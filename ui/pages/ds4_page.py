@@ -104,9 +104,9 @@ class UIDS4PageMixin:
         warn_layout.addWidget(lbl_warn_icon, alignment=Qt.AlignmentFlag.AlignTop)
 
         lbl_warn_text = QLabel(
-            "CAUTION: Hold the DualShock 4 firmly while dancing! This mode emulates a native PlayStation Move "
-            "controller in memory (Legacy 2018 Offline, Legacy Lab, and Legacy Lab Offline) using your controller's "
-            "6-axis accelerometer and gyroscope with zero driver installation required.",
+            "CAUTION: Playing with a DualShock 4 is for lunatics! Only do this if you want to do "
+            "wild experiments, and do not forget to hold the controller so f*ing firmly! "
+            "This feature is ultra-experimental and may not be supported in future versions. (maybe...)",
             warn_box,
         )
         lbl_warn_text.setWordWrap(True)

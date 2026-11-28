@@ -435,9 +435,10 @@ O módulo `sensor.kinect_emulator` emula os sensores **Kinect** (`tools/Legacy10
 - `TARGET_PROCESS_NAMES`: Monitora executáveis 32-bit (`legacy.exe`, `justdance.exe`, `justdance2017.exe`, `legacyoffline.exe`) e 64-bit (`legacy lab.exe`, `legacylab.exe`, `legacylab_offline.exe`, `legacy lab offline.exe`, `legacylaboffline.exe`), ignorando launchers (`legacylab-launcher.exe`).
 - `KinectEmulatorDaemon(cfg=None)`:
   - `start() -> None` / `stop() -> None`: Inicia e encerra a thread daemon de monitoramento de processos (`KinectEmulatorDaemon`).
-  - `get_status() -> Dict[str, Any]`: Retorna o estado atual (`enabled`, `running`, `connected`, `game_name`, `pid`, `mode` `"iat_hook_32"` / `"iat_hook_64"`, `psmove_hooked`).
+  - `get_status() -> Dict[str, Any]`: Retorna o estado atual (`enabled`, `running`, `connected`, `game_name`, `pid`, `mode` `"iat_hook_32"` / `"iat_hook_64"` / `"psmove_hook_32"` / `"psmove_hook_64"`, `kinect_hooked`, `psmove_hooked`).
   - `register_status_callback(cb: Callable[[bool, str, int], None]) -> None`: Registra callback acionado ao conectar ou desconectar do processo do jogo.
-  - `_inject_psmove_dll(pid, is_32bit) -> bool`: Injeta `LegacyMove.dll` (32-bit) ou `LegacyMove_x64.dll` (64-bit) via `LoadLibraryW` (com staging em `%APPDATA%\LegacyPSCam_Sensor\tools\`), habilitando a emulação nativa do PS Move ZCM2 sempre que `Local\LegacyPSMoveState.active == 1`.
+  - `_hook_psmove_only(pid, exe_name, is_64bit) -> bool`: Quando `camera_mode == "ds4"`, injeta exclusivamente `LegacyMove.dll` (32-bit) ou `LegacyMove_x64.dll` (64-bit) sem carregar `Legacy10*.dll` nem expor um Kinect fantasma ao jogo.
+  - `_hook_running_game(pid, exe_name)` / `_hook_running_game_64(pid, exe_name)`: Nos modos de câmera, injeta exclusivamente `Legacy10.dll` / `Legacy10_x64.dll` e aplica o patch da IAT/Delay-IAT do Kinect.
   - `_scan_for_game_process() -> Optional[Dict[str, Any]]`: Varre processos ativos em $<0.5\text{ ms}$ via snapshot de kernel `CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)`.
   - `_log_diag_once(pid, reason_key, message)`: Registra diagnósticos de injeção sem spam (incluindo detecção de `ERROR_ACCESS_DENIED (5)` quando o jogo roda como Administrador).
 

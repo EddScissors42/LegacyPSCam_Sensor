@@ -230,17 +230,18 @@ class PSMoveSharedMemory:
             batt = max(0, min(255, int(battery_code)))
             act_val = 1 if active else 0
 
-            # Seqlock write: odd seq -> payload -> even seq
-            self.seq = (self.seq + 1) & 0xFFFFFFFF
-            if (self.seq & 1) == 0:
-                self.seq = (self.seq + 1) & 0xFFFFFFFF
+            # Seqlock write: prepare payload BEFORE opening odd-seq window so C++ readers
+            # see a sub-microsecond write window instead of Python packing latency.
+            seq_odd = (self.seq + 1) & 0xFFFFFFFF
+            if (seq_odd & 1) == 0:
+                seq_odd = (seq_odd + 1) & 0xFFFFFFFF
+            seq_even = (seq_odd + 1) & 0xFFFFFFFF
 
-            struct.pack_into("<I", self.shm, _SEQ_OFFSET, self.seq)
             payload = struct.pack(
                 _SENSOR_FMT,
                 PSMOVE_MAGIC,
                 PSMOVE_VERSION,
-                self.seq,
+                seq_odd,
                 act_val,
                 ts_ms,
                 buttons_mask & 0xFFFFFFFF,
@@ -255,10 +256,13 @@ class PSMoveSharedMemory:
                 max(-32767, min(32767, int(gz))),
                 b"\x00" * 20,
             )
-            self.shm[0:64] = payload
+            seq_odd_bytes = struct.pack("<I", seq_odd)
+            seq_even_bytes = struct.pack("<I", seq_even)
 
-            self.seq = (self.seq + 1) & 0xFFFFFFFF
-            struct.pack_into("<I", self.shm, _SEQ_OFFSET, self.seq)
+            self.shm[_SEQ_OFFSET:_SEQ_OFFSET + 4] = seq_odd_bytes
+            self.shm[0:64] = payload
+            self.shm[_SEQ_OFFSET:_SEQ_OFFSET + 4] = seq_even_bytes
+            self.seq = seq_even
 
     def write_inactive(self) -> None:
         """Marks the virtual PS Move inactive so LegacyMove.dll stays 100% invisible."""

@@ -251,6 +251,8 @@ static LONG             g_hookedCount = 0;
 static HANDLE             g_shmHandle = nullptr;
 static PSMoveSharedState* g_shmView = nullptr;
 static DWORD              g_lastShmProbeTick = 0;
+static PSMoveSharedState  g_lastGoodSnap = {};
+static bool               g_hasGoodSnap = false;
 
 struct TrackedDevInfo {
     HANDLE hDevInfo;
@@ -345,17 +347,47 @@ static bool ReadSharedSnapshot(PSMoveSharedState* outSnap) {
         LeaveCriticalSection(&g_lock);
         return false;
     }
-    for (int attempt = 0; attempt < 8; ++attempt) {
+
+    for (int attempt = 0; attempt < 64; ++attempt) {
         uint32_t s1 = *(volatile uint32_t*)&shm->seq;
         MemoryBarrier();
-        if (s1 & 1u) continue;
-        memcpy(outSnap, shm, 64);
+        if (s1 & 1u) {
+            if (attempt >= 16) {
+                LeaveCriticalSection(&g_lock);
+                SwitchToThread();
+                EnterCriticalSection(&g_lock);
+                shm = g_shmView;
+                if (!shm) {
+                    LeaveCriticalSection(&g_lock);
+                    return false;
+                }
+            } else {
+                YieldProcessor();
+            }
+            continue;
+        }
+        PSMoveSharedState tmp = {};
+        memcpy(&tmp, shm, 64);
         MemoryBarrier();
         uint32_t s2 = *(volatile uint32_t*)&shm->seq;
         if (s1 == s2) {
+            bool valid = (tmp.magic == kSharedMagic && tmp.version == kSharedVersion);
+            if (valid) {
+                g_lastGoodSnap = tmp;
+                g_hasGoodSnap = true;
+                *outSnap = tmp;
+            }
             LeaveCriticalSection(&g_lock);
-            return (outSnap->magic == kSharedMagic && outSnap->version == kSharedVersion);
+            return valid;
         }
+    }
+
+    // Transient seqlock contention under heavy 500 Hz DS4 writes must NEVER be mistaken
+    // for a disconnect: fall back to the last verified clean snapshot if available.
+    if (g_hasGoodSnap) {
+        *outSnap = g_lastGoodSnap;
+        LeaveCriticalSection(&g_lock);
+        return true;
     }
     LeaveCriticalSection(&g_lock);
     return false;
@@ -490,11 +522,30 @@ static DWORD WINAPI PacerThreadProc(LPVOID param) {
             break;
         }
 
+        DWORD nowMs = GetTickCount();
+        bool needService = false;
+        EnterCriticalSection(&g_lock);
+        if (slotIdx < 0 || slotIdx >= kMaxVirtHandles || !g_virtHandles[slotIdx].inUse) {
+            LeaveCriticalSection(&g_lock);
+            break;
+        }
+        {
+            VirtualHandleSlot& slotCheck = g_virtHandles[slotIdx];
+            if (slotCheck.readPending && slotCheck.readOv != nullptr &&
+                (nowMs - slotCheck.lastReportTickMs) >= 10u) {
+                needService = true;
+            }
+        }
+        LeaveCriticalSection(&g_lock);
+
+        if (!needService) {
+            continue;
+        }
+
         PSMoveSharedState snap = {};
         bool okSnap = ReadSharedSnapshot(&snap);
         bool active = okSnap && (snap.active != 0u);
 
-        DWORD nowMs = GetTickCount();
         HANDLE eventToSignal = nullptr;
         bool delivered = false;
 
@@ -512,7 +563,7 @@ static DWORD WINAPI PacerThreadProc(LPVOID param) {
                 slot.readOv->Internal = 0;
                 slot.readOv->InternalHigh = 0;
                 eventToSignal = slot.readOv->hEvent;
-            } else if ((nowMs - slot.lastReportTickMs) >= 10u) {
+            } else {
                 slot.lastReportTickMs = nowMs;
                 slot.seq4 = (uint8_t)((slot.seq4 + 1u) & 0x0Fu);
                 slot.ts16 = (uint16_t)(slot.ts16 + 10u);
@@ -889,6 +940,7 @@ static BOOL WINAPI Hook_ReadFile(
         slot->ts16 = (uint16_t)(slot->ts16 + 10u);
         PackZcm2InputReport(reinterpret_cast<uint8_t*>(lpBuffer), nNumberOfBytesToRead, snap, slot->seq4, slot->ts16);
         slot->readPending = false;
+        slot->readOv = lpOverlapped;
         slot->lastCompletedBytes = kReportLen;
         slot->lastError = 0;
         if (lpNumberOfBytesRead != nullptr) {

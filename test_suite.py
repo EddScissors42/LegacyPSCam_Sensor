@@ -1612,12 +1612,17 @@ def test_kinect_emulator():
     assert struct.unpack_from("<H", m32_bytes, struct.unpack_from("<I", m32_bytes, 0x3C)[0] + 24)[0] == 0x010B, "LegacyMove.dll must be PE32 (32-bit)"
     assert struct.unpack_from("<H", m64_bytes, struct.unpack_from("<I", m64_bytes, 0x3C)[0] + 24)[0] == 0x020B, "LegacyMove_x64.dll must be PE32+ (64-bit)"
 
-    # 4. Test Daemon Instantiation & Lifecycle
-    daemon = KinectEmulatorDaemon({"emulate_kinect_enabled": False})
+    # 4. Test Daemon Instantiation & Selective Mode Injection
+    daemon = KinectEmulatorDaemon({"emulate_kinect_enabled": False, "camera_mode": "pscam"})
     assert not daemon.enabled
     status = daemon.get_status()
     assert status["enabled"] is False
     assert status["connected"] is False
+    assert status["kinect_hooked"] is False and status["psmove_hooked"] is False
+    assert daemon._is_ds4_mode() is False
+    daemon.cfg["camera_mode"] = "ds4"
+    assert daemon._is_ds4_mode() is True
+    assert hasattr(daemon, "_hook_psmove_only")
     assert "last_error_code" in status and "last_error_message" in status
     assert hasattr(ke_mod, "LIST_MODULES_32BIT") and ke_mod.LIST_MODULES_32BIT == 0x01
     assert hasattr(ke_mod, "LIST_MODULES_64BIT") and ke_mod.LIST_MODULES_64BIT == 0x02

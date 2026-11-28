@@ -757,7 +757,6 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
 
     set_high_resolution_timer(True)
     set_realtime_process_qos(True)
-    bridge = get_kinect_bridge()
 
     overlay = TrackingOverlay(show_hud=True)
 
@@ -877,10 +876,6 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
                 accel_axes=(ax, ay, az),
                 gyro_axes=st.gyro,
             )
-
-            bridge.pose.write_empty()
-            bridge.pose_v2.write_empty()
-            bridge.image.write_image_and_mask(frame, np.zeros((240, 320), dtype=np.uint8), tracked=False)
 
             cv2.imshow(window_name, frame)
 

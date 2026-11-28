@@ -234,7 +234,20 @@ class TestControllersAndCLI(unittest.TestCase):
                     self.assertTrue(hasattr(win, "ds4_grip_guide_box"))
                     self.assertFalse(win.ds4_grip_guide_box.isHidden())
                     self.assertFalse(win.lbl_ds4_grip_img.pixmap().isNull())
-                    # Switching to ds4 mode without controller keeps ds4_info_frame (and PS Move card) hidden
+                    # Switching to ds4 mode without controller (hermetically mocked even if a real DS4 is paired)
+                    win.controller.devices.connect_ds4_async = lambda *a, **kw: None
+                    win.controller.devices.get_ds4_readout = lambda: {
+                        "is_connected": False,
+                        "is_connecting": False,
+                        "is_usb": False,
+                        "battery_pct": 0,
+                        "is_charging": False,
+                        "sample_rate_hz": 0.0,
+                        "accel_g": (0.0, 0.0, 0.0),
+                        "imu_frozen": False,
+                        "controller_name": "DualShock 4",
+                        "psmove_streaming": False,
+                    }
                     win._set_mode("ds4")
                     win._update_ds4_ui_readout()
                     self.assertTrue(win.ds4_info_frame.isHidden())
