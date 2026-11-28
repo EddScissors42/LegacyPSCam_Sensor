@@ -311,8 +311,8 @@ class TestTrackingMath(unittest.TestCase):
         joints[18] = (0.0, 0.0, 0.0, 0.0)
         joints[0] = (0.0, 0.0, 0.0, 0.0)     # Hip hidden -> Tier 3
         self.assertTrue(calib.calibrate(joints, legs_visible=False, hips_visible=False))
-        self.assertLessEqual(calib.scale, 1.42)
-        self.assertGreaterEqual(calib.scale, 0.82)
+        self.assertLessEqual(calib.scale, 1.30)
+        self.assertGreaterEqual(calib.scale, 0.85)
 
         # Close-room stereo Z (1.20m) MUST clamp into Kinect v1's lobby play-zone (>= 1.75m)
         joints[0] = (0.0, 0.0, 0.0, 0.9)
@@ -535,6 +535,16 @@ class TestTrackingMath(unittest.TestCase):
         # Right knee (joint 17) was visible so it must remain TRACKED, while only occluded right ankle (18) is inferred
         self.assertGreater(pf.kinect_joints[17][3], 0.80)
         self.assertAlmostEqual(pf.kinect_joints[18][3], 0.35, delta=0.05)
+
+    def test_phone_camera_webapp_prevents_standby_fps_lock_and_hidden_video_throttle(self):
+        html_path = ROOT_DIR / "assets" / "webapp" / "mobile_webapp.html"
+        html = html_path.read_text(encoding="utf-8")
+        # Auto-dim eco video surface must stay >= 64x48 (never 2x2) so mobile browsers don't throttle rVFC to 12-15 FPS
+        self.assertIn("width: 64px !important;", html)
+        self.assertNotIn("width: 2px !important;", html)
+        # Standby wake must verify actual track frameRate and reopen camera if stuck below target FPS
+        self.assertIn("actualFps", html)
+        self.assertIn("applyStandbyFpsThrottle(false).then", html)
 
 
 if __name__ == "__main__":

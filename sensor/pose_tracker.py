@@ -617,9 +617,10 @@ class PoseTracker:
 
         result = self.detector.detect_for_video(mp_image, timestamp_ms)
         if self._adaptive_infer_enabled and self.max_players == 1:
+            # Measure strictly MediaPipe CPU inference latency (NEVER dt_infer / camera arrival wait),
+            # so 15-24 FPS Phone Camera or low-light webcams never falsely trigger 320p downscaling on fast CPUs.
             infer_ms = (time.perf_counter() - t_infer_start) * 1000.0
-            cycle_ms = (dt_infer * 1000.0) if (dt_infer is not None and dt_infer < 0.25) else infer_ms
-            self._update_adaptive_infer_width(max(infer_ms, cycle_ms * 0.85))
+            self._update_adaptive_infer_width(infer_ms)
         valid_dets, raw_pose_count, norm_list = self._extract_valid_candidates(result, w, h)
 
         active_slots = self.slots[: self.max_players]

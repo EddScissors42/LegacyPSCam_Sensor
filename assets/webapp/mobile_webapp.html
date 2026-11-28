@@ -56,14 +56,15 @@
   }
   video { width: 100%; height: 100%; object-fit: cover; }
   video.mirrored { transform: scaleX(-1); }
-  /* Shrinks decoder surface during Auto-Dim so Android SurfaceFlinger skips fullscreen 60/120Hz compositing */
+  /* Shrinks decoder surface behind OLED overlay during Auto-Dim while keeping a compositor-active
+     64x48 surface so Android Chrome / iOS Safari never throttle requestVideoFrameCallback to 12-15 FPS */
   video.video-eco-hidden {
     position: fixed !important;
     top: 0 !important;
     left: 0 !important;
-    width: 2px !important;
-    height: 2px !important;
-    opacity: 0.001 !important;
+    width: 64px !important;
+    height: 48px !important;
+    opacity: 0.02 !important;
     transform: none !important;
     pointer-events: none !important;
   }
@@ -333,17 +334,33 @@ function scheduleStandbySleep() {
 }
 
 async function applyStandbyFpsThrottle(isStandby) {
-  if (!stream) return;
+  if (!stream) return false;
   try {
     const track = stream.getVideoTracks()[0];
-    if (!track || typeof track.applyConstraints !== "function") return;
+    if (!track || typeof track.applyConstraints !== "function") return false;
     if (isStandby) {
-      await track.applyConstraints({ frameRate: { ideal: 10, max: 15 } });
+      await track.applyConstraints({ frameRate: { ideal: 12, max: targetFps } });
+      return true;
     } else {
-      const minFps = Math.min(20, targetFps);
-      await track.applyConstraints({ frameRate: { min: minFps, ideal: targetFps, max: targetFps } });
+      // Request full target FPS without strict `min` first (avoids Android Chrome OverconstrainedError)
+      try {
+        await track.applyConstraints({ frameRate: { ideal: targetFps, max: targetFps } });
+      } catch (e1) {
+        try {
+          await track.applyConstraints({ frameRate: { ideal: targetFps } });
+        } catch (e2) {}
+      }
+      // Verify hardware camera actually left standby FPS; if stuck <= 22 FPS on mobile HAL, reopen track cleanly
+      const s = track.getSettings ? track.getSettings() : {};
+      const actualFps = Number(s.frameRate || 0);
+      if (actualFps > 0 && actualFps < Math.min(24, targetFps - 4)) {
+        return false;
+      }
+      return true;
     }
-  } catch (e) {}
+  } catch (e) {
+    return false;
+  }
 }
 
 function sleepCameraForStandby() {
@@ -806,28 +823,31 @@ function captureTick() {
 }
 
 function runThermalGovernor(targetInterval) {
-  // Adaptive Thermal Governor: if mobile CPU encoding starts lagging (classic Android thermal throttling),
-  // step down effective FPS (target -> 24 -> 20 -> 15) and JPEG quality so the phone stays cool instead of spiral-throttling.
-  const minQ = coolMode ? 0.34 : 0.38;
+  // Adaptive Thermal Governor: prefer lowering JPEG quality first so the phone keeps feeding
+  // Just Dance's 30 FPS Kinect scorer without starvation; only step down FPS if encode time
+  // genuinely exceeds the full frame budget (~33ms at 30 FPS).
+  const minQ = coolMode ? 0.30 : 0.34;
   const maxQ = coolMode ? 0.44 : 0.54;
 
-  if (avgEncodeMs > targetInterval * 0.78) {
-    jpegQuality = Math.max(minQ, +(jpegQuality - 0.02).toFixed(2));
+  if (avgEncodeMs > targetInterval * 0.85) {
+    jpegQuality = Math.max(minQ, +(jpegQuality - 0.03).toFixed(2));
+  }
+  if (avgEncodeMs > targetInterval * 0.98) {
     thermalStressTicks++;
     thermalReliefTicks = 0;
-    if (thermalStressTicks >= 3) {
+    if (thermalStressTicks >= 4) {
       thermalStressTicks = 0;
       if (effectiveFps > 24) effectiveFps = 24;
       else if (effectiveFps > 20) effectiveFps = 20;
-      else if (effectiveFps > 15) effectiveFps = 15;
+      else if (avgEncodeMs > 55 && effectiveFps > 15) effectiveFps = 15;
     }
-  } else if (avgEncodeMs < targetInterval * 0.42 && ws && ws.bufferedAmount < 32768) {
+  } else if (avgEncodeMs < targetInterval * 0.65 && ws && ws.bufferedAmount < 49152) {
     jpegQuality = Math.min(maxQ, +(jpegQuality + 0.01).toFixed(2));
     thermalReliefTicks++;
     thermalStressTicks = 0;
-    if (thermalReliefTicks >= 8 && effectiveFps < targetFps) {
+    if (thermalReliefTicks >= 4 && effectiveFps < targetFps) {
       thermalReliefTicks = 0;
-      effectiveFps = Math.min(targetFps, effectiveFps + 3);
+      effectiveFps = Math.min(targetFps, effectiveFps + 4);
     }
   } else {
     thermalStressTicks = Math.max(0, thermalStressTicks - 1);
@@ -922,9 +942,16 @@ function updateStreamingState(active) {
     if (!stream || cameraSleeping) {
       startCamera();
     } else {
-      applyStandbyFpsThrottle(false);
-      scheduleNextCapture(10);
-      scheduleAutoDim();
+      applyStandbyFpsThrottle(false).then(ok => {
+        if (!streamingActive || manualDisconnect) return;
+        if (!ok) {
+          // Camera track stayed stuck at standby FPS -> reopen cleanly at full targetFps
+          startCamera();
+        } else {
+          scheduleNextCapture(10);
+          scheduleAutoDim();
+        }
+      });
     }
   } else {
     stopCaptureLoop();

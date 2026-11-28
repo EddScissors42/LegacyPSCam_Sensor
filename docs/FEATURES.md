@@ -139,8 +139,8 @@ Este documento descreve detalhadamente o estado atual de todas as funcionalidade
 - **Implementação:**
   - **Calibrador em 3 Camadas (`SkeletonCalibrator` Multi-Tier):**
     1. *Tier 1 (Corpo Inteiro / `full_body`):* Utiliza cabeça, tornozelos e quadris para estimar a altura real e mapear para a escala padrão de 1,75 m do Just Dance.
-    2. *Tier 2 (Meio Corpo / `flexible_torso`):* Ativado quando os tornozelos saem do campo de visão; utiliza a envergadura de tronco (ombros até quadris) multiplicada pela proporção áurea anatômica humana (1,95x - 3,05x).
-    3. *Tier 3 (Enquadramento Mesa / `upper_body`):* Ativado em enquadramentos muito próximos onde apenas cabeça e ombros estão visíveis. Utiliza a distância biacromial (largura dos ombros x 4.6) e distância cabeça-ombros para inferir a escala completa, ancorando a origem corporal onde os quadris anatomicamente estariam (`Y = 0.0m`).
+    2. *Tier 2 (Meio Corpo / `flexible_torso`):* Ativado quando os tornozelos saem do campo de visão; utiliza a envergadura de tronco (ombros até quadris) multiplicada pela proporção áurea anatômica humana (1,95x - 3,05x), com limite de escala mais rígido (`[0.85, 1.30]`) para evitar braços superdimensionados.
+    3. *Tier 3 (Enquadramento Mesa / `upper_body`):* Ativado em enquadramentos muito próximos onde apenas cabeça e ombros estão visíveis. Utiliza a distância biacromial (largura dos ombros x 4.6) e distância cabeça-ombros para inferir a escala completa (limitada em `[0.85, 1.30]`), ancorando a origem corporal onde os quadris anatomicamente estariam (`Y = 0.0m`).
   - **Sintetizador Dinâmico de Membros Inferiores (`process_frame`):**
     - Quando os quadris saem do enquadramento inferior, são sintetizados logo abaixo dos ombros com confiança alta (`0.85 * min(sh_l, sh_r)`), garantindo estado `TRACKED` (2) no `Kinect10.dll` para o `HipCenter` (`Joint 0`), que é essencial para o jogo manter o jogador ativo.
     - As pernas, joelhos e pés são sintetizados em postura ereta natural com confiança `0.35` (estado `INFERRED` / 1 no `Kinect10.dll`), satisfazendo o contrato do Just Dance sem penalizar a pontuação dos movimentos dos braços.

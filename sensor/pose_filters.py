@@ -454,9 +454,11 @@ class SkeletonCalibrator:
             )
 
         # MediaPipe world landmarks are already metric (~1.0 = 1m); clamp scale to sane human bounds
-        # so sideways turns / desk-framing recalibrations can never produce 3.7m giant skeletons.
-        def _clamp_scale(raw_h: float) -> float:
-            return float(np.clip(self.target_height_m / max(0.1, raw_h), 0.82, 1.42))
+        # so sideways turns / desk-framing recalibrations can never produce oversized skeletons.
+        def _clamp_scale(raw_h: float, partial: bool = False) -> float:
+            hi = 1.30 if partial else 1.42
+            lo = 0.85 if partial else 0.82
+            return float(np.clip(self.target_height_m / max(0.1, raw_h), lo, hi))
 
         # Tier 1: Full-body (Ankles visible & detected)
         if legs_visible and head[3] >= 0.25 and ank_l[3] >= 0.25 and ank_r[3] >= 0.25:
@@ -491,7 +493,7 @@ class SkeletonCalibrator:
             )
             raw_height = max(torso * 3.05, head_to_hip * 1.95)
             if 0.5 <= raw_height <= 3.0:
-                self.scale = _clamp_scale(raw_height)
+                self.scale = _clamp_scale(raw_height, partial=True)
                 self.origin = [hip[0], hip[1], hip[2]]
                 self.is_calibrated = True
                 self.calibration_tier = "flexible_torso"
@@ -511,7 +513,7 @@ class SkeletonCalibrator:
             )
             raw_height = max(sh_w * 4.6, head_to_sh * 4.0)
             if 0.4 <= raw_height <= 3.2:
-                self.scale = _clamp_scale(raw_height)
+                self.scale = _clamp_scale(raw_height, partial=True)
                 if hips_visible and hip[3] >= 0.25:
                     self.origin = [hip[0], hip[1], hip[2]]
                 else:
