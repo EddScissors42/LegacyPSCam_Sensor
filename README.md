@@ -19,8 +19,8 @@ This application is written in Python with zero bloatware to deliver low-latency
 
 ### Compatibility
 
-- **Just Dance Legacy 2018 Offline (32-bit)**
-- **Just Dance Legacy Lab & Legacy Lab Offline (64-bit)**
+- **Just Dance Legacy 2018 Offline**
+- **Just Dance Legacy Lab & Legacy Lab Offline**
 
 ### How to Play
 
