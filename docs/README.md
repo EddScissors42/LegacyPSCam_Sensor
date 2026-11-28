@@ -28,9 +28,9 @@ All non-essential overhead has been removed while perfecting the core components
 | Image & Depth Bridge (JMI1 & JMI2) | `Local\LegacyWebcamKinectImage` buffer (1.3 MB) streaming BGRA frame and player mask to the game. | Implemented |
 | PlayStation 4 Camera Native WinUSB Backend | Direct user-space WinUSB driver (`sensor/ps4_backend/`), automatic OV580 firmware upload, 1280x800 @ 60 FPS isochronous capture, and eye selection (Right Eye default / Left Eye). | Implemented |
 | Real-time Hotplug Detection | Instant PnP Win32 connection/disconnection polling (< 3ms) without freezing the UI. | Implemented |
-| Hand Anchor Filter | Forearm vector extrapolation preventing lost tracking during rapid hand movements and routines. | Implemented |
-| Dynamic Anti-Jitter EMA Filter | Velocity-dependent adaptive smoothing eliminating resting jitter while preserving instant response. | Implemented |
-| Multi-Tier Auto-Height Calibration | Automatic height and metric normalization for full-body, flexible-torso, and desk setups. | Implemented |
+| Hand Anchor & Palm Center Filter | Palm-center (`INDEX + PINKY`) synthesis, forearm vector extrapolation, and anatomical stretch/fold guards preventing distorted hand vectors during rapid routines. | Implemented |
+| Dynamic Anti-Jitter EMA (Decoupled XY/Z) | Velocity-dependent `dt`-compensated smoothing with decoupled XY/Z damping, calm stationary extremities, instant swing response, and single-frame glitch suppression. | Implemented |
+| Multi-Tier Auto-Height & Vertical Bounce Tracking | Automatic height calibration with progressive upright scale refinement, independent per-leg synthesis, and `CameraSpaceYTracker` for squats, bounces, and jumps. | Implemented |
 | Modern Device Status Cards | Visual connection badges (supersampled error 'X', warning, and success checks) with diagnostic status and integrated action buttons matching the console-inspired sidebar style. | Implemented |
 | 6-Player Coach Selection Support | Expanded lateral tracking range allowing selection of all dancer slots (Slots 1 to 6). | Implemented |
 | 2-Player Tracking (Duo Mode) & Anti-Swap Memory | Simultaneous tracking of 2 dancers (`JDP2` 664B + `JMI2` indexed mask 1 & 2, P1 Blue / P2 Light Orange) with long-term appearance & trajectory memory across waltz turns and crossovers (`sensor/player_slot.py`). | Implemented |

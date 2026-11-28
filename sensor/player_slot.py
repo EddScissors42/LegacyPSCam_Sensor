@@ -16,12 +16,13 @@ import numpy as np
 from sensor.pose_filters import (
     NOSE, LEFT_EAR, RIGHT_EAR,
     LEFT_SHOULDER, RIGHT_SHOULDER, LEFT_ELBOW, RIGHT_ELBOW,
-    LEFT_WRIST, RIGHT_WRIST, LEFT_INDEX, RIGHT_INDEX,
+    LEFT_WRIST, RIGHT_WRIST, LEFT_PINKY, RIGHT_PINKY, LEFT_INDEX, RIGHT_INDEX,
     LEFT_HIP, RIGHT_HIP, LEFT_KNEE, RIGHT_KNEE,
     LEFT_ANKLE, RIGHT_ANKLE, LEFT_FOOT_INDEX, RIGHT_FOOT_INDEX,
     avg, lerp,
     HandAnchorFilter, AdaptiveSmoother, SkeletonCalibrator,
-    CameraSpaceXTracker, apply_camera_space_translation, apply_slot_snap,
+    CameraSpaceXTracker, CameraSpaceYTracker,
+    apply_camera_space_translation, apply_camera_space_y_translation, apply_slot_snap,
 )
 from sensor.person_lock import PersonLockController
 from sensor.stereo_matcher import STEREO_MODE_DISABLED
@@ -83,6 +84,8 @@ class PlayerSlotState:
     """
     MASK_INTERNAL_W = 320
     MASK_INTERNAL_H = 240
+    # Torso joints used for robust stereo baseline Z grounding (avoids fast-limb patch mismatches & cuts stereo CPU ~75%)
+    _STEREO_TORSO_JOINTS = (0, 1, 2, 3, 4, 8, 12, 16)
 
     def __init__(
         self,
@@ -97,6 +100,7 @@ class PlayerSlotState:
         self.smoother = AdaptiveSmoother(base_alpha=smoothing_alpha)
         self.calibrator = SkeletonCalibrator(target_height_m=target_height_m, cfg=self.cfg)
         self.camera_x_tracker = CameraSpaceXTracker(cfg=self.cfg)
+        self.camera_y_tracker = CameraSpaceYTracker(cfg=self.cfg)
         self.person_lock = PersonLockController(cfg=self.cfg)
         self.identity_profile = LongTermIdentityProfile(slot_index=self.slot_index)
         self._seg_prob_ema: Optional[np.ndarray] = None
@@ -108,6 +112,7 @@ class PlayerSlotState:
         self.calibrator.reset()
         self.smoother.reset()
         self.camera_x_tracker.reset()
+        self.camera_y_tracker.reset()
         self.person_lock.reset()
         self._seg_prob_ema = None
         self.last_norm_landmarks = None
@@ -118,6 +123,7 @@ class PlayerSlotState:
         """Resets kinematic filters after dropout expiration while preserving long-term identity memory."""
         self.smoother.reset()
         self.camera_x_tracker.reset()
+        self.camera_y_tracker.reset()
         self.person_lock.reset(preserve_identity=True)
         self._seg_prob_ema = None
         self.last_norm_landmarks = None
@@ -133,6 +139,7 @@ class PlayerSlotState:
             self.cfg.update(cfg)
             self.calibrator.cfg = self.cfg
             self.camera_x_tracker.cfg = self.cfg
+            self.camera_y_tracker.cfg = self.cfg
             self.person_lock.update_config(self.cfg)
         if smoothing_alpha is not None:
             self.smoother.update_base_alpha(smoothing_alpha)
@@ -257,26 +264,80 @@ class PlayerSlotState:
 
         spine = lerp(hip_center, sh_c, 0.52)
 
+        def get_palm_joint(idx_index: int, idx_pinky: int) -> Tuple[float, float, float, float]:
+            """Synthesizes Kinect-aligned palm center from INDEX + PINKY landmarks (cuts hand jitter ~30%)."""
+            j_idx = get_joint(idx_index)
+            if idx_pinky < len(world_lm) and idx_pinky < len(norm_lm):
+                j_pnk = get_joint(idx_pinky)
+                if j_idx[3] >= 0.25 and j_pnk[3] >= 0.25:
+                    w_sum = j_idx[3] + j_pnk[3]
+                    wi = j_idx[3] / w_sum
+                    wp = j_pnk[3] / w_sum
+                    return (
+                        j_idx[0] * wi + j_pnk[0] * wp,
+                        j_idx[1] * wi + j_pnk[1] * wp,
+                        j_idx[2] * wi + j_pnk[2] * wp,
+                        max(j_idx[3], j_pnk[3]),
+                    )
+                if j_pnk[3] > j_idx[3]:
+                    return j_pnk
+            return j_idx
+
+        def get_palm_pixel(idx_index: int, idx_pinky: int) -> Tuple[int, int, float]:
+            p_idx = get_pixel(idx_index)
+            if idx_pinky < len(norm_lm):
+                p_pnk = get_pixel(idx_pinky)
+                if p_idx[2] >= 0.25 and p_pnk[2] >= 0.25:
+                    w_sum = p_idx[2] + p_pnk[2]
+                    wi = p_idx[2] / w_sum
+                    wp = p_pnk[2] / w_sum
+                    return (
+                        int(round(p_idx[0] * wi + p_pnk[0] * wp)),
+                        int(round(p_idx[1] * wi + p_pnk[1] * wp)),
+                        max(p_idx[2], p_pnk[2]),
+                    )
+                if p_pnk[2] > p_idx[2]:
+                    return p_pnk
+            return p_idx
+
         raw_ank_l = get_joint(LEFT_ANKLE)
         raw_ank_r = get_joint(RIGHT_ANKLE)
-        legs_visible = (raw_ank_l[3] >= 0.25 and raw_ank_r[3] >= 0.25)
+        raw_knee_l = get_joint(LEFT_KNEE)
+        raw_knee_r = get_joint(RIGHT_KNEE)
+        left_leg_visible = raw_ank_l[3] >= 0.25
+        right_leg_visible = raw_ank_r[3] >= 0.25
+        legs_visible = left_leg_visible and right_leg_visible
 
-        if legs_visible:
-            knee_l = get_joint(LEFT_KNEE)
+        thigh_len = torso_len * 1.05
+        calf_len = torso_len * 1.00
+        syn_leg_conf = 0.35
+
+        # Independent per-leg & per-segment synthesis: a single occluded ankle (e.g., kick or turn)
+        # never wipes out the opposite visible leg or a visible knee.
+        if left_leg_visible:
+            knee_l = raw_knee_l
             ank_l = raw_ank_l
             foot_l = get_joint(LEFT_FOOT_INDEX)
-            knee_r = get_joint(RIGHT_KNEE)
+        elif raw_knee_l[3] >= 0.25:
+            knee_l = raw_knee_l
+            ank_l = (knee_l[0], knee_l[1] + calf_len, knee_l[2], syn_leg_conf)
+            foot_l = (knee_l[0], knee_l[1] + calf_len + 0.05, knee_l[2] - 0.12, syn_leg_conf)
+        else:
+            knee_l = (hip_l[0], hip_l[1] + thigh_len, hip_l[2], syn_leg_conf)
+            ank_l = (hip_l[0], hip_l[1] + thigh_len + calf_len, hip_l[2], syn_leg_conf)
+            foot_l = (hip_l[0], hip_l[1] + thigh_len + calf_len + 0.05, hip_l[2] - 0.12, syn_leg_conf)
+
+        if right_leg_visible:
+            knee_r = raw_knee_r
             ank_r = raw_ank_r
             foot_r = get_joint(RIGHT_FOOT_INDEX)
+        elif raw_knee_r[3] >= 0.25:
+            knee_r = raw_knee_r
+            ank_r = (knee_r[0], knee_r[1] + calf_len, knee_r[2], syn_leg_conf)
+            foot_r = (knee_r[0], knee_r[1] + calf_len + 0.05, knee_r[2] - 0.12, syn_leg_conf)
         else:
-            thigh_len = torso_len * 1.05
-            calf_len = torso_len * 1.00
-            syn_leg_conf = 0.35
-            knee_l = (hip_l[0], hip_l[1] + thigh_len, hip_l[2], syn_leg_conf)
             knee_r = (hip_r[0], hip_r[1] + thigh_len, hip_r[2], syn_leg_conf)
-            ank_l = (hip_l[0], hip_l[1] + thigh_len + calf_len, hip_l[2], syn_leg_conf)
             ank_r = (hip_r[0], hip_r[1] + thigh_len + calf_len, hip_r[2], syn_leg_conf)
-            foot_l = (hip_l[0], hip_l[1] + thigh_len + calf_len + 0.05, hip_l[2] - 0.12, syn_leg_conf)
             foot_r = (hip_r[0], hip_r[1] + thigh_len + calf_len + 0.05, hip_r[2] - 0.12, syn_leg_conf)
 
         raw_kinect = [
@@ -287,11 +348,11 @@ class PlayerSlotState:
             sh_l,
             get_joint(LEFT_ELBOW),
             get_joint(LEFT_WRIST),
-            get_joint(LEFT_INDEX),
+            get_palm_joint(LEFT_INDEX, LEFT_PINKY),
             sh_r,
             get_joint(RIGHT_ELBOW),
             get_joint(RIGHT_WRIST),
-            get_joint(RIGHT_INDEX),
+            get_palm_joint(RIGHT_INDEX, RIGHT_PINKY),
             hip_l,
             knee_l,
             ank_l,
@@ -305,7 +366,7 @@ class PlayerSlotState:
         # 2. Hand Anchor Filter
         anchored = self.hand_filter.apply(raw_kinect)
 
-        # 3. Auto-calibrate height and origin
+        # 3. Auto-calibrate height and origin (+ gentle upright scale refinement over first ~30 frames)
         ankles_in_frame = (
             legs_visible
             and raw_ank_l[3] >= 0.50
@@ -315,8 +376,10 @@ class PlayerSlotState:
         )
         if not self.calibrator.is_calibrated or (self.calibrator.calibration_tier != "full_body" and ankles_in_frame):
             self.calibrator.calibrate(anchored, legs_visible=ankles_in_frame, hips_visible=hips_visible)
+        elif ankles_in_frame:
+            self.calibrator.refine_full_body_scale(anchored)
 
-        # 3.1 Stereo Triangulation (automatic on PS4 Camera dual sensor)
+        # 3.1 Stereo Triangulation (automatic on PS4 Camera dual sensor; torso-only for robust room Z & 4x less CPU)
         stereo_depths = None
         if stereo_mode != STEREO_MODE_DISABLED and frame_left is not None and stereo_engine is not None:
             try:
@@ -325,9 +388,14 @@ class PlayerSlotState:
                     rect_left_frame, rect_right_frame = stereo_engine.calibrator.rectify(mono_pri, frame_left)
                 else:
                     rect_left_frame, rect_right_frame = stereo_engine.calibrator.rectify(frame_left, mono_pri)
-                joints_2d = extract_joints_2d_fn(norm_lm, w, h)
+                joints_2d_all = extract_joints_2d_fn(norm_lm, w, h)
+                joints_2d_torso = {
+                    j_id: joints_2d_all[j_id]
+                    for j_id in self._STEREO_TORSO_JOINTS
+                    if j_id in joints_2d_all
+                }
                 stereo_depths = stereo_engine.triangulate_sparse_joints(
-                    rect_left_frame, rect_right_frame, joints_2d, primary_eye=primary_eye
+                    rect_left_frame, rect_right_frame, joints_2d_torso, primary_eye=primary_eye
                 )
             except Exception as exc:
                 if not self._warned_stereo_err:
@@ -342,10 +410,17 @@ class PlayerSlotState:
         smoothed_kinect = self.smoother.apply(kinect_space, dt=dt_infer)
 
         # 4.2 Apply lateral camera-space translation for dancer slot selection
-        translated = apply_camera_space_translation(smoothed_kinect, norm_lm, self.camera_x_tracker, self.cfg)
+        translated = apply_camera_space_translation(
+            smoothed_kinect, norm_lm, self.camera_x_tracker, self.cfg, dt=dt_infer
+        )
 
-        # 4.3 Apply slot snap
+        # 4.3 Apply C0-continuous slot snap
         snapped = apply_slot_snap(translated, self.cfg)
+
+        # 4.4 Apply vertical squat/bounce/jump camera-space translation
+        snapped = apply_camera_space_y_translation(
+            snapped, norm_lm, self.camera_y_tracker, self.cfg, dt=dt_infer
+        )
 
         # 5. Build 2D pixel coordinates for preview drawing
         px_sh_l = get_pixel(LEFT_SHOULDER)
@@ -380,21 +455,32 @@ class PlayerSlotState:
         )
         px_nose = get_pixel(NOSE)
 
-        if legs_visible:
+        thigh_px = int(sh_w_px * 1.4)
+        calf_px = int(sh_w_px * 1.3)
+        if left_leg_visible:
             px_knee_l = get_pixel(LEFT_KNEE)
             px_ank_l = get_pixel(LEFT_ANKLE)
             px_foot_l = get_pixel(LEFT_FOOT_INDEX)
+        elif raw_knee_l[3] >= 0.25:
+            px_knee_l = get_pixel(LEFT_KNEE)
+            px_ank_l = (px_knee_l[0], min(h - 2, px_knee_l[1] + calf_px), 0.35)
+            px_foot_l = (px_knee_l[0], min(h - 2, px_knee_l[1] + calf_px + 10), 0.35)
+        else:
+            px_knee_l = (px_hip_l[0], min(h - 2, px_hip_l[1] + thigh_px), 0.35)
+            px_ank_l = (px_hip_l[0], min(h - 2, px_hip_l[1] + thigh_px + calf_px), 0.35)
+            px_foot_l = (px_hip_l[0], min(h - 2, px_hip_l[1] + thigh_px + calf_px + 10), 0.35)
+
+        if right_leg_visible:
             px_knee_r = get_pixel(RIGHT_KNEE)
             px_ank_r = get_pixel(RIGHT_ANKLE)
             px_foot_r = get_pixel(RIGHT_FOOT_INDEX)
+        elif raw_knee_r[3] >= 0.25:
+            px_knee_r = get_pixel(RIGHT_KNEE)
+            px_ank_r = (px_knee_r[0], min(h - 2, px_knee_r[1] + calf_px), 0.35)
+            px_foot_r = (px_knee_r[0], min(h - 2, px_knee_r[1] + calf_px + 10), 0.35)
         else:
-            thigh_px = int(sh_w_px * 1.4)
-            calf_px = int(sh_w_px * 1.3)
-            px_knee_l = (px_hip_l[0], min(h - 2, px_hip_l[1] + thigh_px), 0.35)
             px_knee_r = (px_hip_r[0], min(h - 2, px_hip_r[1] + thigh_px), 0.35)
-            px_ank_l = (px_hip_l[0], min(h - 2, px_hip_l[1] + thigh_px + calf_px), 0.35)
             px_ank_r = (px_hip_r[0], min(h - 2, px_hip_r[1] + thigh_px + calf_px), 0.35)
-            px_foot_l = (px_hip_l[0], min(h - 2, px_hip_l[1] + thigh_px + calf_px + 10), 0.35)
             px_foot_r = (px_hip_r[0], min(h - 2, px_hip_r[1] + thigh_px + calf_px + 10), 0.35)
 
         pixel_joints = [
@@ -405,11 +491,11 @@ class PlayerSlotState:
             px_sh_l,
             get_pixel(LEFT_ELBOW),
             get_pixel(LEFT_WRIST),
-            get_pixel(LEFT_INDEX),
+            get_palm_pixel(LEFT_INDEX, LEFT_PINKY),
             px_sh_r,
             get_pixel(RIGHT_ELBOW),
             get_pixel(RIGHT_WRIST),
-            get_pixel(RIGHT_INDEX),
+            get_palm_pixel(RIGHT_INDEX, RIGHT_PINKY),
             px_hip_l,
             px_knee_l,
             px_ank_l,

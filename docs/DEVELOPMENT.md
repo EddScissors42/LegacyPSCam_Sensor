@@ -104,9 +104,9 @@ A suíte cobre 19 áreas integradas (`19/19 PASSED`) mais os módulos dedicados 
 | `test_project_structure` | `sensor/`, `ui/`, `assets/` | Integridade da estrutura modular, interface Qt 6 (`LegacySensorQtGUI`, `UIPagesMixin`), `launch_app`, assets e instanciação offscreen Qt6. |
 | `test_config` | `sensor/config_manager.py` | Leitura, escrita, persistência e parsing de presets de resolução/FPS. |
 | `test_shared_memory` | `sensor/kinect_shared_memory.py` | Tamanho exato de 344 bytes (JDP1) e 664 bytes (JDP2), paridade seqlock, máscara JMI1/JMI2, isolamento por `tagname` customizado e pacer de 33ms da `Legacy10.dll`. |
-| `test_hand_anchor` | `sensor/pose_filters.py` | Extrapolação correta do antebraço em coordenadas 3D e 2D. |
-| `test_adaptive_smoother` | `sensor/pose_filters.py` | Alpha baixo para jitter em repouso (< 0.002) vs alpha alto em alta velocidade (> 0.5) e constante de tempo física compensada por `dt` em 30/60/120 FPS. |
-| `test_calibrator` | `sensor/pose_filters.py` | Validação de eixos do Kinect: `ShoulderRight` positivo no X e `ShoulderLeft` negativo no X, nos 3 tiers. |
+| `test_hand_anchor` | `sensor/pose_filters.py` | Extrapolação correta do antebraço em 3D/2D e guarda anatômica contra estiramento excessivo e dobramento invertido do punho. |
+| `test_adaptive_smoother` | `sensor/pose_filters.py` | Suavização desacoplada XY/Z com *deadzone* de micro-jitter, extremidades estáveis em repouso vs resposta instantânea em alta velocidade, proteção contra saltos >35 cm e constante de tempo física compensada por `dt` em 30/60/120 FPS. |
+| `test_calibrator` | `sensor/pose_filters.py` | Validação de eixos do Kinect nos 3 tiers, refinamento progressivo de escala ereta, ausência de *Z-popping* estéreo por membro, `apply_slot_snap` $C^0$-contínuo e `CameraSpaceYTracker` (agachamentos/saltos). |
 | `test_pose_tracker` | `sensor/pose_tracker.py` & `body_mask.py` | Rajada de frames com intervalo < 1ms sem disparar exceção de timestamp, máscara anatômica 320x240 e auto-framing `FaceFollowPTZ`. |
 | `test_overlay` | `sensor/tracking_overlay.py` | Renderização do HUD, silhueta ROI e esqueleto sem falhas numpy. |
 | `test_camera_manager` | `sensor/camera_manager.py`, `camera_win32.py`, `framebus_reader.py` & `camera_capture.py` | Snapshot PnP ultrarrápido (< 3ms via `cfgmgr32.dll`), máquina de estados da PS4 Camera, enumeração OpenCV/SetupAPI, leitor `FrameBusReader`, detecção rápida de quadro preto e auto-crop de stereo Side-by-Side. |

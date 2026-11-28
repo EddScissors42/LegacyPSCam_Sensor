@@ -45,7 +45,8 @@ from sensor.pose_filters import (
     LEFT_FOOT_INDEX, RIGHT_FOOT_INDEX,
     KINECT_CONNECTIONS, EXTREMITY_JOINTS, avg, lerp,
     HandAnchorFilter, AdaptiveSmoother, SkeletonCalibrator,
-    CameraSpaceXTracker, apply_camera_space_translation,
+    CameraSpaceXTracker, CameraSpaceYTracker,
+    apply_camera_space_translation, apply_camera_space_y_translation,
     apply_slot_snap, FaceFollowPTZ,
 )
 from sensor.stereo_matcher import (

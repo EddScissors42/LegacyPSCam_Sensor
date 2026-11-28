@@ -719,6 +719,7 @@ class MultiPlayerAssociator:
         slot_a.smoother, slot_b.smoother = slot_b.smoother, slot_a.smoother
         slot_a.calibrator, slot_b.calibrator = slot_b.calibrator, slot_a.calibrator
         slot_a.camera_x_tracker, slot_b.camera_x_tracker = slot_b.camera_x_tracker, slot_a.camera_x_tracker
+        slot_a.camera_y_tracker, slot_b.camera_y_tracker = slot_b.camera_y_tracker, slot_a.camera_y_tracker
         slot_a.person_lock, slot_b.person_lock = slot_b.person_lock, slot_a.person_lock
         slot_a._seg_prob_ema, slot_b._seg_prob_ema = slot_b._seg_prob_ema, slot_a._seg_prob_ema
         slot_a.last_norm_landmarks, slot_b.last_norm_landmarks = slot_b.last_norm_landmarks, slot_a.last_norm_landmarks

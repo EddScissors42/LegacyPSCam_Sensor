@@ -16,7 +16,8 @@ except Exception:
 from .camera_manager import CameraManager, LatestFrameCamera, FrameBusReader
 from .pose_filters import (
     HandAnchorFilter, AdaptiveSmoother, SkeletonCalibrator,
-    CameraSpaceXTracker, apply_camera_space_translation, apply_slot_snap,
+    CameraSpaceXTracker, CameraSpaceYTracker,
+    apply_camera_space_translation, apply_camera_space_y_translation, apply_slot_snap,
     FaceFollowPTZ, KINECT_CONNECTIONS, avg, lerp
 )
 from .person_lock import (
@@ -169,7 +170,9 @@ __all__ = [
     "AdaptiveSmoother",
     "SkeletonCalibrator",
     "CameraSpaceXTracker",
+    "CameraSpaceYTracker",
     "apply_camera_space_translation",
+    "apply_camera_space_y_translation",
     "apply_slot_snap",
     "FaceFollowPTZ",
     "InertialCoastingFilter",

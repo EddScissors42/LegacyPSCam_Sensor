@@ -342,6 +342,200 @@ class TestTrackingMath(unittest.TestCase):
         # Displacement must be heavily damped (<0.30m instead of 1.05m teleport!)
         self.assertLess(abs(out_glitch[11][0] - 0.25), 0.30)
 
+        # Also catch moderate 0.40m single-frame limb glitches (previously bypassed 0.55m threshold)
+        s.reset()
+        s.apply(base, dt=1.0 / 30.0)
+        glitch_med = list(base)
+        glitch_med[11] = (0.65, 1.20, 2.0, 0.95)
+        out_med = s.apply(glitch_med, dt=1.0 / 30.0)
+        self.assertLess(abs(out_med[11][0] - 0.25), 0.14)
+
+    def test_adaptive_smoother_decoupled_xy_z_and_calm_stationary_extremities(self):
+        s = AdaptiveSmoother(base_alpha=0.75, alpha_fast=0.92, speed_threshold=0.15)
+        base = [(0.0, 1.0, 2.0, 0.95) for _ in range(20)]
+        base[11] = (0.25, 1.20, 2.0, 0.95)
+        s.apply(base, dt=1.0 / 30.0)
+
+        # Stationary micro-jitter on HandRight (+8mm XY, +8mm Z) must stay calm (<=0.56 alpha, not 0.94!)
+        jitter = list(base)
+        jitter[11] = (0.258, 1.200, 2.008, 0.95)
+        out_j = s.apply(jitter, dt=1.0 / 30.0)
+        self.assertLessEqual(out_j[11][0] - 0.25, 0.008 * 0.60)
+        self.assertLessEqual(out_j[11][2] - 2.0, 0.008 * 0.55)
+
+        # Pure Z noise spike (+0.12m Z, +0.005m XY) must NOT inflate XY smoothing alpha
+        s.reset()
+        s.apply(base, dt=1.0 / 30.0)
+        z_spike = list(base)
+        z_spike[11] = (0.255, 1.200, 2.120, 0.95)
+        out_zs = s.apply(z_spike, dt=1.0 / 30.0)
+        self.assertLessEqual(out_zs[11][0] - 0.25, 0.005 * 0.60)
+
+        # Fast real XY swing (+0.20m) still responds instantaneously (> 0.88)
+        s.reset()
+        s.apply(base, dt=1.0 / 30.0)
+        fast_xy = list(base)
+        fast_xy[11] = (0.45, 1.20, 2.0, 0.95)
+        out_fast = s.apply(fast_xy, dt=1.0 / 30.0)
+        self.assertGreater(out_fast[11][0] - 0.25, 0.20 * 0.88)
+
+    def test_skeleton_calibrator_zero_limb_stereo_popping_and_scale_refinement(self):
+        from sensor.pose_filters import SkeletonCalibrator
+
+        calib = SkeletonCalibrator(target_height_m=1.75, cfg={"baseline_z_m": 2.2, "hip_height_m": 1.0})
+        joints = [(0.0, 0.0, 0.0, 0.95) for _ in range(20)]
+        joints[0] = (0.0, 0.0, 0.0, 0.95)     # HipCenter
+        joints[2] = (0.0, -0.48, 0.0, 0.95)   # ShoulderCenter
+        joints[3] = (0.0, -0.75, 0.0, 0.95)   # Head
+        joints[4] = (0.20, -0.48, 0.0, 0.95)  # ShoulderLeft
+        joints[8] = (-0.20, -0.48, 0.0, 0.95) # ShoulderRight
+        joints[10] = (-0.25, -0.25, -0.15, 0.95) # WristRight
+        joints[11] = (-0.27, -0.18, -0.20, 0.95) # HandRight
+        joints[14] = (0.10, 0.85, 0.0, 0.95)  # AnkleLeft
+        joints[18] = (-0.10, 0.85, 0.0, 0.95) # AnkleRight
+        calib.calibrate(joints)
+
+        # Simulate stereo match popping on/off on WristRight(10) and HandRight(11) while torso Z is steady at 2.10m
+        wrist_zs, hand_zs = [], []
+        for tick in range(10):
+            stereo = {0: (0.0, 0.0, 2.10, 0.92), 2: (0.0, 0.48, 2.10, 0.92)}
+            if tick % 2 == 0:
+                stereo[10] = (-0.25, 0.25, 1.45, 0.85)
+                stereo[11] = (-0.27, 0.18, 2.95, 0.85)
+            out = calib.transform(joints, stereo_depths=stereo)
+            wrist_zs.append(out[10][2])
+            hand_zs.append(out[11][2])
+        self.assertLess(max(wrist_zs) - min(wrist_zs), 0.005, "Limb stereo mismatches must not pop Wrist Z")
+        self.assertLess(max(hand_zs) - min(hand_zs), 0.005, "Limb stereo mismatches must not pop Hand Z")
+
+        # Progressive upright scale refinement converges smoothly from skewed initial scale
+        calib.scale = 1.35
+        calib._scale_samples = 0
+        for _ in range(25):
+            calib.refine_full_body_scale(joints)
+        expected_scale = 1.75 / 1.60  # head -0.75 to ankle +0.85 => 1.60m
+        self.assertLess(abs(calib.scale - expected_scale), 0.04)
+
+    def test_hand_anchor_anatomical_stretch_and_backward_fold_guard(self):
+        import math
+        from sensor.pose_filters import HandAnchorFilter
+
+        haf = HandAnchorFilter(hand_length=0.12)
+        joints = [(0.0, 0.0, 0.0, 0.95) for _ in range(20)]
+        joints[9] = (0.20, 0.20, 0.0, 0.95)   # ElbowRight
+        joints[10] = (0.20, 0.00, 0.0, 0.95)  # WristRight (forearm vector = (0, -1, 0))
+
+        # 1) Over-stretched hand (0.35m past wrist) must be clamped <= 0.165m
+        joints[11] = (0.20, -0.35, 0.0, 0.92)
+        out_stretch = haf.apply(joints)
+        d_stretch = math.dist(out_stretch[11][:3], out_stretch[10][:3])
+        self.assertLessEqual(d_stretch, 0.165)
+
+        # 2) Impossibly backward-folded hand (pointing straight back toward elbow along +Y) must pull forward
+        joints[11] = (0.20, 0.12, 0.0, 0.92)
+        out_fold = haf.apply(joints)
+        self.assertLess(out_fold[11][1], out_fold[10][1], "Backward-folded hand must pull toward forearm direction")
+
+    def test_slot_snap_c0_continuous_across_deadzone(self):
+        from sensor.pose_filters import apply_slot_snap
+
+        cfg = {"slot_snap_enabled": True, "slot_snap_gain": 1.30, "slot_snap_deadzone": 0.06}
+        below = [(0.0599, 1.0, 2.0, 0.95)] * 20
+        above = [(0.0601, 1.0, 2.0, 0.95)] * 20
+        out_below = apply_slot_snap(below, cfg=cfg)
+        out_above = apply_slot_snap(above, cfg=cfg)
+        self.assertLess(abs(out_above[0][0] - out_below[0][0]), 0.001, "Slot snap must be continuous across deadzone")
+
+    def test_camera_space_y_tracker_squat_jump_and_desk_stability(self):
+        from sensor.pose_filters import CameraSpaceYTracker, apply_camera_space_y_translation
+
+        tracker_y = CameraSpaceYTracker(cfg={"camera_y_bounce_tracking": True})
+        standing = _make_standing_pose(0.50)
+        # Initialize standing baseline (sh_y=0.34, hip_y=0.58 => torso=0.24)
+        dy_init = tracker_y.update(standing, dt=1.0 / 30.0)
+        self.assertAlmostEqual(dy_init, 0.0, delta=1e-4)
+
+        # Squat down: hips drop from 0.58 to 0.72 (+0.14 norm => ~-0.29m)
+        squat = _make_standing_pose(0.50)
+        squat[11] = _LM(0.58, 0.48)
+        squat[12] = _LM(0.42, 0.48)
+        squat[23] = _LM(0.56, 0.72)
+        squat[24] = _LM(0.44, 0.72)
+        for _ in range(5):
+            dy_squat = tracker_y.update(squat, dt=1.0 / 30.0)
+        self.assertLess(dy_squat, -0.18, f"Squat must drop skeleton Y cleanly, got {dy_squat}")
+
+        # Jump up: hips rise from 0.58 to 0.46 (-0.12 norm => ~+0.25m)
+        jump = _make_standing_pose(0.50)
+        jump[11] = _LM(0.58, 0.22)
+        jump[12] = _LM(0.42, 0.22)
+        jump[23] = _LM(0.56, 0.46)
+        jump[24] = _LM(0.44, 0.46)
+        for _ in range(8):
+            dy_jump = tracker_y.update(jump, dt=1.0 / 30.0)
+        self.assertGreater(dy_jump, 0.12, f"Jump must lift skeleton Y cleanly, got {dy_jump}")
+
+        # Desk mode (hips invisible): offset decays back toward 0 and relative geometry stays intact
+        base_j = [(0.0, 1.0, 2.0, 0.95) for _ in range(20)]
+        base_j[3] = (0.0, 1.75, 2.0, 0.95)
+        shifted = apply_camera_space_y_translation(base_j, jump, tracker_y, dt=1.0 / 30.0)
+        self.assertAlmostEqual(shifted[3][1] - shifted[0][1], 0.75, delta=1e-4)
+
+    def test_player_slot_palm_center_and_per_leg_independent_synthesis(self):
+        import numpy as np
+        from sensor.body_mask import extract_joints_2d, build_body_mask
+        from sensor.player_slot import PlayerSlotState
+
+        slot = PlayerSlotState(slot_index=0, cfg={"person_lock_enabled": False})
+        norm = _make_standing_pose(0.50)
+        # Set INDEX & PINKY symmetrically around palm center on Right hand
+        norm[18] = _LM(0.32, 0.64)  # RIGHT_PINKY
+        norm[20] = _LM(0.36, 0.66)  # RIGHT_INDEX
+        # Occlude ONLY Right ankle (28) while Left leg (25, 27, 31) remains fully visible
+        norm[28] = _LM(0.44, 0.95, visibility=0.05, presence=0.05)
+
+        world = [_LM(0.0, 0.0, 0.0) for _ in range(33)]
+        world[0] = _LM(0.0, -0.75, 0.0)
+        world[7] = _LM(0.08, -0.75, 0.0)
+        world[8] = _LM(-0.08, -0.75, 0.0)
+        world[11] = _LM(0.20, -0.45, 0.0)
+        world[12] = _LM(-0.20, -0.45, 0.0)
+        world[13] = _LM(0.24, -0.20, 0.0)
+        world[14] = _LM(-0.24, -0.20, 0.0)
+        world[15] = _LM(0.26, 0.00, 0.0)
+        world[16] = _LM(-0.26, 0.00, 0.0)
+        world[18] = _LM(-0.30, 0.08, 0.0)  # RIGHT_PINKY
+        world[20] = _LM(-0.22, 0.12, 0.0)  # RIGHT_INDEX (midpoint = (-0.26, 0.10))
+        world[23] = _LM(0.10, 0.0, 0.0)
+        world[24] = _LM(-0.10, 0.0, 0.0)
+        world[25] = _LM(0.18, 0.42, -0.10)  # Left knee raised/forward
+        world[26] = _LM(-0.10, 0.45, 0.0)   # Right knee visible
+        world[27] = _LM(0.22, 0.80, -0.05)  # Left ankle clearly visible
+        world[31] = _LM(0.24, 0.85, -0.15)  # Left foot
+
+        dummy_bgr = np.zeros((480, 640, 3), dtype=np.uint8)
+        pf = slot.process_detection(
+            world_lm=world,
+            norm_lm=norm,
+            seg_mask_obj=None,
+            frame_bgr=dummy_bgr,
+            frame_left=None,
+            stereo_engine=None,
+            stereo_mode="disabled",
+            extract_joints_2d_fn=extract_joints_2d,
+            build_body_mask_fn=build_body_mask,
+            dt_infer=1.0 / 30.0,
+            w=640,
+            h=480,
+        )
+        self.assertIsNotNone(pf)
+        self.assertTrue(pf.tracked)
+        # Left ankle (joint 14) must remain TRACKED (high conf >= 0.9), NOT wiped to synthesized 0.35!
+        self.assertGreater(pf.kinect_joints[14][3], 0.80)
+        # Right knee (joint 17) was visible so it must remain TRACKED, while only occluded right ankle (18) is inferred
+        self.assertGreater(pf.kinect_joints[17][3], 0.80)
+        self.assertAlmostEqual(pf.kinect_joints[18][3], 0.35, delta=0.05)
+
 
 if __name__ == "__main__":
     unittest.main()

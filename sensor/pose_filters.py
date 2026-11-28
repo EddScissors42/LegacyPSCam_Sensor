@@ -85,11 +85,11 @@ def lerp(a, b, t):
 
 class HandAnchorFilter:
     """
-    Extrapolates hand position along the forearm (elbow -> wrist) vector
-    when MediaPipe finger landmark loses confidence or becomes noisy.
+    Extrapolates and anatomically guards hand positions along the forearm (elbow -> wrist) vector
+    when MediaPipe finger landmarks lose confidence, over-stretch, collapse, or fold backward.
     """
     def __init__(self, hand_length=0.12):
-        self.hand_length = hand_length
+        self.hand_length = float(hand_length)
 
     def apply(self, joints):
         # joints is list of 20 elements: (x, y, z, conf)
@@ -98,6 +98,8 @@ class HandAnchorFilter:
             (5, 6, 7),   # Left: ElbowLeft, WristLeft, HandLeft
             (9, 10, 11)  # Right: ElbowRight, WristRight, HandRight
         ]
+        min_len = max(0.04, self.hand_length * 0.40)
+        max_len = max(0.16, self.hand_length * 1.35)
 
         for ei, wi, hi in sides:
             el = out[ei]
@@ -118,17 +120,42 @@ class HandAnchorFilter:
                     wr[0] + ux * self.hand_length,
                     wr[1] + uy * self.hand_length,
                     wr[2] + uz * self.hand_length,
-                    wr[3]
+                    max(hd[3], wr[3]),
                 )
 
-                # If original hand confidence is weak, prefer extrapolated
+                # If original hand confidence is weak, prefer extrapolated forearm anchor
                 hand_conf = hd[3]
                 if hand_conf < 0.45:
                     out[hi] = extrapolated
                 else:
-                    # Blend
+                    # Guard raw hand vector against anatomical stretch/collapse or backward Z-fold
+                    hdx = hd[0] - wr[0]
+                    hdy = hd[1] - wr[1]
+                    hdz = hd[2] - wr[2]
+                    h_dist = math.sqrt(hdx * hdx + hdy * hdy + hdz * hdz)
+
+                    clamped_hd = hd
+                    if h_dist < 1e-4:
+                        clamped_hd = extrapolated
+                    else:
+                        hux, huy, huz = hdx / h_dist, hdy / h_dist, hdz / h_dist
+                        align = ux * hux + uy * huy + uz * huz
+                        if h_dist < min_len or h_dist > max_len:
+                            target_len = max(min_len, min(max_len, h_dist))
+                            clamped_hd = (
+                                wr[0] + hux * target_len,
+                                wr[1] + huy * target_len,
+                                wr[2] + huz * target_len,
+                                max(hand_conf, wr[3] * 0.90),
+                            )
+                        # Pull back anatomically impossible wrist backward folds (> ~98 deg)
+                        if align < -0.15:
+                            pull = min(1.0, (-0.15 - align) / 0.70)
+                            clamped_hd = lerp(clamped_hd, extrapolated, pull)
+
                     blend = min(1.0, max(0.0, (hand_conf - 0.45) / 0.35))
-                    out[hi] = lerp(extrapolated, hd, blend)
+                    blended = lerp(extrapolated, clamped_hd, blend)
+                    out[hi] = (blended[0], blended[1], blended[2], max(blended[3], wr[3] * 0.90))
         return out
 
     def apply_pixel(self, px_joints):
@@ -165,13 +192,17 @@ class HandAnchorFilter:
 
 class AdaptiveSmoother:
     """
-    Dynamic Exponential Moving Average (EMA) filter with delta-time (dt) normalization.
-    Higher smoothing (lower alpha) on stationary poses to eliminate jitter;
-    Lower smoothing (higher alpha) on fast dance gestures for zero latency.
-    Normalized to a 30 Hz reference tick (dt_ref = 1/30s) so 60 FPS cameras
-    and 30 FPS webcams exhibit identical physical velocity response (m/s).
+    Dynamic Exponential Moving Average (EMA) filter with delta-time (dt) normalization
+    and decoupled XY / Z velocity response.
+    - Suppresses stationary micro-jitter (including on extremities like wrists/hands)
+      using a velocity deadzone and tighter resting Z-axis floor.
+    - Snaps instantly (alpha up to 0.96) on rapid dance swings & punches for zero lag.
+    - Guards extremities against physically impossible 1-frame limb-swap teleports.
+    - Normalized to a 30 Hz reference tick (dt_ref = 1/30s) so 30/60/120 FPS cameras
+      exhibit identical physical smoothing time constants.
     """
     REF_DT = 1.0 / 30.0
+    VEL_DEADZONE = 0.010  # 1.0 cm per 30Hz tick (~0.30 m/s): absorbs micro-jitter cleanly
 
     def __init__(self, base_alpha=0.55, alpha_fast=0.92, speed_threshold=0.15):
         self.base_alpha = float(base_alpha)
@@ -225,9 +256,14 @@ class AdaptiveSmoother:
 
         # Velocity scaling factor relative to 30 FPS reference (at 60 FPS, dt_scale ~ 2.0)
         dt_scale = self.REF_DT / dt_sec
+        eff_thresh = max(1e-4, self.speed_threshold - self.VEL_DEADZONE)
+        # Tighter resting floor on monocular Z (higher variance than XY) while keeping fast punches instant
+        base_alpha_z = min(self.base_alpha * 0.72, 0.52)
+        # dt-scaled physical teleport guard (~10.5 m/s at 30 FPS = 0.35m/frame)
+        glitch_disp = max(0.32, 0.35 * (dt_sec / self.REF_DT))
 
         # Measure torso (HipCenter) displacement to distinguish genuine whole-body motion
-        # from physically impossible 1-frame MediaPipe limb-swap teleport spikes (>0.55m in 1 frame).
+        # from physically impossible 1-frame MediaPipe limb-swap teleport spikes.
         hip_disp = 0.0
         if len(joints) > 0 and len(self.prev_joints) > 0:
             h0, h1 = self.prev_joints[0], joints[0]
@@ -235,30 +271,41 @@ class AdaptiveSmoother:
 
         smoothed = []
         for i, (curr, prev) in enumerate(zip(joints, self.prev_joints)):
-            # Calculate 3D displacement normalized to reference frame rate (physical velocity)
             dx = curr[0] - prev[0]
             dy = curr[1] - prev[1]
             dz = curr[2] - prev[2]
+            disp_xy = math.hypot(dx, dy)
+            disp_z = abs(dz)
             disp = math.sqrt(dx * dx + dy * dy + dz * dz)
-            norm_speed = disp * dt_scale
 
-            # Ratio of physical speed over threshold
-            ratio = min(1.0, max(0.0, norm_speed / self.speed_threshold))
-            alpha_ref = self.base_alpha + ratio * (self.alpha_fast - self.base_alpha)
+            norm_speed_xy = disp_xy * dt_scale
+            norm_speed_z = disp_z * dt_scale
 
-            # Boost extremities for snappy hand & foot movements
+            # Deadzone-gated speed ratios prevent micro-jitter from inflating alpha
+            ratio_xy = min(1.0, max(0.0, (norm_speed_xy - self.VEL_DEADZONE) / eff_thresh))
+            ratio_z = min(1.0, max(0.0, (norm_speed_z - self.VEL_DEADZONE * 1.4) / eff_thresh))
+
+            alpha_ref_xy = self.base_alpha + ratio_xy * (self.alpha_fast - self.base_alpha)
+            alpha_ref_z = base_alpha_z + ratio_z * (self.alpha_fast - base_alpha_z)
+
             if i in EXTREMITY_JOINTS:
-                # Guard against 1-frame MediaPipe L/R hand/foot swap glitches (>0.55m while hip is steady)
-                if disp > 0.55 and hip_disp < 0.15:
-                    alpha_ref = min(alpha_ref, 0.22)
+                # Guard against 1-frame MediaPipe L/R hand/foot swap glitches while hip is steady
+                if disp > glitch_disp and hip_disp < 0.12:
+                    alpha_ref_xy = min(alpha_ref_xy, 0.22)
+                    alpha_ref_z = min(alpha_ref_z, 0.18)
                 else:
-                    alpha_ref = min(0.96, alpha_ref * 1.25)
+                    # Keep hands/feet calm on stationary holds (no resting 1.25x jitter boost),
+                    # while ramping up to 0.96 responsiveness as soon as a dance swing starts.
+                    rest_cap = min(self.base_alpha, 0.56)
+                    alpha_ref_xy = rest_cap + ratio_xy * (min(0.96, self.alpha_fast + 0.04) - rest_cap)
+                    alpha_ref_z = base_alpha_z + ratio_z * (min(0.94, self.alpha_fast + 0.02) - base_alpha_z)
 
-            eff_alpha = self._dt_adjusted_alpha(alpha_ref, dt_sec)
+            eff_alpha_xy = self._dt_adjusted_alpha(alpha_ref_xy, dt_sec)
+            eff_alpha_z = self._dt_adjusted_alpha(alpha_ref_z, dt_sec)
 
-            new_x = prev[0] + eff_alpha * (curr[0] - prev[0])
-            new_y = prev[1] + eff_alpha * (curr[1] - prev[1])
-            new_z = prev[2] + eff_alpha * (curr[2] - prev[2])
+            new_x = prev[0] + eff_alpha_xy * dx
+            new_y = prev[1] + eff_alpha_xy * dy
+            new_z = prev[2] + eff_alpha_z * dz
             new_conf = curr[3]
             smoothed.append((new_x, new_y, new_z, new_conf))
 
@@ -341,6 +388,7 @@ class SkeletonCalibrator:
         self.origin = [0.0, 0.0, 0.0]
         self.stereo_baseline_z = None   # Smoothed metric baseline Z from stereo triangulation
         self._head_z_ema = None         # Stabilized monocular Head Z (prevents Just Dance face box zoom breathing)
+        self._scale_samples = 0         # Progressive upright full-body scale refinement count
 
     def reset(self):
         self.is_calibrated = False
@@ -349,6 +397,42 @@ class SkeletonCalibrator:
         self.origin = [0.0, 0.0, 0.0]
         self.stereo_baseline_z = None
         self._head_z_ema = None
+        self._scale_samples = 0
+
+    def refine_full_body_scale(self, joints) -> bool:
+        """
+        Gently refines full-body height scale over the first ~30 clean upright standing frames
+        so an initial leaned/mid-step entry frame never permanently biases skeleton proportions.
+        """
+        if not self.is_calibrated or self.calibration_tier != "full_body" or self._scale_samples >= 30:
+            return False
+        head = joints[3]
+        hip = joints[0]
+        sh_l = joints[4]
+        sh_r = joints[8]
+        ank_l = joints[14]
+        ank_r = joints[18]
+        if min(head[3], hip[3], sh_l[3], sh_r[3], ank_l[3], ank_r[3]) < 0.50:
+            return False
+        # Require reasonably upright posture (shoulders level and head clearly above hips)
+        if abs(sh_l[1] - sh_r[1]) > 0.12 or (hip[1] - head[1]) < 0.45:
+            return False
+        ank_mid = (
+            (ank_l[0] + ank_r[0]) * 0.5,
+            (ank_l[1] + ank_r[1]) * 0.5,
+            (ank_l[2] + ank_r[2]) * 0.5,
+        )
+        raw_height = math.sqrt(
+            (head[0] - ank_mid[0]) ** 2 +
+            (head[1] - ank_mid[1]) ** 2 +
+            (head[2] - ank_mid[2]) ** 2
+        )
+        if 1.25 <= raw_height <= 2.35:
+            target_scale = float(np.clip(self.target_height_m / raw_height, 0.82, 1.42))
+            self.scale = 0.90 * self.scale + 0.10 * target_scale
+            self._scale_samples += 1
+            return True
+        return False
 
     def calibrate(self, joints, legs_visible=True, hips_visible=True):
         # joints: list of 20 (x, y, z, conf)
@@ -486,18 +570,11 @@ class SkeletonCalibrator:
             x, y, z, conf = j
             # Invert X: MediaPipe world X (positive to person's left) -> Kinect camera X (positive to sensor right)
             # Invert Y: MediaPipe Y down -> Kinect Y up + human hip height baseline
+            # Relative limb Z stays 100% coherent with MediaPipe's connected 3D skeleton anchored to
+            # the robust torso stereo `baseline_z` (eliminates per-joint stereo patch popping on moving limbs).
             k_x = -(x - origin_x) * scale
             k_y = -(y - origin_y) * scale + hip_h
             k_z = baseline_z + (z - origin_z) * scale * depth_gain
-
-            # Optional limb-level metric grounding (skip HipCenter=0 & Head=3 so torso Position.z
-            # stays cleanly inside Kinect v1's lobby play-zone and Head.z stays zoom-stable)
-            if idx not in (0, 3) and stereo_depths and idx in stereo_depths:
-                s_x, s_y, s_z, s_conf = stereo_depths[idx]
-                if s_conf >= 0.60 and 0.8 <= s_z <= 4.5:
-                    s_z_clamped = float(np.clip(s_z, max(1.45, baseline_z - 0.45), baseline_z + 0.45))
-                    blend_w = min(0.30, s_conf * 0.35)
-                    k_z = (1.0 - blend_w) * k_z + blend_w * s_z_clamped
 
             # ALWAYS stabilize Head(3) Z depth (both monocular AND Stereo Vision):
             # Just Dance PC sizes its built-in face-framing avatar box inversely to Head.z.
@@ -524,6 +601,8 @@ class CameraSpaceXTracker:
     and computes the lateral offset (dx in meters) to translate the 3D skeleton.
     This enables dynamic dancer slot selection (Slots 1, 2, 3, 4) in Just Dance PC.
     """
+    REF_DT = 1.0 / 30.0
+
     def __init__(self, cfg=None):
         self.cfg = cfg or {}
         self.offset = 0.0
@@ -533,7 +612,7 @@ class CameraSpaceXTracker:
         self.offset = 0.0
         self.valid = False
 
-    def update(self, norm):
+    def update(self, norm, dt=None):
         if not self.cfg.get('camera_x_slot_tracking', True):
             return 0.0
         try:
@@ -575,27 +654,35 @@ class CameraSpaceXTracker:
                 target = float(np.clip(target, -max_m, max_m))
 
             alpha = float(np.clip(float(self.cfg.get('camera_x_smoothing', 0.42)), 0.05, 1.0))
+            if dt is not None and dt > 0.0005:
+                dt_sec = min(0.10, max(0.004, float(dt)))
+                eff_alpha = AdaptiveSmoother._dt_adjusted_alpha(alpha, dt_sec)
+                max_step = max(0.05, 0.12 * (dt_sec / self.REF_DT))
+            else:
+                eff_alpha = alpha
+                max_step = 0.12
+
             if not self.valid:
                 self.offset = target
                 self.valid = True
             else:
-                # Clamp single-frame lateral offset jump (prevents ±0.40m whole-body ping-pong on hip/shoulder flicker)
-                delta = float(np.clip(target - self.offset, -0.18, 0.18))
-                self.offset = self.offset + delta * alpha
+                # Clamp single-frame lateral offset jump (prevents whole-body ping-pong on hip/shoulder flicker)
+                delta = float(np.clip(target - self.offset, -max_step, max_step))
+                self.offset = self.offset + delta * eff_alpha
 
             return self.offset
         except Exception:
             return self.offset if self.valid else 0.0
 
 
-def apply_camera_space_translation(joints, norm, tracker, cfg=None):
+def apply_camera_space_translation(joints, norm, tracker, cfg=None, dt=None):
     """
     Translates all 20 joints in Kinect space by the lateral camera-space offset dx.
     Preserves relative internal skeleton geometry while shifting the player horizontally.
     """
     if not joints or tracker is None:
         return joints
-    dx = tracker.update(norm)
+    dx = tracker.update(norm, dt=dt)
     if abs(dx) < 1e-5:
         return joints
     arr = np.array(joints, dtype=np.float32)
@@ -603,9 +690,115 @@ def apply_camera_space_translation(joints, norm, tracker, cfg=None):
     return [tuple(map(float, row)) for row in arr]
 
 
+class CameraSpaceYTracker:
+    """
+    Tracks vertical whole-body dance motion (squats, crouches, knee bounces, and jumps)
+    from 2D camera normalized hip coordinates scaled by live torso span.
+    MediaPipe world landmarks are hip-centered (hip_y == 0), so without this tracker
+    squats and jumps produce zero vertical torso/hip velocity in Kinect space.
+    Maintains a slowly adapting standing baseline so desk/seated framing stays at dy = 0.
+    """
+    REF_DT = 1.0 / 30.0
+    NOMINAL_TORSO_M = 0.50
+
+    def __init__(self, cfg=None):
+        self.cfg = cfg or {}
+        self.base_hip_y = None
+        self.base_torso_h = None
+        self.offset = 0.0
+        self.valid = False
+
+    def reset(self):
+        self.base_hip_y = None
+        self.base_torso_h = None
+        self.offset = 0.0
+        self.valid = False
+
+    def update(self, norm, dt=None):
+        if not self.cfg.get('camera_y_bounce_tracking', True):
+            return 0.0
+        try:
+            if not norm or len(norm) <= RIGHT_HIP:
+                return self.offset if self.valid else 0.0
+
+            sh_l, sh_r = norm[LEFT_SHOULDER], norm[RIGHT_SHOULDER]
+            hip_l, hip_r = norm[LEFT_HIP], norm[RIGHT_HIP]
+            sh_vis = min(float(getattr(sh_l, 'visibility', 1.0)), float(getattr(sh_r, 'visibility', 1.0)))
+            hip_vis = min(float(getattr(hip_l, 'visibility', 1.0)), float(getattr(hip_r, 'visibility', 1.0)))
+            if sh_vis < 0.30 or hip_vis < 0.30:
+                # Decay gently back to 0 when hips leave frame (e.g., desk framing)
+                self.offset *= 0.85
+                return self.offset
+
+            sh_y = 0.5 * (float(sh_l.y) + float(sh_r.y))
+            hip_y = 0.5 * (float(hip_l.y) + float(hip_r.y))
+            torso_h = hip_y - sh_y
+            if torso_h < 0.07:
+                return self.offset if self.valid else 0.0
+
+            if dt is not None and dt > 0.0005:
+                dt_sec = min(0.10, max(0.004, float(dt)))
+            else:
+                dt_sec = self.REF_DT
+
+            if not self.valid or self.base_hip_y is None or self.base_torso_h is None:
+                self.base_hip_y = hip_y
+                self.base_torso_h = torso_h
+                self.offset = 0.0
+                self.valid = True
+                return 0.0
+
+            # Positive dy_m = jump UP (hip_y < base_hip_y); negative dy_m = squat/crouch DOWN
+            meters_per_norm = self.NOMINAL_TORSO_M / max(0.08, self.base_torso_h)
+            raw_dy = (self.base_hip_y - hip_y) * meters_per_norm
+
+            # Slowly adapt standing baseline only when near neutral upright stance
+            # (allows walking closer/farther without drifting out of a held crouch/squat)
+            if abs(raw_dy) < 0.11:
+                base_alpha = AdaptiveSmoother._dt_adjusted_alpha(0.015, dt_sec)
+                self.base_hip_y = (1.0 - base_alpha) * self.base_hip_y + base_alpha * hip_y
+                self.base_torso_h = (1.0 - base_alpha) * self.base_torso_h + base_alpha * torso_h
+
+            deadzone = float(self.cfg.get('camera_y_deadzone_m', 0.025))
+            if abs(raw_dy) <= deadzone:
+                target = 0.0
+            else:
+                sign = 1.0 if raw_dy > 0.0 else -1.0
+                target = sign * (abs(raw_dy) - deadzone)
+
+            min_dy = float(self.cfg.get('camera_y_min_m', -0.42))
+            max_dy = float(self.cfg.get('camera_y_max_m', 0.30))
+            target = float(np.clip(target, min_dy, max_dy))
+
+            alpha_y = float(np.clip(float(self.cfg.get('camera_y_smoothing', 0.55)), 0.05, 1.0))
+            eff_alpha = AdaptiveSmoother._dt_adjusted_alpha(alpha_y, dt_sec)
+            max_step = max(0.05, 0.14 * (dt_sec / self.REF_DT))
+            delta = float(np.clip(target - self.offset, -max_step, max_step))
+            self.offset = self.offset + delta * eff_alpha
+            return self.offset
+        except Exception:
+            return self.offset if self.valid else 0.0
+
+
+def apply_camera_space_y_translation(joints, norm, tracker, cfg=None, dt=None):
+    """
+    Translates all 20 joints vertically in Kinect space by the live squat/bounce/jump offset dy.
+    Preserves internal skeleton geometry while giving Just Dance true vertical body velocity.
+    """
+    if not joints or tracker is None:
+        return joints
+    dy = tracker.update(norm, dt=dt)
+    if abs(dy) < 1e-5:
+        return joints
+    arr = np.array(joints, dtype=np.float32)
+    arr[:, 1] += dy
+    return [tuple(map(float, row)) for row in arr]
+
+
 def apply_slot_snap(joints, cfg=None):
     """
-    Make HipCenter X more decisive for Legacy's coach-slot assignment.
+    Make HipCenter X more decisive for Legacy's coach-slot assignment using a C0-continuous
+    piecewise linear curve (zero discontinuity across the deadzone boundary).
 
     Keeps full-body relative pose intact and shifts the whole skeleton together,
     so scoring geometry remains unchanged while player selection becomes less
@@ -622,7 +815,8 @@ def apply_slot_snap(joints, cfg=None):
     if abs(hip_x) <= dead:
         target_x = hip_x
     else:
-        target_x = hip_x * gain
+        sign = 1.0 if hip_x >= 0.0 else -1.0
+        target_x = sign * (dead + (abs(hip_x) - dead) * gain)
     dx = target_x - hip_x
     arr[:, 0] += dx
     return [tuple(map(float, row)) for row in arr]
