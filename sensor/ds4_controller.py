@@ -753,6 +753,107 @@ class DS4Controller:
 
         return scale_lsb, scale_locked, prev_mag
 
+    @staticmethod
+    def resolve_imu_sample(
+        data: bytes,
+        default_offset: int,
+        detected_imu_offset: Optional[int],
+        detected_accel_is_block_a: bool,
+        imu_offset_locked: bool,
+        consecutive_zero_accel: int,
+        is_official_sony: bool = False,
+    ) -> Tuple[int, int, int, int, int, int, float, Optional[int], bool, bool, int, bool]:
+        """
+        Extracts (gyro_x, gyro_y, gyro_z, acc_x, acc_y, acc_z, raw_mag) from a HID report
+        and locks the IMU byte offset once valid gravity readings are observed.
+
+        CRITICAL: Once `imu_offset_locked` is True (e.g. after 10 valid gravity samples),
+        transient 0G free-fall packets during fast dance swings (raw_mag < 200) MUST NEVER
+        re-trigger the clone candidate offset scanner — doing so on Report 0x11 shifts the
+        offset from byte 15 to byte 13 and misreads the 16-bit hardware timestamp as accel_x!
+        """
+        gyro_x = gyro_y = gyro_z = 0
+        acc_x = acc_y = acc_z = 0
+        active_offset = detected_imu_offset if detected_imu_offset is not None else default_offset
+
+        if active_offset >= 0 and len(data) >= active_offset + 12:
+            s1, s2, s3, s4, s5, s6 = struct.unpack_from("<hhhhhh", data, active_offset)
+            if detected_accel_is_block_a:
+                acc_x, acc_y, acc_z = s1, s2, s3
+                gyro_x, gyro_y, gyro_z = s4, s5, s6
+            else:
+                gyro_x, gyro_y, gyro_z = s1, s2, s3
+                acc_x, acc_y, acc_z = s4, s5, s6
+
+        raw_mag = math.sqrt(float(acc_x * acc_x + acc_y * acc_y + acc_z * acc_z))
+        from_candidate_scan = False
+
+        if raw_mag >= 200.0:
+            consecutive_zero_accel = 0
+            if detected_imu_offset is None and default_offset >= 0:
+                detected_imu_offset = default_offset
+            if raw_mag >= 1500.0 and detected_imu_offset is not None:
+                imu_offset_locked = True
+            return (
+                gyro_x, gyro_y, gyro_z, acc_x, acc_y, acc_z, raw_mag,
+                detected_imu_offset, detected_accel_is_block_a, imu_offset_locked,
+                consecutive_zero_accel, from_candidate_scan,
+            )
+
+        # raw_mag < 200.0: either a normal 0G free-fall moment mid-dance, or an uninitialized clone offset
+        consecutive_zero_accel += 1
+
+        # Once locked (or on official Sony hardware with valid default offset, or before 5 consecutive zeroes),
+        # treat low magnitude as genuine 0G free-fall and NEVER corrupt the locked byte offset.
+        if imu_offset_locked or consecutive_zero_accel < 5:
+            return (
+                gyro_x, gyro_y, gyro_z, acc_x, acc_y, acc_z, raw_mag,
+                detected_imu_offset, detected_accel_is_block_a, imu_offset_locked,
+                consecutive_zero_accel, from_candidate_scan,
+            )
+
+        # Clone fallback offset scan (only when unlocked and persistently zero)
+        candidate_offsets = []
+        if default_offset >= 0:
+            candidate_offsets.append(default_offset)
+        for off in (15, 13, 12, 14, 16, 17, 19, 21, 23):
+            if off not in candidate_offsets:
+                candidate_offsets.append(off)
+
+        for c_off in candidate_offsets:
+            if len(data) >= c_off + 12:
+                cs1, cs2, cs3, cs4, cs5, cs6 = struct.unpack_from("<hhhhhh", data, c_off)
+                mag_a = math.sqrt(float(cs1 * cs1 + cs2 * cs2 + cs3 * cs3))
+                mag_b = math.sqrt(float(cs4 * cs4 + cs5 * cs5 + cs6 * cs6))
+                # Check Block B first (standard Sony DS4 layout: gyro then accel)
+                if 1500.0 <= mag_b <= 35000.0 and mag_b >= mag_a * 0.7:
+                    detected_imu_offset = c_off
+                    detected_accel_is_block_a = False
+                    imu_offset_locked = True
+                    gyro_x, gyro_y, gyro_z = cs1, cs2, cs3
+                    acc_x, acc_y, acc_z = cs4, cs5, cs6
+                    raw_mag = mag_b
+                    consecutive_zero_accel = 0
+                    from_candidate_scan = True
+                    break
+                # Check Block A (Clone InvenSense / ShanWan layout — never on official Sony VID 054C)
+                if not is_official_sony and 1500.0 <= mag_a <= 35000.0:
+                    detected_imu_offset = c_off
+                    detected_accel_is_block_a = True
+                    imu_offset_locked = True
+                    acc_x, acc_y, acc_z = cs1, cs2, cs3
+                    gyro_x, gyro_y, gyro_z = cs4, cs5, cs6
+                    raw_mag = mag_a
+                    consecutive_zero_accel = 0
+                    from_candidate_scan = True
+                    break
+
+        return (
+            gyro_x, gyro_y, gyro_z, acc_x, acc_y, acc_z, raw_mag,
+            detected_imu_offset, detected_accel_is_block_a, imu_offset_locked,
+            consecutive_zero_accel, from_candidate_scan,
+        )
+
     def disconnect(self) -> None:
         """Safely shuts down HID polling, marks PS Move inactive, turns off lightbar, joins worker thread, and closes handle."""
         self._psmove_streaming = False
@@ -989,6 +1090,8 @@ class DS4Controller:
         # Rest-locked IMU offset & LSB scale detector for Sony DS4 & clones
         detected_imu_offset: Optional[int] = None
         detected_accel_is_block_a: bool = False
+        imu_offset_locked: bool = False
+        is_official_sony: bool = ("054c" in (self._device_path or "").lower())
         detected_scale_lsb: float = 8192.0
         scale_locked: bool = False
         rest_mag_samples: List[float] = []
@@ -1082,77 +1185,27 @@ class DS4Controller:
             btn_ps = bool(btn_byte2 & 0x01)
             btn_touch = bool(btn_byte2 & 0x02)
 
-            gyro_x = gyro_y = gyro_z = 0
-            acc_x = acc_y = acc_z = 0
-            active_offset = detected_imu_offset if detected_imu_offset is not None else default_offset
-
-            if active_offset >= 0 and len(data) >= active_offset + 12:
-                s1, s2, s3, s4, s5, s6 = struct.unpack_from("<hhhhhh", data, active_offset)
-                if detected_accel_is_block_a:
-                    acc_x, acc_y, acc_z = s1, s2, s3
-                    gyro_x, gyro_y, gyro_z = s4, s5, s6
-                else:
-                    gyro_x, gyro_y, gyro_z = s1, s2, s3
-                    acc_x, acc_y, acc_z = s4, s5, s6
-
-            # Smart offset & LSB scale detector for clones
-            raw_mag = math.sqrt(float(acc_x * acc_x + acc_y * acc_y + acc_z * acc_z))
-            if raw_mag < 200.0:
-                # Active offset gave near-zero readings; search candidate offsets
-                candidate_offsets = [13, 15, 12, 14, 16, 17, 19, 21, 23]
-                found_candidate = False
-                for c_off in candidate_offsets:
-                    if len(data) >= c_off + 12:
-                        cs1, cs2, cs3, cs4, cs5, cs6 = struct.unpack_from("<hhhhhh", data, c_off)
-                        mag_a = math.sqrt(float(cs1 * cs1 + cs2 * cs2 + cs3 * cs3))
-                        mag_b = math.sqrt(float(cs4 * cs4 + cs5 * cs5 + cs6 * cs6))
-                        # Check Block B first (standard Sony DS4 layout)
-                        if 1500.0 <= mag_b <= 35000.0 and mag_b >= mag_a * 0.7:
-                            detected_imu_offset = c_off
-                            detected_accel_is_block_a = False
-                            active_offset = c_off
-                            gyro_x, gyro_y, gyro_z = cs1, cs2, cs3
-                            acc_x, acc_y, acc_z = cs4, cs5, cs6
-                            raw_mag = mag_b
-                            found_candidate = True
-                            target_mag = mag_b
-                        # Check Block A (Clone InvenSense / ShanWan register layout)
-                        elif 1500.0 <= mag_a <= 35000.0:
-                            detected_imu_offset = c_off
-                            detected_accel_is_block_a = True
-                            active_offset = c_off
-                            acc_x, acc_y, acc_z = cs1, cs2, cs3
-                            gyro_x, gyro_y, gyro_z = cs4, cs5, cs6
-                            raw_mag = mag_a
-                            found_candidate = True
-                            target_mag = mag_a
-
-                        if found_candidate:
-                            detected_scale_lsb, scale_locked, prev_raw_mag = self.update_imu_scale_calibration(
-                                target_mag,
-                                detected_scale_lsb,
-                                scale_locked,
-                                rest_mag_samples,
-                                prev_raw_mag,
-                                from_candidate_scan=True,
-                            )
-                            break
-
-                if not found_candidate:
-                    consecutive_zero_accel += 1
-                else:
-                    consecutive_zero_accel = 0
-            else:
-                consecutive_zero_accel = 0
-                if detected_imu_offset is None and default_offset >= 0:
-                    detected_imu_offset = default_offset
+            (
+                gyro_x, gyro_y, gyro_z, acc_x, acc_y, acc_z, raw_mag,
+                detected_imu_offset, detected_accel_is_block_a, imu_offset_locked,
+                consecutive_zero_accel, from_candidate_scan,
+            ) = self.resolve_imu_sample(
+                data=data,
+                default_offset=default_offset,
+                detected_imu_offset=detected_imu_offset,
+                detected_accel_is_block_a=detected_accel_is_block_a,
+                imu_offset_locked=imu_offset_locked,
+                consecutive_zero_accel=consecutive_zero_accel,
+                is_official_sony=is_official_sony,
+            )
+            if raw_mag >= 200.0:
                 detected_scale_lsb, scale_locked, prev_raw_mag = self.update_imu_scale_calibration(
                     raw_mag,
                     detected_scale_lsb,
                     scale_locked,
                     rest_mag_samples,
                     prev_raw_mag,
-                    from_candidate_scan=False,
+                    from_candidate_scan=from_candidate_scan,
                 )
 
             # If controller is streaming zeroes (sleeping IMU on BT clone),

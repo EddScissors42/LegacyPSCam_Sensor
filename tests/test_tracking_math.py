@@ -546,6 +546,46 @@ class TestTrackingMath(unittest.TestCase):
         self.assertIn("actualFps", html)
         self.assertIn("applyStandbyFpsThrottle(false).then", html)
 
+    def test_ds4_imu_offset_stays_locked_during_0g_freefall_on_report_0x11(self):
+        import struct
+        from sensor.ds4_controller import DS4Controller
+
+        # Build a realistic Sony DS4 Bluetooth Report 0x11 (78 bytes):
+        # bytes 13..14 = 16-bit hardware timestamp (~7200), bytes 15..20 = gyro, bytes 21..26 = accel
+        rep_rest = bytearray(78)
+        rep_rest[0] = 0x11
+        struct.pack_into("<H", rep_rest, 13, 7200)            # timestamp
+        struct.pack_into("<hhh", rep_rest, 15, 5, -3, 2)      # gyro
+        struct.pack_into("<hhh", rep_rest, 21, -80, 7800, 1700)  # accel (~1G)
+
+        # Frame 1: locks offset=15, block_a=False
+        _, _, _, ax1, ay1, az1, _, off, blk_a, locked, zc, _ = DS4Controller.resolve_imu_sample(
+            bytes(rep_rest), default_offset=15, detected_imu_offset=None,
+            detected_accel_is_block_a=False, imu_offset_locked=False,
+            consecutive_zero_accel=0, is_official_sony=True,
+        )
+        self.assertEqual(off, 15)
+        self.assertFalse(blk_a)
+        self.assertTrue(locked)
+        self.assertEqual((ax1, ay1, az1), (-80, 7800, 1700))
+
+        # Frame 2..12: sustained 0G free-fall during a fast downward dance swing while timestamp ticks
+        for tick in range(10):
+            rep_ff = bytearray(78)
+            rep_ff[0] = 0x11
+            struct.pack_into("<H", rep_ff, 13, 7200 + tick * 20)
+            struct.pack_into("<hhh", rep_ff, 15, 12, -8, 4)
+            struct.pack_into("<hhh", rep_ff, 21, 10, -20, 15)  # raw_mag ~ 27 < 200
+            _, _, _, ax_f, ay_f, az_f, _, off, blk_a, locked, zc, _ = DS4Controller.resolve_imu_sample(
+                bytes(rep_ff), default_offset=15, detected_imu_offset=off,
+                detected_accel_is_block_a=blk_a, imu_offset_locked=locked,
+                consecutive_zero_accel=zc, is_official_sony=True,
+            )
+            self.assertEqual(off, 15, "0G free-fall must NEVER shift Report 0x11 offset from 15 to 13")
+            self.assertFalse(blk_a, "0G free-fall must NEVER flip Sony DS4 accel to Block A")
+            self.assertTrue(locked)
+            self.assertEqual((ax_f, ay_f, az_f), (10, -20, 15))
+
 
 if __name__ == "__main__":
     unittest.main()
