@@ -3,14 +3,54 @@ Declarative Qt 6 Page 3 Builder: DualShock 4 Controller Settings.
 Constructs the caution banner, Permissive Discovery toggle, disconnected balloon,
 and connected controller hardware + PlayStation Move (ZCM2) Emulator block (ds4_info_frame).
 """
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QRectF
+from PySide6.QtGui import QPixmap, QPainter, QPainterPath, QPen, QColor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QComboBox, QCheckBox, QFrame
 )
 
+from assets import ICON_DS4_GRIP_GUIDE_PATH
 from ui.theme import PALETTE
 from ui.widgets import SettingBlock
+
+
+def _load_rounded_grip_pixmap(width: int = 196, height: int = 128, radius: float = 8.0) -> QPixmap:
+    """Loads the HiDPI DualShock 4 grip guide illustration clipped to smooth rounded corners."""
+    dpr = 2
+    pw, ph = width * dpr, height * dpr
+    canvas = QPixmap(pw, ph)
+    canvas.fill(Qt.GlobalColor.transparent)
+
+    if ICON_DS4_GRIP_GUIDE_PATH and ICON_DS4_GRIP_GUIDE_PATH.exists():
+        src = QPixmap(str(ICON_DS4_GRIP_GUIDE_PATH))
+        if not src.isNull():
+            scaled = src.scaled(
+                pw,
+                ph,
+                Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            sx = max(0, (scaled.width() - pw) // 2)
+            sy = max(0, (scaled.height() - ph) // 2)
+            cropped = scaled.copy(sx, sy, pw, ph)
+
+            painter = QPainter(canvas)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+
+            path = QPainterPath()
+            path.addRoundedRect(QRectF(0.5, 0.5, pw - 1.0, ph - 1.0), radius * dpr, radius * dpr)
+            painter.setClipPath(path)
+            painter.drawPixmap(0, 0, cropped)
+
+            painter.setClipping(False)
+            painter.setPen(QPen(QColor("#CBD5E1"), 1.0 * dpr))
+            painter.drawPath(path)
+            painter.end()
+
+    canvas.setDevicePixelRatio(float(dpr))
+    return canvas
 
 
 class UIDS4PageMixin:
@@ -89,7 +129,7 @@ class UIDS4PageMixin:
         perm_layout.setContentsMargins(14, 10, 14, 10)
         perm_layout.setSpacing(10)
 
-        self.chk_ds4_permissive = QCheckBox("Permissive Discovery Mode (Third-Party & Clone PS4 Controllers)", perm_box)
+        self.chk_ds4_permissive = QCheckBox("Permissive Discovery Mode (Third-Party && Clone PS4 Controllers)", perm_box)
         self.chk_ds4_permissive.setStyleSheet(f"""
             QCheckBox {{
                 font-family: '{self.font_body}';
@@ -327,18 +367,6 @@ class UIDS4PageMixin:
         self.lbl_ds4_accel.setVisible(False)
         ds4_info_layout.addWidget(self.lbl_ds4_accel)
 
-        # Grip instruction details
-        lbl_instructions = QLabel(
-            "• Hold the DualShock 4 vertically (thumbs-up grip) with your fingers near the touchpad and thumb below the right stick.\n"
-            "• Click START CONTROLLER (DS4) and Just Dance will automatically detect a PlayStation Move (ZCM2) within ~2 seconds.",
-            self.ds4_info_frame,
-        )
-        lbl_instructions.setWordWrap(True)
-        lbl_instructions.setStyleSheet(
-            f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
-        )
-        ds4_info_layout.addWidget(lbl_instructions)
-
         # =====================================================================
         # PlayStation Move (ZCM2) Native Emulator Block
         # Lives inside ds4_info_frame so it ONLY appears when a DS4 is connected.
@@ -407,7 +435,7 @@ class UIDS4PageMixin:
 
         # Light Bar & Rumble Sync checkbox
         self.chk_ds4_sync_lightbar = QCheckBox(
-            "Sync DualShock 4 Light Bar & Rumble with Just Dance Player Color",
+            "Sync DualShock 4 Light Bar && Rumble with Just Dance Player Color",
             self.psmove_bridge_box,
         )
         self.chk_ds4_sync_lightbar.setChecked(bool(self.cfg.get("ds4_sync_lightbar", True)))
@@ -447,6 +475,75 @@ class UIDS4PageMixin:
         ds4_info_layout.addWidget(self.psmove_bridge_box)
 
         ds4_layout.addWidget(self.ds4_info_frame)
+
+        # =====================================================================
+        # How to Hold Your DualShock 4 — Visual Grip Guide Card (Always visible)
+        # =====================================================================
+        self.ds4_grip_guide_box = QFrame(ds4_card)
+        self.ds4_grip_guide_box.setObjectName("settingBlockDs4GripGuide")
+        self.ds4_grip_guide_box.setStyleSheet(f"""
+            QFrame#settingBlockDs4GripGuide {{
+                background-color: #FFFFFF;
+                border: 1px solid {PALETTE["border_subtle"]};
+                border-radius: 10px;
+            }}
+            QFrame#settingBlockDs4GripGuide:hover {{
+                border-color: {PALETTE["input_border"]};
+            }}
+        """)
+        grip_layout = QHBoxLayout(self.ds4_grip_guide_box)
+        grip_layout.setContentsMargins(12, 12, 14, 12)
+        grip_layout.setSpacing(14)
+
+        self.lbl_ds4_grip_img = QLabel(self.ds4_grip_guide_box)
+        self.lbl_ds4_grip_img.setFixedSize(196, 128)
+        self.lbl_ds4_grip_img.setPixmap(_load_rounded_grip_pixmap(196, 128, radius=8.0))
+        self.lbl_ds4_grip_img.setStyleSheet("background: transparent; border: none;")
+        grip_layout.addWidget(self.lbl_ds4_grip_img, alignment=Qt.AlignmentFlag.AlignVCenter)
+
+        grip_text_col = QVBoxLayout()
+        grip_text_col.setContentsMargins(0, 2, 0, 2)
+        grip_text_col.setSpacing(6)
+
+        lbl_grip_title = QLabel("HOW TO HOLD YOUR DUALSHOCK® 4", self.ds4_grip_guide_box)
+        lbl_grip_title.setStyleSheet(
+            f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent; border: none;"
+        )
+        grip_text_col.addWidget(lbl_grip_title)
+
+        lbl_grip_body = QLabel(
+            "Hold the controller vertically like a PlayStation Move wand — face buttons on top, "
+            "D-pad on the bottom, fingers curled along the touchpad, and your thumb resting along the right grip.",
+            self.ds4_grip_guide_box,
+        )
+        lbl_grip_body.setWordWrap(True)
+        lbl_grip_body.setStyleSheet(
+            f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
+        )
+        grip_text_col.addWidget(lbl_grip_body)
+
+        lbl_grip_tip = QLabel(
+            "Tip: Keep a firm grip while dancing! Press R2 for Trigger (T) and Cross / R1 to confirm in menus.",
+            self.ds4_grip_guide_box,
+        )
+        lbl_grip_tip.setWordWrap(True)
+        lbl_grip_tip.setStyleSheet(f"""
+            QLabel {{
+                font-family: '{self.font_body}';
+                font-size: 10px;
+                font-weight: 600;
+                color: {PALETTE["ps_blue"]};
+                background-color: #EFF6FF;
+                border: 1px solid #BFDBFE;
+                border-radius: 6px;
+                padding: 5px 9px;
+            }}
+        """)
+        grip_text_col.addWidget(lbl_grip_tip)
+        grip_text_col.addStretch()
+
+        grip_layout.addLayout(grip_text_col, stretch=1)
+        ds4_layout.addWidget(self.ds4_grip_guide_box)
 
         # Initial visibility: disconnected balloon shown, details & PS Move Emulator hidden until connected
         self.ds4_disconnected_box.setVisible(True)

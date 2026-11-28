@@ -228,6 +228,12 @@ class TestControllersAndCLI(unittest.TestCase):
                     self.assertIs(win.psmove_bridge_box.parent(), win.ds4_info_frame)
                     self.assertTrue(win.ds4_info_frame.isHidden())
                     self.assertFalse(win.ds4_disconnected_box.isHidden())
+                    # Visual DualShock 4 grip guide card MUST always be present with a valid HiDPI pixmap
+                    from assets import ICON_DS4_GRIP_GUIDE_PATH
+                    self.assertTrue(ICON_DS4_GRIP_GUIDE_PATH.exists())
+                    self.assertTrue(hasattr(win, "ds4_grip_guide_box"))
+                    self.assertFalse(win.ds4_grip_guide_box.isHidden())
+                    self.assertFalse(win.lbl_ds4_grip_img.pixmap().isNull())
                     # Switching to ds4 mode without controller keeps ds4_info_frame (and PS Move card) hidden
                     win._set_mode("ds4")
                     win._update_ds4_ui_readout()

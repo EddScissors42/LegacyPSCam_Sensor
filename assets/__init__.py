@@ -31,6 +31,7 @@ ICON_LAB_PATH = ICONS_DIR / "lab.svg"
 ICON_WEBCAM_PATH = ICONS_DIR / "webcam.svg"
 ICON_ARROW_DOWN_PATH = ICONS_DIR / "arrow_down.png" if (ICONS_DIR / "arrow_down.png").exists() else ICONS_DIR / "arrow_down.svg"
 ICON_DUALSHOCK4_PATH = ICONS_DIR / "officialdualshock.png"
+ICON_DS4_GRIP_GUIDE_PATH = ICONS_DIR / "ds4_grip_guide.png"
 ICON_CONTROLLER_PATH = ICONS_DIR / "controller.svg"
 ICON_PHONE_PATH = ICONS_DIR / "phone.svg"
 ICON_RELOAD_PATH = ICONS_DIR / "reload.svg"
@@ -62,6 +63,7 @@ __all__ = [
     "ICON_WEBCAM_PATH",
     "ICON_ARROW_DOWN_PATH",
     "ICON_DUALSHOCK4_PATH",
+    "ICON_DS4_GRIP_GUIDE_PATH",
     "ICON_CONTROLLER_PATH",
     "ICON_PHONE_PATH",
     "ICON_RELOAD_PATH",
