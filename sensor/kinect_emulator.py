@@ -135,6 +135,7 @@ class KinectEmulatorDaemon:
         self.attached_pid: Optional[int] = None
         self.attached_game_name: Optional[str] = None
         self.attached_mode: Optional[str] = None
+        self.psmove_hooked: bool = False
         self.last_error_code: str = ""
         self.last_error_message: str = ""
         self._status_callbacks: List[Callable[[bool, str, int], None]] = []
@@ -151,9 +152,11 @@ class KinectEmulatorDaemon:
         # Enable SeDebugPrivilege when running elevated so OpenProcess succeeds on launcher/restricted DACLs
         self._se_debug_enabled: bool = self._enable_debug_privilege()
 
-        # Resolve path to 32-bit (Legacy10.dll) and 64-bit (Legacy10_x64.dll) proxy DLLs, staged outside %TEMP% when frozen
+        # Resolve paths to 32-bit/64-bit Kinect & PS Move proxy DLLs, staged outside %TEMP% when frozen
         self.proxy_dll_path = self._stage_proxy_dll(self._resolve_proxy_dll_path("Legacy10.dll"), "Legacy10.dll")
         self.proxy_dll_x64_path = self._stage_proxy_dll(self._resolve_proxy_dll_path("Legacy10_x64.dll"), "Legacy10_x64.dll")
+        self.psmove_dll_path = self._stage_proxy_dll(self._resolve_proxy_dll_path("LegacyMove.dll"), "LegacyMove.dll")
+        self.psmove_dll_x64_path = self._stage_proxy_dll(self._resolve_proxy_dll_path("LegacyMove_x64.dll"), "LegacyMove_x64.dll")
 
     def _log_diag_once(self, pid: int, reason_key: str, message: str) -> None:
         """Logs an injection diagnostic message once per (pid, reason_key) to prevent log spam."""
@@ -517,6 +520,7 @@ class KinectEmulatorDaemon:
             self._running = False
             self.attached_pid = None
             self.attached_game_name = None
+            self.psmove_hooked = False
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=1.5)
         self._thread = None
@@ -531,6 +535,7 @@ class KinectEmulatorDaemon:
                 "game_name": self.attached_game_name or "",
                 "pid": self.attached_pid or 0,
                 "mode": self.attached_mode or "",
+                "psmove_hooked": self.psmove_hooked,
                 "last_error_code": self.last_error_code,
                 "last_error_message": self.last_error_message,
             }
@@ -551,6 +556,7 @@ class KinectEmulatorDaemon:
                             self.attached_pid = None
                             self.attached_game_name = None
                             self.attached_mode = None
+                            self.psmove_hooked = False
                         self._notify_status(False, old_name, old_pid)
                     time.sleep(0.8)
                     continue
@@ -881,6 +887,7 @@ class KinectEmulatorDaemon:
                     print(
                         f"[KINECT-EMU] Attached to {exe_name} (PID {pid}): patched {len(new_iat_pointers)} Kinect10 IAT entries via {proxy_path.name}"
                     )
+                    self._inject_psmove_dll(h_proc, k32_base, pid, exe_name, is_64bit=False)
                     return True
 
             self._log_diag_once(pid, "IAT_PATCH_FAIL", f"Failed to patch Kinect10 IAT in {exe_name} (PID {pid}).")
@@ -1078,6 +1085,7 @@ class KinectEmulatorDaemon:
                         )
 
             if patched_total > 0:
+                self._inject_psmove_dll(h_proc, k32_base, pid, exe_name, is_64bit=True)
                 return True
 
             self._log_diag_once(pid, "IAT_PATCH_FAIL_64", f"Failed to patch 64-bit Kinect10 IAT in {exe_name} (PID {pid}).")
@@ -1088,6 +1096,81 @@ class KinectEmulatorDaemon:
             return False
         finally:
             self._k32.CloseHandle(h_proc)
+
+    def _inject_psmove_dll(self, h_proc, k32_base: int, pid: int, exe_name: str, is_64bit: bool) -> bool:
+        """
+        Loads tools/LegacyMove.dll (x86) or tools/LegacyMove_x64.dll (x64) into the target
+        Just Dance process so virtual PS Move ZCM2 HID emulation is ready whenever DualShock 4
+        mode activates Local\\LegacyPSMoveState (stays 100% inert when active == 0).
+        """
+        dll_path = self.psmove_dll_x64_path if is_64bit else self.psmove_dll_path
+        if not dll_path.is_file():
+            return False
+
+        tag_token = "legacymove_x64" if is_64bit else "legacymove.dll"
+        h_mods = (wintypes.HMODULE * 1024)()
+        cb_needed = wintypes.DWORD()
+        mod_flag = LIST_MODULES_64BIT if is_64bit else LIST_MODULES_32BIT
+        if self._psapi.EnumProcessModulesEx(h_proc, h_mods, ctypes.sizeof(h_mods), ctypes.byref(cb_needed), mod_flag):
+            mod_count = min(1024, cb_needed.value // ctypes.sizeof(wintypes.HMODULE))
+            mod_buf = ctypes.create_unicode_buffer(512)
+            for i in range(mod_count):
+                mod_addr = int(h_mods[i] or 0)
+                if mod_addr == 0 or (not is_64bit and mod_addr >= 0x100000000):
+                    continue
+                try:
+                    self._psapi.GetModuleFileNameExW(h_proc, h_mods[i], mod_buf, 512)
+                    if tag_token in mod_buf.value.lower():
+                        with self._lock:
+                            self.psmove_hooked = True
+                        return True
+                except Exception:
+                    pass
+
+        loadlib_addr = (
+            self._find_remote_export_64(h_proc, k32_base, b"LoadLibraryW")
+            if is_64bit
+            else self._find_remote_export(h_proc, k32_base, b"LoadLibraryW")
+        )
+        if not loadlib_addr:
+            return False
+
+        dll_path_str = str(dll_path.resolve())
+        path_bytes = (dll_path_str + "\x00").encode("utf-16le")
+        remote_str = self._k32.VirtualAllocEx(h_proc, None, len(path_bytes), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE)
+        if not remote_str:
+            return False
+
+        thread_created = False
+        thread_finished = False
+        try:
+            written = ctypes.c_size_t(0)
+            if not self._k32.WriteProcessMemory(
+                h_proc, ctypes.c_void_p(remote_str), path_bytes, len(path_bytes), ctypes.byref(written)
+            ):
+                return False
+            h_thread = self._k32.CreateRemoteThread(
+                h_proc, None, 0, ctypes.c_void_p(loadlib_addr), ctypes.c_void_p(remote_str), 0, None
+            )
+            if not h_thread:
+                return False
+            thread_created = True
+            try:
+                WAIT_OBJECT_0 = 0x00000000
+                wait_res = self._k32.WaitForSingleObject(h_thread, 4000)
+                thread_finished = (wait_res == WAIT_OBJECT_0)
+            finally:
+                self._k32.CloseHandle(h_thread)
+        finally:
+            if not thread_created or thread_finished:
+                self._k32.VirtualFreeEx(h_proc, ctypes.c_void_p(remote_str), 0, MEM_RELEASE)
+
+        if thread_finished:
+            with self._lock:
+                self.psmove_hooked = True
+            print(f"[PSMOVE-EMU] Attached {dll_path.name} to {exe_name} (PID {pid})")
+            return True
+        return False
 
     def _read_remote_pe32_header(self, h_proc, mod_base: int) -> Optional[bytes]:
         """Reads and validates a 32-bit remote PE module's DOS + NT headers (returns 256-byte NT header)."""

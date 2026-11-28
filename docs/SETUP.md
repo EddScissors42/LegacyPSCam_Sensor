@@ -56,8 +56,12 @@ A PlayStation 4 Camera (modelos CUH-ZEY1 e **PlayStation 4 Camera Slim** CUH-ZEY
 O **Legacy PSCam Sensor** conecta-se ao Just Dance PC automaticamente através da Ponte de Memória Compartilhada do Windows sem substituir nenhum arquivo na pasta do jogo:
 
 1. Abra o **Legacy PSCam Sensor** (a emulação em memória é inicializada automaticamente em segundo plano).
-2. Inicie o Just Dance PC normalmente (`Legacy.exe` ou `JustDance.exe` 32-bit).
-3. O daemon `KinectEmulatorDaemon` detecta a instância do jogo aberta e roteia a API do Kinect diretamente na memória RAM (`tools/Legacy10.dll`), mantendo a `Kinect10.dll` original no disco 100% intacta.
+2. Inicie o Just Dance PC normalmente:
+   - **Just Dance Legacy 2018 Offline (32-bit):** `Legacy.exe` ou `JustDance.exe`
+   - **Just Dance Legacy Lab / Legacy Lab Offline (64-bit):** `Legacy Lab.exe` ou `LegacyLab_Offline.exe`
+3. O daemon `KinectEmulatorDaemon` detecta a instância do jogo aberta e injeta na memória RAM:
+   - **Sensor Corporal (Kinect):** `tools/Legacy10.dll` (32-bit) ou `tools/Legacy10_x64.dll` (64-bit), mantendo qualquer DLL original no disco 100% intacta.
+   - **Controle de Movimento (PlayStation Move ZCM2):** `tools/LegacyMove.dll` (32-bit) ou `tools/LegacyMove_x64.dll` (64-bit), permanecendo 100% invisível ao jogo quando você joga pela câmera e ativando instantaneamente um PS Move nativo ao iniciar o modo **DualShock 4**.
 
 ---
 
@@ -110,9 +114,9 @@ Por padrão, o executável do driver PSCam4Win (`PSCam4WinTray.exe`) possui uma 
 
 ---
 
-## 6. Pareamento e Uso do DualShock 4 e Controles Compatíveis (Bluetooth / USB)
+## 6. Pareamento e Uso do DualShock 4 como PlayStation Move Nativo (Bluetooth / USB)
 
-Para utilizar o controle DualShock 4 ou controles compatíveis (Nível A) como controle de mão (rastreando os movimentos pelo acelerômetro físico interno):
+O modo **DualShock 4** emula um controle **PlayStation Move (ZCM2 — VID `0x054C` / PID `0x0C5E`)** diretamente na memória do Just Dance PC (`Legacy 2018 Offline`, `Legacy Lab` e `Legacy Lab Offline`), utilizando o acelerômetro e o giroscópio de 6 eixos reais do controle:
 
 1. **Colocar o Controle em Modo de Pareamento (ou conectar via USB):**
    - **DualShock 4:** Com o controle desligado, mantenha pressionados os botões **Share** e **PS** simultaneamente por 3 a 5 segundos até que a barra de luz comece a piscar rapidamente em branco.
@@ -126,8 +130,12 @@ Para utilizar o controle DualShock 4 ou controles compatíveis (Nível A) como c
    - O sistema reconhece o modelo automaticamente (ex.: *"Sony DualShock 4"*, *"Razer Raiju (PS4)"*, *"ShanWan DS4 Clone"* ou *"Generic / Clone DS4"*).
    - O **Modo Permissivo** (`Permissive Discovery Mode`) vem ativado por padrão para aceitar controles de terceiros e clones.
    - **Aviso de IMU Travado (`[!] IMU SENSOR FROZEN 0G`):** Se o seu controle for uma réplica genérica que conecta no Windows via Bluetooth mas não transmite os dados de movimento pelo ar (gerando 0G contínuo em vez de ~1.0G de gravidade em repouso), a interface exibirá um alerta em vermelho. **Basta conectar o controle pelo cabo USB** para que o stream de aceleração física funcione normalmente.
-   - Na aba **Controller Settings**, você verá o status em tempo real (`Status: Connected • 500 Hz • Battery: X%`), a leitura contínua do acelerômetro 3D e poderá testar a vibração clicando em **Test Rumble Vibration**.
-   - Clique em **START CONTROLLER (DS4)** para iniciar a sessão de dança!
+   - Na aba **Controller Settings**, você verá o cartão **PLAYSTATION MOVE EMULATOR (NATIVE ZCM2)** com status do jogo, prévia ao vivo da cor RGB da esfera, opção **Sync DS4 Light Bar & Rumble with PS Move Sphere** e a leitura contínua do acelerômetro 3D.
+   - Clique em **START CONTROLLER (DS4)** e selecione **PlayStation Move** no Just Dance PC!
+4. **Pegada Recomendada e Mapeamento de Botões (1:1):**
+   - **Pegada Vertical ("Joinha"):** Segure o DualShock 4 na vertical com a **barra de luz apontando para cima** (como a esfera do PS Move), dedos apoiados sobre o touchpad frontal e o polegar passando abaixo do analógico direito e dos botões frontais (`× △ ○ □`).
+   - **Botões:** `R2` = Gatilho `T` (analógico + digital), `Cross (×)` / `R1` = Botão `Move` / Confirmar, `Circle (○)` = Voltar, `Square (□)` / `Triangle (△)` = Quadrado / Triângulo, `Options` = `Start`, `Share` = `Select`, `PS` = `Menu`.
+   - **Luz e Vibração Sincronizadas:** A cor da esfera do PS Move atribuída pelo Just Dance e os pulsos de vibração (como em *Gold Moves*) são espelhados em tempo real na Light Bar e nos motores hápticos do DualShock 4.
 
 ---
 

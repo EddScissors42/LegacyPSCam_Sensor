@@ -1,7 +1,7 @@
 """
 Gesture Detection Subsystem for Legacy PSCam Sensor.
 Provides real-time body gesture recognition (such as holding an arm raised)
-to trigger game actions (such as sending an ENTER keystroke or Virtual Phone VALID).
+to trigger game actions (such as sending an ENTER keystroke).
 Supports both 1-Player and 2-Player modes (any active player raising an arm triggers ENTER).
 """
 import time
@@ -118,18 +118,16 @@ class ArmRaiseGestureDetector:
         self,
         px_joints: Optional[List[Tuple[float, float, float]]],
         is_tracked: bool,
-        vphone=None,
         now: Optional[float] = None
     ) -> Dict[str, Any]:
         """Single-player update wrapper."""
         players_list = [px_joints] if (is_tracked and px_joints) else []
-        return self.update_multi(players_list, is_tracked=bool(is_tracked and px_joints), vphone=vphone, now=now)
+        return self.update_multi(players_list, is_tracked=bool(is_tracked and px_joints), now=now)
 
     def update_multi(
         self,
         players_px_joints: List[Optional[List[Tuple[float, float, float]]]],
         is_tracked: bool = True,
-        vphone=None,
         now: Optional[float] = None,
     ) -> Dict[str, Any]:
         """
@@ -197,12 +195,6 @@ class ArmRaiseGestureDetector:
 
                     if self.dispatch_keystroke:
                         dispatch_enter_keystroke()
-
-                    if vphone is not None and getattr(vphone, "enabled", False):
-                        try:
-                            vphone.send_input("VALID")
-                        except Exception as e:
-                            print(f"[WARN] Virtual Phone VALID dispatch error: {e}")
 
                     p_label = f"P{raising_player + 1}"
                     print(f"\n[GESTURE] >>> {p_label} ARM RAISED >= {self.hold_seconds:.1f}s: ENTER COMMAND DISPATCHED! <<<\n")

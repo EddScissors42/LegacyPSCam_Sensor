@@ -38,9 +38,9 @@ All non-essential overhead has been removed while perfecting the core components
 | Device Settings & Navigation Polish | Aligned controls anatomy, experimental safety notice, and auto-return to Video Settings on device toggle. | Implemented |
 | Camera Orientation Control | Real-time 0°, 90°, 180°, and 270° rotation block supporting inverted or sideways camera mounts. | Implemented |
 | Responsive Scroll & Anti-Collision | Transparent QScrollArea with minimum card heights preventing widget overlap on compact window sizes. | Implemented |
-| Scoring Bridge (Just Dance Controller App mode) | Emulates the Just Dance Smartphone Controller over WebSocket (`/smartphone`) inside Controller Settings with Game Connection Status, Reconnect Game, Auto-Find and Skip Finish shortcuts. | Implemented |
-| DualShock 4 & Clones (Level A) | Native Bluetooth/USB HID driver supporting official DS4, licensed pads (Hori, Nacon, Razer, Astro, Scuf) and clone chips (ShanWan, DragonRise) with automatic IMU frozen (0G) diagnostic. | Implemented |
-| Emulate Kinect (Zero-File-Replacement) | Emulates Kinect directly in game memory via process detection; keeps original Kinect10.dll on disk intact. | Implemented |
+| PlayStation Move Emulator (Native ZCM2 for DS4) | Emulates a native PlayStation Move (`VID 0x054C / PID 0x0C5E`) in game memory (`LegacyMove.dll` / `LegacyMove_x64.dll`) driven by the DualShock 4 6-axis IMU (vertical thumbs-up grip) with live sphere RGB Light Bar & rumble sync. | Implemented |
+| DualShock 4 & Clones (Level A) | Native Bluetooth/USB HID driver supporting official DS4, licensed pads (Hori, Nacon, Razer, Astro, Scuf) and clone chips (ShanWan, DragonRise) with automatic IMU frozen (0G) diagnostic and resting gyro zero-bias calibration. | Implemented |
+| Emulate Kinect & PS Move (Zero-File-Replacement) | Emulates Kinect (`Legacy10*.dll`) and PlayStation Move (`LegacyMove*.dll`) directly in 32-bit and 64-bit game memory via process detection; keeps all game files on disk intact. | Implemented |
 | High-Resolution Windows Timer (1ms) | Python timer synchronization ensuring `Sleep(33)` in `Kinect10.dll` delivers solid 30 FPS. | Implemented |
 | Person Lock-In Subsystem | Modular tracking lock combining 3D/2D inertial coasting, HSV torso color identity signature, and ROI attenuation. | Implemented |
 | Smart PTZ Auto-Framing | FaceFollow PTZ with 360° spin head fallback and adaptive zoom. | Implemented |
@@ -66,7 +66,7 @@ LegacyPSCam_Sensor/
 ├── main.py                     # CLI launcher and entry point (--version, --portable, --start, --mode, --camera)
 ├── version.py                  # Official versioning & build metadata (v0.11.1 Alpha)
 ├── test_suite.py               # 19 isolated automated test suites + modular unittest runner (19/19 PASSED)
-├── tests/                      # Modular unittest suites (test_vphone_protocol, test_tracking_math, test_controllers_and_cli)
+├── tests/                      # Modular unittest suites (test_tracking_math, test_controllers_and_cli)
 ├── config.json                 # Local template for user preferences (stored in %APPDATA%\LegacyPSCam_Sensor\)
 ├── legacy_pscam_sensor.spec    # Reproducible PyInstaller spec (--onefile / --onedir with binary pruning)
 ├── THIRD_PARTY_NOTICES.md      # Licensing & third-party attribution notices
@@ -93,11 +93,10 @@ LegacyPSCam_Sensor/
 │   ├── phone_camera.py         # HTTPS/WSS Phone Camera server for iOS & Android smartphones
 │   ├── qr_encoder.py           # Pure-Python ISO/IEC 18004 QR Code encoder
 │   ├── tls_manager.py          # Per-installation RSA-2048 & X.509v3 TLS certificate manager
-│   ├── virtual_phone.py        # UbiArt Smartphone WebSocket controller orchestrator
-│   ├── vphone_protocol.py      # HandAccelerometer, RFC 6455 WS client, AdaptiveTuner & song detector
-│   ├── ds4_controller.py       # Native Bluetooth/USB HID DualShock 4 driver
-│   ├── telemetry_benchmark.py  # Comparative telemetry benchmark (Camera vs DS4)
-│   ├── kinect_emulator.py      # In-memory Kinect API emulator & Game Process Monitor
+│   ├── psmove_shared_memory.py # Windows shared memory IPC driver (Local\LegacyPSMoveState, PSM1 128B) & ZCM2 encoder
+│   ├── ds4_controller.py       # Native Bluetooth/USB HID DualShock 4 driver (6-axis IMU -> PS Move ZCM2 + Light Bar sync)
+│   ├── telemetry_benchmark.py  # Comparative telemetry benchmark utilities (CSV parser & cross-correlation)
+│   ├── kinect_emulator.py      # In-memory Kinect & PlayStation Move emulator & Game Process Monitor (x86/x64)
 │   ├── tracking_session.py     # Tracking loop orchestrator and hotkeys
 │   ├── tracking_overlay.py     # Skeleton, HUD, and silhouette renderer
 │   ├── kinect_shared_memory.py # Windows shared memory IPC driver (JDP1, JDP2, JMI1/2, JXC1)
@@ -108,9 +107,8 @@ LegacyPSCam_Sensor/
 │   ├── gui_qt.py               # Lean PlayStation-themed Qt 6 window shell (signals, layout shell, pixmaps, lifecycle)
 │   ├── pages/                  # Declarative Qt 6 page builders package (video, tracking, experimental, ds4)
 │   ├── styles.py               # Centralized QSS stylesheet builder
-│   ├── mixins/                 # Modular Qt 6 event/readout mixins (device_readout, camera, phone, ds4_vphone, tracking)
+│   ├── mixins/                 # Modular Qt 6 event/readout mixins (device_readout, camera, phone, ds4, tracking)
 │   ├── widgets.py              # Reusable Qt 6 widgets (SlidingStackedWidget, DeviceNavCard, CalibPresetCard, SettingBlock)
-│   ├── benchmark_dialog.py     # Telemetry Benchmark & Calibration Comparator dialog & 2D chart
 │   ├── theme.py                # Palette, fonts, and calibration presets
 │   └── icons.py                # Supersampled icons, SVGs, and status badges
 ├── assets/                     # Visual assets and media
@@ -121,9 +119,12 @@ LegacyPSCam_Sensor/
 │   ├── pose_landmarker_lite.task  # Google MediaPipe Pose Lite model (Competitive preset)
 │   └── pose_landmarker_full.task  # Google MediaPipe Pose Full model (Balanced preset)
 └── tools/                      # Setup utilities & in-memory proxy DLLs
-    ├── Legacy10.dll            # 32-bit in-memory proxy DLL for Just Dance Legacy (Legacy.exe)
-    ├── Legacy10_x64.dll        # 64-bit in-memory proxy DLL for Just Dance Legacy Lab (Legacy Lab.exe)
+    ├── Legacy10.dll            # 32-bit in-memory Kinect proxy DLL for Just Dance Legacy (Legacy.exe)
+    ├── Legacy10_x64.dll        # 64-bit in-memory Kinect proxy DLL for Just Dance Legacy Lab (Legacy Lab.exe / LegacyLab_Offline.exe)
     ├── legacy10_x64_src/       # C++ source & .def for Legacy10_x64.dll (Kinect SDK v1.8 x64 ABI)
+    ├── LegacyMove.dll          # 32-bit in-memory PS Move (ZCM2) HID proxy DLL for Just Dance Legacy (Legacy.exe)
+    ├── LegacyMove_x64.dll      # 64-bit in-memory PS Move (ZCM2) HID proxy DLL for Legacy Lab & Legacy Lab Offline
+    ├── legacymove_src/         # C++ source for LegacyMove.dll & LegacyMove_x64.dll (SetupAPI/HID/Kernel32 IAT hook)
     └── get_cameras.ps1         # WinRT camera enumeration fallback script
 ```
 

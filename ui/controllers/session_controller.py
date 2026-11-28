@@ -9,6 +9,7 @@ from typing import Optional, Callable
 
 from sensor.config_manager import ConfigManager
 from sensor.kinect_shared_memory import close_kinect_bridge
+from sensor.psmove_shared_memory import close_psmove_bridge
 from sensor.kinect_emulator import get_kinect_emulator
 from sensor import tracking_session
 
@@ -91,5 +92,9 @@ class SessionController:
             self.kinect_emulator = None
         try:
             close_kinect_bridge()
+        except Exception:
+            pass
+        try:
+            close_psmove_bridge()
         except Exception:
             pass

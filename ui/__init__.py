@@ -39,10 +39,6 @@ try:
         DeviceNavCard,
         CalibPresetCard,
     )
-    from .benchmark_dialog import (
-        TelemetryBenchmarkChart,
-        TelemetryBenchmarkDialog,
-    )
     HAS_QT = True
 except ImportError:
     HAS_QT = False
@@ -52,8 +48,6 @@ except ImportError:
     SlidingStackedWidget = None
     DeviceNavCard = None
     CalibPresetCard = None
-    TelemetryBenchmarkChart = None
-    TelemetryBenchmarkDialog = None
 
 # Default GUI class alias
 LegacySensorGUI = LegacySensorQtGUI
@@ -126,8 +120,6 @@ __all__ = [
     "SlidingStackedWidget",
     "DeviceNavCard",
     "CalibPresetCard",
-    "TelemetryBenchmarkChart",
-    "TelemetryBenchmarkDialog",
     "HAS_QT",
     "launch_app",
     "PALETTE",

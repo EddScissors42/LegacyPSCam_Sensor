@@ -697,12 +697,10 @@ class TrackingOverlay:
         is_charging: bool = False,
         is_connected: bool = True,
         imu_frozen: bool = False,
-        vphone_status: str = "Connected",
-        vphone_connected: bool = False,
+        psmove_status: str = "Waiting for Game...",
+        psmove_connected: bool = False,
+        sphere_rgb: Tuple[int, int, int] = (0, 67, 156),
         tot_g: float = 1.0,
-        current_coach: int = 0,
-        total_coaches: int = 4,
-        song_name: Optional[str] = None,
         action_toast: Optional[str] = None,
         accel_axes: Tuple[float, float, float] = (0.0, 1.0, 0.0),
         gyro_axes: Optional[Tuple[int, int, int]] = None,
@@ -751,9 +749,9 @@ class TrackingOverlay:
                 telemetry_text = "POLL: -- HZ  |  BATT: --"
             cv2.putText(frame, telemetry_text, (right_x + 32, right_y + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.38, COLOR_NEON_CYAN, 1, cv2.LINE_AA)
 
-            vphone_text = f"VPHONE: {vphone_status}"
-            v_color = COLOR_STATUS_OK if vphone_connected else COLOR_TEXT_DIM
-            cv2.putText(frame, vphone_text, (right_x + 32, right_y + 36), cv2.FONT_HERSHEY_SIMPLEX, 0.34, v_color, 1, cv2.LINE_AA)
+            psmove_text = f"PS MOVE: {psmove_status}"
+            pm_color = COLOR_STATUS_OK if psmove_connected else COLOR_TEXT_DIM
+            cv2.putText(frame, psmove_text, (right_x + 32, right_y + 36), cv2.FONT_HERSHEY_SIMPLEX, 0.34, pm_color, 1, cv2.LINE_AA)
 
         # =====================================================================
         # RIGHT PILL (BELOW TELEMETRY): CONTROLLER TRACKING STATUS
@@ -799,9 +797,11 @@ class TrackingOverlay:
                 radius=12, bg_color=COLOR_GLASS_BG, alpha=0.74, border_color=COLOR_GLASS_BORDER
             )
 
-            # PlayStation Blue accent orb
+            # PS Move sphere / Light Bar color accent orb (RGB -> BGR for OpenCV)
+            sr, sg, sb = sphere_rgb if sphere_rgb else (0, 67, 156)
+            orb_bgr = (int(sb), int(sg), int(sr))
             orb_x, orb_y = left_x + 18, left_y + 22
-            cv2.circle(frame, (orb_x, orb_y), 7, (255, 120, 20), -1, cv2.LINE_AA)
+            cv2.circle(frame, (orb_x, orb_y), 7, orb_bgr, -1, cv2.LINE_AA)
             cv2.circle(frame, (orb_x, orb_y), 9, (255, 255, 255), 1, cv2.LINE_AA)
 
             cv2.putText(frame, "LEGACY PSCAM SENSOR", (left_x + 36, left_y + 20), cv2.FONT_HERSHEY_DUPLEX, 0.44, COLOR_TEXT_WHITE, 1, cv2.LINE_AA)
@@ -919,33 +919,24 @@ class TrackingOverlay:
                 radius=10, bg_color=COLOR_GLASS_BG, alpha=0.78, border_color=COLOR_GLASS_BORDER
             )
 
-            controls_text = "[Q/ESC] Exit  •  [R] Reconnect  •  [L1/R1] Coach  •  [H] Cycle HUD"
+            controls_text = "[Q/ESC] Exit  •  [R] Reconnect  •  [H] Cycle HUD"
             t_sz = cv2.getTextSize(controls_text, cv2.FONT_HERSHEY_SIMPLEX, 0.38, 1)[0]
             tx = bot_x + (bot_w - t_sz[0]) // 2
             cv2.putText(frame, controls_text, (tx, bot_y + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (225, 230, 240), 1, cv2.LINE_AA)
 
         # =====================================================================
-        # COACH SELECTION PILL (Directly above keyboard commands bar)
+        # PS MOVE BUTTON MAPPING PILL (Directly above keyboard commands bar)
         # =====================================================================
-        coach_w, coach_h = min(fw - 40, 360), 34
-        coach_x = (fw - coach_w) // 2
-        coach_y = bot_y - coach_h - 8
+        map_w, map_h = min(fw - 40, 440), 32
+        map_x = (fw - map_w) // 2
+        map_y = bot_y - map_h - 8
         draw_rounded_glass_pill(
-            frame, coach_x, coach_y, coach_w, coach_h,
+            frame, map_x, map_y, map_w, map_h,
             radius=10, bg_color=COLOR_GLASS_BG, alpha=0.82, border_color=COLOR_GLASS_BORDER
         )
-
-        cv2.putText(frame, "[L1]", (coach_x + 16, coach_y + 22), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 220, 255), 1, cv2.LINE_AA)
-        c_text = f"COACH {current_coach + 1} OF {total_coaches}"
-        ct_sz = cv2.getTextSize(c_text, cv2.FONT_HERSHEY_DUPLEX, 0.42, 1)[0]
-        cv2.putText(frame, c_text, (coach_x + (coach_w - ct_sz[0]) // 2, coach_y + 22), cv2.FONT_HERSHEY_DUPLEX, 0.42, COLOR_TEXT_WHITE, 1, cv2.LINE_AA)
-        cv2.putText(frame, "[R1]", (coach_x + coach_w - 50, coach_y + 22), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 220, 255), 1, cv2.LINE_AA)
-
-        # Song name above coach pill if active
-        if song_name and song_name not in ("DanceSession", "None", ""):
-            s_text = f"SONG: {song_name}"
-            st_sz = cv2.getTextSize(s_text, cv2.FONT_HERSHEY_SIMPLEX, 0.31, 1)[0]
-            cv2.putText(frame, s_text, ((fw - st_sz[0]) // 2, coach_y - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.31, COLOR_TEXT_DIM, 1, cv2.LINE_AA)
+        m_text = "PS MOVE ZCM2  •  R2: Trigger  •  X/R1: Move  •  O: Back  •  Opt: Start"
+        mt_sz = cv2.getTextSize(m_text, cv2.FONT_HERSHEY_SIMPLEX, 0.34, 1)[0]
+        cv2.putText(frame, m_text, (map_x + (map_w - mt_sz[0]) // 2, map_y + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.34, COLOR_TEXT_WHITE, 1, cv2.LINE_AA)
 
         # =====================================================================
         # ACTION TOAST (E.G. RECONNECTING, COACH SWITCH, CONFIRM)

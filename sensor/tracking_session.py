@@ -380,25 +380,12 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None, prewar
     # 4. Initialize Overlay
     overlay = TrackingOverlay(show_hud=show_hud)
 
-    # 5. Configure Virtual Phone Controller (if enabled in config or active via GUI)
-    from sensor.virtual_phone import get_virtual_phone
-    vphone = get_virtual_phone()
-    vphone.configure(
-        host=str(config.get("virtual_phone_host", "127.0.0.1")),
-        port=int(config.get("virtual_phone_port", 8080)),
-        hand=str(config.get("virtual_phone_hand", "right")),
-        sensitivity=float(config.get("virtual_phone_sensitivity", 1.0)),
-        phone_name=str(config.get("virtual_phone_name", "Legacy PSCam Phone")),
-        auto_record=bool(config.get("benchmark_auto_record", config.get("virtual_phone_auto_record", False))),
-        adaptive=bool(config.get("virtual_phone_adaptive", False)),
-    )
-    should_enable_vphone = (
-        config.get("virtual_phone_enabled", False)
-        or config.get("benchmark_auto_record", False)
-        or config.get("virtual_phone_auto_record", False)
-    )
-    if should_enable_vphone and not vphone.enabled:
-        vphone.set_enabled(True)
+    # 5. Ensure virtual PS Move channel is inactive during Camera modes (Kinect v1 only)
+    try:
+        from sensor.psmove_shared_memory import get_psmove_bridge
+        get_psmove_bridge().write_inactive()
+    except Exception:
+        pass
 
     gesture_detector = ArmRaiseGestureDetector(
         enabled=bool(config.get("arm_raise_gesture_enabled", True)),
@@ -441,8 +428,8 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None, prewar
         )
         get_session_logger().start_telemetry_tracking(
             source="camera",
-            song_name=getattr(vphone, "current_map_name", "DanceSession"),
-            coach_id=getattr(vphone, "current_coach_id", 0),
+            song_name="DanceSession",
+            coach_id=0,
             config_summary=cfg_summary,
         )
     except Exception:
@@ -476,9 +463,6 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None, prewar
                     camera_orientation = (camera_orientation + 90) % 360
                     camera.set_orientation(camera_orientation)
                     print(f"[INFO] Camera orientation toggled to: {camera_orientation}°")
-                elif key in (13, 32):
-                    if vphone.enabled:
-                        vphone.send_input("VALID")
                 if cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1:
                     break
                 time.sleep(0.0015)
@@ -552,7 +536,7 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None, prewar
             ]
 
             # Detect arm raised gesture using mirrored/scaled preview coordinates so the radial ring aligns 1:1
-            gesture_info = gesture_detector.update_multi(display_players_px, is_tracked=is_tracked, vphone=vphone)
+            gesture_info = gesture_detector.update_multi(display_players_px, is_tracked=is_tracked)
 
             # Apply dynamic Face Follow (PTZ Auto-framing) ONLY in 1-Player mode so Player 2 is never cropped out
             face_follow_on = bool(config.get("face_follow_enabled", False)) and (max_players == 1)
@@ -570,30 +554,17 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None, prewar
                 kinect_frame, kinect_mask = display_frame, display_mask
 
             # Update Shared Memory for Just Dance PC (JDP1, JDP2 664B, JMI1 & JMI2 player index mask)
-            # Only mute Kinect pose when Virtual Phone Controller is explicitly enabled in camera mode config
             players_3d = [
                 pf.kinect_joints if (pf is not None and pf.tracked) else None
                 for pf in multi_res.players
             ]
-            vphone_cam_active = bool(config.get("virtual_phone_enabled", False)) and vphone.enabled
             if is_tracked and multi_res.tracked_mask > 0:
-                if vphone_cam_active and max_players == 1:
-                    bridge.pose.write_empty()
-                    bridge.pose_v2.write_empty()
-                    bridge.image.write_image_and_mask(
-                        kinect_frame,
-                        kinect_mask,
-                        tracked=True,
-                        tracked_mask=multi_res.tracked_mask,
-                        is_player_index_mask=True,
-                    )
-                else:
-                    bridge.write_multi(
-                        players_3d,
-                        kinect_frame,
-                        kinect_mask,
-                        tracked_mask=multi_res.tracked_mask,
-                    )
+                bridge.write_multi(
+                    players_3d,
+                    kinect_frame,
+                    kinect_mask,
+                    tracked_mask=multi_res.tracked_mask,
+                )
             else:
                 # Keep live camera image flowing to Just Dance even when untracked (zero skeleton/mask)
                 bridge.pose.write_empty()
@@ -601,14 +572,9 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None, prewar
                 bridge.image.write_image_and_mask(kinect_frame, None, tracked=False)
                 bridge.coach_x.write_coach_x(coach_x=0.0, enabled=False)
 
-            # Feed primary player's 3D Hand Coordinates to Virtual Phone Controller
-            vphone.update_from_joints(kinect_joints, bool(kinect_joints is not None))
-
             total_frames += 1
             try:
                 from sensor.session_logger import get_session_logger
-                accel = vphone.latest_accel
-                speed = vphone.accelerometer.latest_speed
 
                 def _j_xyz(j):
                     if isinstance(j, (tuple, list)) and len(j) >= 3:
@@ -620,9 +586,7 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None, prewar
                         return float(j[3])
                     return float(getattr(j, "confidence", 1.0))
 
-                is_left_hand = str(getattr(vphone, "hand", "right")).lower() == "left"
-                idx_sh, idx_el, idx_wr, idx_hd = (4, 5, 6, 7) if is_left_hand else (8, 9, 10, 11)
-
+                idx_sh, idx_el, idx_wr, idx_hd = (8, 9, 10, 11)
                 h_pos = _j_xyz(kinect_joints[idx_hd]) if (kinect_joints and len(kinect_joints) > idx_hd) else (0.0, 0.0, 0.0)
                 s_r = _j_xyz(kinect_joints[idx_sh]) if (kinect_joints and len(kinect_joints) > idx_sh) else (0.0, 0.0, 0.0)
                 e_r = _j_xyz(kinect_joints[idx_el]) if (kinect_joints and len(kinect_joints) > idx_el) else (0.0, 0.0, 0.0)
@@ -631,13 +595,13 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None, prewar
                 get_session_logger().record_telemetry_sample(
                     ts_ms=int(time.time() * 1000),
                     source="camera",
-                    song_name=getattr(vphone, "current_map_name", None),
-                    coach_id=getattr(vphone, "current_coach_id", 0),
+                    song_name=None,
+                    coach_id=0,
                     is_tracked=is_tracked,
-                    ax=accel[0],
-                    ay=accel[1],
-                    az=accel[2],
-                    speed_mps=speed,
+                    ax=0.0,
+                    ay=0.0,
+                    az=0.0,
+                    speed_mps=0.0,
                     hand_pos=h_pos,
                     shoulder_r=s_r,
                     elbow_r=e_r,
@@ -645,7 +609,7 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None, prewar
                     joints_tracked_count=j_count,
                     cam_fps=cam_fps,
                     infer_fps=measured_track_fps,
-                    game_feedback=getattr(vphone, "_last_feedback", ""),
+                    game_feedback="",
                 )
             except Exception as e:
                 try:
@@ -665,9 +629,7 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None, prewar
                 if is_tracked and display_mask is not None:
                     display_frame = overlay.draw_multi_player_silhouettes(display_frame, display_mask)
 
-                # Render Skeletons on top for each active player with Scoring Hand Aura
-                scoring_hand_side = str(getattr(vphone, "hand", "right")).lower()
-                current_hand_speed = float(getattr(vphone.accelerometer, "latest_speed", 0.0))
+                # Render Skeletons on top for each active player
                 for s_idx, p_px in enumerate(display_players_px):
                     if p_px:
                         display_frame = overlay.draw_skeleton(
@@ -675,8 +637,8 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None, prewar
                             p_px,
                             player_idx=s_idx,
                             show_badge=(max_players >= 2 and not overlay.pip_mode),
-                            scoring_hand=scoring_hand_side,
-                            hand_speed=current_hand_speed,
+                            scoring_hand="right",
+                            hand_speed=0.0,
                         )
 
                 if not overlay.pip_mode:
@@ -723,9 +685,6 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None, prewar
                 camera_orientation = (camera_orientation + 90) % 360
                 camera.set_orientation(camera_orientation)
                 print(f"[INFO] Camera orientation toggled to: {camera_orientation}°")
-            elif key in (13, 32):  # Enter or Space: Send VALID / OK to game via Virtual Phone
-                if vphone.enabled:
-                    vphone.send_input("VALID")
 
             if cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1:
                 break
@@ -768,16 +727,18 @@ def run_tracking_session(config, on_close_callback=None, stop_event=None, prewar
 def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
     """
     Dedicated motion tracking loop for the Sony DualShock 4 controller over Bluetooth/USB.
-    Streams 3D physical accelerometer samples directly into Just Dance via Virtual Phone,
-    provides visual telemetry (3D accel gauges, battery %, HID sample rate),
-    and handles hotkeys ([Q] Quit, [R] Reconnect).
+    Streams 6-axis physical IMU (accelerometer + gyroscope) and button inputs directly into
+    Just Dance PC via the in-memory PlayStation Move (ZCM2) HID emulator, syncs sphere RGB
+    color & rumble back to the DualShock 4 Light Bar, and handles hotkeys ([Q] Quit, [R] Reconnect).
     """
     from sensor.ds4_controller import get_ds4_controller
-    from sensor.virtual_phone import get_virtual_phone
+    from sensor.kinect_emulator import get_kinect_emulator
+    from sensor.psmove_shared_memory import get_psmove_bridge
     from sensor.tracking_overlay import TrackingOverlay
 
     ds4 = get_ds4_controller()
     ds4.permissive_mode = bool(config.get("ds4_permissive_mode", True))
+    ds4.sync_lightbar = bool(config.get("ds4_sync_lightbar", True))
     if not ds4.is_connected:
         ds4.connect(permissive=ds4.permissive_mode)
 
@@ -786,18 +747,13 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
     ds4.hand = hand
     ds4.sensitivity = sens
 
-    vphone = get_virtual_phone()
-    vphone.configure(
-        host=str(config.get("virtual_phone_host", "127.0.0.1")),
-        port=int(config.get("virtual_phone_port", 8080)),
-        hand=hand,
-        sensitivity=sens,
-        phone_name=str(config.get("virtual_phone_name", "Legacy PSCam DS4")),
-        auto_record=bool(config.get("virtual_phone_auto_record", False)),
-        adaptive=bool(config.get("virtual_phone_adaptive", False)),
-    )
-    if not vphone.enabled:
-        vphone.set_enabled(True)
+    # Ensure in-memory emulator daemon is running so LegacyMove.dll / LegacyMove_x64.dll attaches
+    local_emulator = get_kinect_emulator(config)
+    local_emulator.enabled = True
+    local_emulator.start()
+
+    psmove_bridge = get_psmove_bridge()
+    ds4.set_psmove_streaming(True)
 
     set_high_resolution_timer(True)
     set_realtime_process_qos(True)
@@ -805,14 +761,14 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
 
     overlay = TrackingOverlay(show_hud=True)
 
-    window_name = "Legacy PSCam Sensor — DualShock 4 Tracking"
+    window_name = "Legacy PSCam Sensor — DualShock 4 (PS Move)"
     cv2.namedWindow(window_name, cv2.WINDOW_NORMAL | cv2.WINDOW_GUI_EXPANDED)
     cv2.resizeWindow(window_name, 720, 480)
     apply_window_icon(window_name)
 
     print(f"\n==========================================")
-    print(f"  STARTING DUALSHOCK 4 TRACKING SESSION")
-    print(f"  Hand: {hand.upper()} | Sensitivity: {sens:.2f}x")
+    print(f"  STARTING DUALSHOCK 4 -> PS MOVE (ZCM2) SESSION")
+    print(f"  Hand: {hand.upper()} | Sensitivity: {sens:.2f}x | LightBar Sync: {ds4.sync_lightbar}")
     print(f"  Connected: {ds4.is_connected} | Polling: {ds4.state.sample_rate_hz:.0f} Hz | Battery: {ds4.state.battery_pct}%")
     print(f"==========================================\n")
 
@@ -833,7 +789,7 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
     try:
         from sensor.session_logger import get_session_logger
         conn_str = "USB" if ds4.is_usb else "Bluetooth"
-        ds4_summary = f"{ds4.state.controller_name} ({conn_str}), Hand: {hand}, Sens: {sens}x"
+        ds4_summary = f"{ds4.state.controller_name} ({conn_str}), PS Move ZCM2, Hand: {hand}, Sens: {sens}x"
         get_session_logger().map_active_controller(
             controller_type="ds4",
             name=ds4.state.controller_name,
@@ -841,8 +797,8 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
         )
         get_session_logger().start_telemetry_tracking(
             source="ds4",
-            song_name=getattr(vphone, "current_map_name", "DanceSession"),
-            coach_id=getattr(vphone, "current_coach_id", 0),
+            song_name="DanceSession",
+            coach_id=0,
             config_summary=ds4_summary,
         )
     except Exception:
@@ -857,21 +813,36 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
             ax, ay, az = st.accel_g
             tot_g = math.sqrt(ax * ax + ay * ay + az * az)
 
+            emu_st = local_emulator.get_status()
+            if st.psmove_game_connected:
+                game_lbl = emu_st.get("game_name") or "Just Dance"
+                psmove_status = f"Linked ({game_lbl})"
+                psmove_connected = True
+            elif emu_st.get("psmove_hooked"):
+                psmove_status = "Ready (Waiting Slot)"
+                psmove_connected = False
+            elif emu_st.get("connected"):
+                psmove_status = "Game Hooked"
+                psmove_connected = False
+            else:
+                psmove_status = "Waiting for Game..."
+                psmove_connected = False
+
             ds4_samples_count += 1
             try:
                 from sensor.session_logger import get_session_logger
                 get_session_logger().record_telemetry_sample(
                     ts_ms=int(time.time() * 1000),
                     source="ds4",
-                    song_name=getattr(vphone, "current_map_name", None),
-                    coach_id=getattr(vphone, "current_coach_id", 0),
+                    song_name=None,
+                    coach_id=0,
                     is_tracked=ds4.is_connected,
                     ax=ax,
                     ay=ay,
                     az=az,
                     speed_mps=0.0,
                     cam_fps=st.sample_rate_hz,
-                    game_feedback=getattr(vphone, "_last_feedback", ""),
+                    game_feedback="",
                 )
             except Exception as e:
                 try:
@@ -898,12 +869,10 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
                 is_charging=st.is_charging,
                 is_connected=ds4.is_connected,
                 imu_frozen=st.imu_frozen,
-                vphone_status=vphone.status_text,
-                vphone_connected=vphone.connected,
+                psmove_status=psmove_status,
+                psmove_connected=psmove_connected,
+                sphere_rgb=st.psmove_sphere_rgb,
                 tot_g=tot_g,
-                current_coach=vphone.current_coach_id,
-                total_coaches=vphone.total_coaches,
-                song_name=getattr(vphone, "current_map_name", None),
                 action_toast=current_toast,
                 accel_axes=(ax, ay, az),
                 gyro_axes=st.gyro,
@@ -911,7 +880,7 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
 
             bridge.pose.write_empty()
             bridge.pose_v2.write_empty()
-            bridge.image.write_image_and_mask(frame, np.zeros((240, 320), dtype=np.uint8), tracked=True)
+            bridge.image.write_image_and_mask(frame, np.zeros((240, 320), dtype=np.uint8), tracked=False)
 
             cv2.imshow(window_name, frame)
 
@@ -929,29 +898,15 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
                 time.sleep(0.15)
                 success = ds4.connect(permissive=ds4.permissive_mode)
                 if success:
+                    ds4.set_psmove_streaming(True)
                     ds4.trigger_rumble(small=160, large=100, duration_sec=0.25)
-                    action_toast = "DualShock 4 Reconnected \u2713"
+                    action_toast = "DualShock 4 Reconnected"
                     toast_until = time.time() + 1.8
                     print("[INFO] DualShock 4 reconnected successfully!")
                 else:
                     action_toast = "[!] Reconnect Failed — Check Bluetooth/USB"
                     toast_until = time.time() + 2.0
                     print("[WARN] Failed to reconnect DualShock 4.")
-            elif key in (13, 32):
-                vphone.send_input("VALID")
-                ds4.trigger_rumble(small=160, large=80, duration_sec=0.10)
-                action_toast = "Enter / Confirm Sent \u2713"
-                toast_until = time.time() + 1.2
-            elif key in (ord('['), ord('a'), ord('A')):
-                vphone.change_coach(-1)
-                ds4.trigger_rumble(small=120, large=0, duration_sec=0.08)
-                action_toast = f"Switched to Coach {vphone.current_coach_id + 1} / {vphone.total_coaches}"
-                toast_until = time.time() + 1.2
-            elif key in (ord(']'), ord('d'), ord('D')):
-                vphone.change_coach(+1)
-                ds4.trigger_rumble(small=120, large=0, duration_sec=0.08)
-                action_toast = f"Switched to Coach {vphone.current_coach_id + 1} / {vphone.total_coaches}"
-                toast_until = time.time() + 1.2
 
             if cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1:
                 break
@@ -959,6 +914,8 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
     except Exception as e:
         print(f"[ERROR] Exception in DualShock 4 tracking loop: {e}")
     finally:
+        ds4.set_psmove_streaming(False)
+        psmove_bridge.write_inactive()
         set_realtime_process_qos(False)
         set_high_resolution_timer(False)
         try:
@@ -971,6 +928,8 @@ def run_ds4_tracking_session(config, on_close_callback=None, stop_event=None):
             })
         except Exception:
             pass
+        if local_emulator is not None and on_close_callback is None:
+            local_emulator.stop()
         bridge.write_empty()
         cv2.destroyAllWindows()
         print("[INFO] DualShock 4 tracking session ended.")

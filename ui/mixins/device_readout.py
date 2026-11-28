@@ -1,14 +1,12 @@
 """
 Device Readout & Live Status Presentation Mixin for Legacy PSCam Sensor Qt 6 GUI.
-Encapsulates real-time UI presentation updates for Phone Camera, Virtual Phone,
-DualShock 4, and Experimental mode views, decoupled from `ui/gui_qt.py`.
+Encapsulates real-time UI presentation updates for Phone Camera, DualShock 4,
+PlayStation Move Emulator, and Experimental mode views, decoupled from `ui/gui_qt.py`.
 """
 from __future__ import annotations
 
-import os
 from PySide6 import QtCore
-from PySide6.QtCore import Qt, Slot
-from PySide6.QtWidgets import QMessageBox
+from PySide6.QtCore import Qt
 
 from ui.theme import PALETTE
 
@@ -17,92 +15,14 @@ class UIDeviceReadoutMixin:
     """Mixin providing live status readout updates for connected input devices."""
 
     def _update_exp_view_for_mode(self, mode: str):
-        """Adapts the Experimental tab layout and Virtual Phone toggle according to the active controller mode."""
-        if not hasattr(self, "chk_vphone_enabled"):
-            return
-
+        """Adapts the Experimental tab layout according to the active controller mode."""
         is_ds4 = (mode == "ds4")
-        # Camera modes show full Experimental features (Warning, Auto-Frame, Virtual Phone);
-        # DualShock 4 mode keeps Experimental tab clean/empty (Scoring Bridge lives in Controller Settings).
         if hasattr(self, "exp_warn_box"):
             self.exp_warn_box.setVisible(not is_ds4)
         if hasattr(self, "auto_frame_box"):
             self.auto_frame_box.setVisible(not is_ds4)
-        if hasattr(self, "vphone_box"):
-            self.vphone_box.setVisible(not is_ds4)
         if hasattr(self, "lbl_exp_empty"):
             self.lbl_exp_empty.setVisible(is_ds4)
-
-        if is_ds4:
-            if hasattr(self, "cb_ds4_hand") and hasattr(self, "cb_vphone_hand"):
-                self.cb_vphone_hand.blockSignals(True)
-                self.cb_vphone_hand.setCurrentIndex(self.cb_ds4_hand.currentIndex())
-                self.cb_vphone_hand.blockSignals(False)
-
-            self.chk_vphone_enabled.blockSignals(True)
-            self.chk_vphone_enabled.setChecked(True)
-            self.chk_vphone_enabled.setEnabled(False)
-            self.chk_vphone_enabled.setText("Virtual Phone Controller (DualShock® 4 Scoring Bridge)")
-            self.chk_vphone_enabled.setStyleSheet(f"""
-                QCheckBox {{
-                    font-family: '{self.font_heading}';
-                    font-size: 13px;
-                    font-weight: bold;
-                    color: #94A3B8;
-                    background: transparent;
-                }}
-                QCheckBox::indicator {{
-                    width: 18px;
-                    height: 18px;
-                    border-radius: 4px;
-                    border: 1px solid #CBD5E1;
-                    background-color: #E2E8F0;
-                }}
-                QCheckBox::indicator:checked {{
-                    background-color: #94A3B8;
-                    border-color: #94A3B8;
-                }}
-            """)
-            self.chk_vphone_enabled.blockSignals(False)
-
-            if hasattr(self, "vphone_details_frame"):
-                self.vphone_details_frame.setVisible(True)
-        else:
-            self.chk_vphone_enabled.blockSignals(True)
-            self.chk_vphone_enabled.setEnabled(True)
-            self.chk_vphone_enabled.setText("Virtual Phone Controller (JD Controller via Camera)")
-            self.chk_vphone_enabled.setStyleSheet(f"""
-                QCheckBox {{
-                    font-family: '{self.font_heading}';
-                    font-size: 13px;
-                    font-weight: bold;
-                    color: {PALETTE['text_main']};
-                    background: transparent;
-                }}
-                QCheckBox::indicator {{
-                    width: 18px;
-                    height: 18px;
-                    border-radius: 4px;
-                    border: 1px solid {PALETTE["input_border"]};
-                    background-color: #FFFFFF;
-                }}
-                QCheckBox::indicator:hover {{
-                    border-color: {PALETTE["ps_blue"]};
-                }}
-                QCheckBox::indicator:checked {{
-                    background-color: {PALETTE["ps_blue"]};
-                    border-color: {PALETTE["ps_blue"]};
-                }}
-            """)
-            saved_state = bool(self.cfg.get("virtual_phone_enabled", False))
-            self.chk_vphone_enabled.setChecked(saved_state)
-            self.chk_vphone_enabled.blockSignals(False)
-
-            if hasattr(self, "vphone_details_frame"):
-                self.vphone_details_frame.setVisible(saved_state)
-            # Sync controller state when leaving DS4 so DS4 doesn't leave vphone stuck enabled in camera modes
-            if getattr(self.controller.devices, "_vphone", None) is not None:
-                self.controller.devices.set_vphone_enabled(saved_state)
 
     def _update_phone_cam_status(self):
         st = self.controller.devices.get_phone_cam_status()
@@ -147,164 +67,41 @@ class UIDeviceReadoutMixin:
         if widget.text() != text:
             widget.setText(text)
 
-    @Slot(str, int, str)
-    def _on_vphone_discover_finished(self, ip: str, port: int, code: str):
-        if getattr(self, "_is_closing", False):
-            return
-        for btn_attr in ("btn_vphone_discover", "btn_ds4_sb_discover"):
-            btn = getattr(self, btn_attr, None)
-            if btn is not None:
-                btn.setEnabled(True)
-                btn.setText("Auto-Find")
-
-        if ip:
-            self.txt_vphone_host.setText(ip)
-            if port > 0:
-                self.txt_vphone_port.setText(str(port))
-            self._apply_vphone_settings_to_controller()
-            self._save_settings()
-            if self.vphone.enabled:
-                self.controller.devices.request_vphone_reconnect()
-            info_code = f" (Pairing Code: {code})" if code else ""
-            QMessageBox.information(
-                self,
-                "Just Dance Server Found",
-                f"Game detected at {ip}:{port}{info_code}!",
-            )
-        else:
-            QMessageBox.information(
-                self,
-                "UDP Auto-Discovery",
-                "No UDP response on port 6000/7000.\n"
-                "If the game is running on the same PC, port 8080 works directly.",
-            )
-
-    def _toggle_vphone_logging(self):
+    def _update_device_readout(self):
+        """Real-time (150 ms) readout updater for DualShock 4, PS Move Emulator, and Phone Camera."""
         mode = self.cfg.get("camera_mode", "pscam")
-        src = "ds4" if mode == "ds4" else "camera"
-        is_logging, path = self.controller.devices.toggle_vphone_logging(source=src)
-        if is_logging:
-            self.btn_vphone_log.setText("Stop Log")
-            self.btn_vphone_log.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {PALETTE["blue_pastel"]};
-                    color: {PALETTE["blue_dark"]};
-                    font-family: '{self.font_heading}', sans-serif;
-                    font-size: 11px;
-                    font-weight: bold;
-                    border: 1px solid {PALETTE["ps_blue"]};
-                    border-radius: 6px;
-                    padding: 6px 14px;
-                }}
-            """)
-        else:
-            self.btn_vphone_log.setText("Record Log")
-            self.btn_vphone_log.setStyleSheet(getattr(self, "_btn_vphone_outline_style", ""))
-            if path and os.path.exists(path):
-                QMessageBox.information(
-                    self,
-                    "Telemetry Recording Finished",
-                    f"Accelerometer CSV log saved successfully to:\n{path}\n\n"
-                    "File ready for analysis and comparison with real smartphone data."
-                )
-
-    def _update_vphone_ui_readout(self):
-        # Always update DualShock 4 and Phone Camera in real-time (150ms) regardless of Virtual Phone session
-        if self.cfg.get("camera_mode") == "ds4":
+        if mode == "ds4":
             self._update_ds4_ui_readout()
-        elif self.cfg.get("camera_mode") == "phone_cam":
+            self._update_psmove_ui_readout()
+        elif mode == "phone_cam":
             self._update_phone_cam_status()
 
-        if not hasattr(self, "lbl_vphone_status") or not hasattr(self, "lbl_vphone_accel"):
+    def _update_psmove_ui_readout(self):
+        if not hasattr(self, "lbl_ds4_pm_status"):
             return
-        st = self.controller.devices.get_vphone_readout()
-        if not st.get("initialized"):
-            dis_style = (
-                f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['text_muted']}; background: transparent; border: none;"
-            )
-            self._set_text_if_changed(self.lbl_vphone_status, "Status: Disabled (Virtual Phone)")
-            self._set_style_if_changed(self.lbl_vphone_status, dis_style)
-            if hasattr(self, "lbl_ds4_sb_status"):
-                self._set_text_if_changed(self.lbl_ds4_sb_status, "Status: Disconnected")
-                self._set_style_if_changed(self.lbl_ds4_sb_status, dis_style)
+        try:
+            pm = self.controller.devices.get_psmove_readout()
+        except Exception:
             return
 
-        status = st.get("status_text", "")
-        if st.get("connected"):
+        status_text = pm.get("status_text", "Ready")
+        if pm.get("game_connected"):
             color = PALETTE["status_ok"]
-        elif st.get("enabled"):
-            color = PALETTE["status_warn"]
+        elif pm.get("streaming") or pm.get("psmove_hooked"):
+            color = PALETTE["ps_blue"]
         else:
             color = PALETTE["text_muted"]
+
         st_style = (
             f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {color}; background: transparent; border: none;"
         )
-        self._set_text_if_changed(self.lbl_vphone_status, f"Status: {status}")
-        self._set_style_if_changed(self.lbl_vphone_status, st_style)
-        if hasattr(self, "lbl_ds4_sb_status"):
-            self._set_text_if_changed(self.lbl_ds4_sb_status, f"Status: {status}")
-            self._set_style_if_changed(self.lbl_ds4_sb_status, st_style)
+        self._set_text_if_changed(self.lbl_ds4_pm_status, f"Status: {status_text}")
+        self._set_style_if_changed(self.lbl_ds4_pm_status, st_style)
 
-        lbl_song = getattr(self, "lbl_benchmark_song", getattr(self, "lbl_vphone_song", None))
-        if lbl_song is not None and lbl_song.isVisible():
-            is_watching = getattr(self, "chk_benchmark_enabled", None) and self.chk_benchmark_enabled.isChecked()
-            if is_watching and not self.vphone.enabled:
-                self.controller.devices.set_vphone_enabled(True)
-            song_name = st.get("song_name", "")
-            if song_name:
-                if st.get("is_dancing"):
-                    status_tag = " [Scoring Active - Capturing Telemetry]" if is_watching else " [Scoring Active]"
-                    color = PALETTE["ps_blue"]
-                else:
-                    status_tag = " [Lobby / Paused - Ready]" if is_watching else " [Lobby / Paused]"
-                    color = PALETTE["blue_dark"]
-                self._set_text_if_changed(lbl_song, f"Active Song: {song_name}{status_tag}")
-                self._set_style_if_changed(
-                    lbl_song,
-                    f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {color}; background: transparent; border: none;",
-                )
-            else:
-                if is_watching:
-                    msg = "Active Song: None (Watching for Just Dance song start...)"
-                else:
-                    msg = "Active Song: None (Awaiting Just Dance Selection)"
-                self._set_text_if_changed(lbl_song, msg)
-                self._set_style_if_changed(
-                    lbl_song,
-                    f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['text_muted']}; background: transparent; border: none;",
-                )
-
-        if hasattr(self, "btn_vphone_log") and self.btn_vphone_log.isVisible():
-            if st.get("is_logging"):
-                self._set_text_if_changed(self.btn_vphone_log, "Stop Log (REC)")
-                self._set_style_if_changed(
-                    self.btn_vphone_log,
-                    f"""
-                    QPushButton {{
-                        background-color: {PALETTE["blue_pastel"]};
-                        color: {PALETTE["blue_dark"]};
-                        font-family: '{self.font_heading}', sans-serif;
-                        font-size: 11px;
-                        font-weight: bold;
-                        border: 1px solid {PALETTE["ps_blue"]};
-                        border-radius: 6px;
-                        padding: 6px 14px;
-                    }}
-                """,
-                )
-            else:
-                self._set_text_if_changed(self.btn_vphone_log, "Record Log")
-                self._set_style_if_changed(self.btn_vphone_log, getattr(self, "_btn_vphone_outline_style", ""))
-
-        should_show_accel = getattr(self, "is_tracking_active", False)
-        if self.lbl_vphone_accel.isVisible() != should_show_accel:
-            self.lbl_vphone_accel.setVisible(should_show_accel)
-        if should_show_accel:
-            ax, ay, az = self.vphone.latest_accel
-            spd = getattr(self.vphone.accelerometer, "latest_speed", 0.0)
-            self.lbl_vphone_accel.setText(
-                f"3D Accelerometer: X: {ax:+.2f}G | Y: {ay:+.2f}G | Z: {az:+.2f}G ({spd:.1f} m/s)"
-            )
+        if hasattr(self, "lbl_psmove_swatch"):
+            r, g, b = pm.get("sphere_rgb", (0, 67, 156))
+            swatch_css = f"background-color: rgb({r}, {g}, {b}); border: 1px solid #CBD5E1; border-radius: 6px;"
+            self._set_style_if_changed(self.lbl_psmove_swatch, swatch_css)
 
     def _update_ds4_ui_readout(self):
         if not hasattr(self, "lbl_ds4_status") or not hasattr(self, "lbl_ds4_accel"):
@@ -387,7 +184,6 @@ class UIDeviceReadoutMixin:
                     self.lbl_ds4_status,
                     f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['status_warn']}; background: transparent; border: none;",
                 )
-                # Use DeviceController.is_connecting_ds4 as single source of truth (prevents reconnect deadlock)
                 if not self.controller.devices.is_connecting_ds4 and not getattr(self, "is_tracking_active", False):
                     def _done(_ok):
                         if getattr(self, "_is_closing", False):

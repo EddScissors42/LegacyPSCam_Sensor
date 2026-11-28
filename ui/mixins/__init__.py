@@ -6,13 +6,13 @@ while keeping `LegacySensorQtGUI` (`ui/gui_qt.py`) lean and readable.
 from .device_readout import UIDeviceReadoutMixin
 from .camera_handlers import UICameraHandlersMixin
 from .phone_handlers import UIPhoneHandlersMixin
-from .ds4_vphone_handlers import UIDS4VPhoneHandlersMixin
+from .ds4_handlers import UIDS4HandlersMixin
 from .tracking_handlers import UITrackingHandlersMixin
 
 __all__ = [
     "UIDeviceReadoutMixin",
     "UICameraHandlersMixin",
     "UIPhoneHandlersMixin",
-    "UIDS4VPhoneHandlersMixin",
+    "UIDS4HandlersMixin",
     "UITrackingHandlersMixin",
 ]

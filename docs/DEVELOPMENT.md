@@ -73,7 +73,7 @@ if target_fps >= 50 and not is_pscam:
 O arquivo mapeado `Local\LegacyWebcamKinectPose` deve ter exatamente **344 bytes** e o protocolo seqlock deve alternar entre ímpar durante escrita e par ao finalizar.
 
 ### 5. Desacoplamento Estrito entre UI e Backend (Padrão MVP / Controllers)
-Toda lógica de hardware (câmeras, DirectShow, WinUSB), rede (WebSockets UbiArt, servidores HTTPS Phone Camera), dispositivos (DualShock 4 HID) e ciclo de vida de sessões de tracking DEVE residir exclusivamente nos controladores em `ui/controllers/` (`CameraController`, `DeviceController`, `SessionController`, unificados por `SensorAppController`). A classe `LegacySensorQtGUI` em `ui/gui_qt.py` deve atuar puramente como camada View de apresentação visual, delegando operações para `self.controller` e reagindo a sinais Qt thread-safe.
+Toda lógica de hardware (câmeras, DirectShow, WinUSB), rede (servidores HTTPS/WSS Phone Camera), dispositivos (DualShock 4 HID e ponte IPC PlayStation Move) e ciclo de vida de sessões de tracking DEVE residir exclusivamente nos controladores em `ui/controllers/` (`CameraController`, `DeviceController`, `SessionController`, unificados por `SensorAppController`). A classe `LegacySensorQtGUI` em `ui/gui_qt.py` deve atuar puramente como camada View de apresentação visual, delegando operações para `self.controller` e reagindo a sinais Qt thread-safe.
 
 ### 6. Templates Estáticos WebApp, Rastreabilidade de Exceções e Dependências Limitadas
 - **Templates HTML5 Externos:** Os templates HTML/CSS/JS do Phone Camera WebApp residem em `assets/webapp/` (`mobile_webapp.html` e `expired_session.html`) e são carregados dinamicamente por `load_webapp_html()` em `sensor/phone_camera.py`, evitando strings HTML/JS gigantes hardcoded no código Python.
@@ -97,7 +97,7 @@ Você também pode executar diretamente a suíte modular `unittest` (compatível
 python -m unittest discover -s LegacyPSCam_Sensor/tests -v
 ```
 
-A suíte cobre 19 áreas integradas (`19/19 PASSED`) mais os módulos dedicados em `tests/` (`test_vphone_protocol.py`, `test_tracking_math.py`, `test_controllers_and_cli.py`):
+A suíte cobre 19 áreas integradas (`19/19 PASSED`) mais os módulos dedicados em `tests/` (`test_tracking_math.py`, `test_controllers_and_cli.py`):
 
 | Teste | Módulo Testado | Critério de Sucesso |
 |---|---|---|
@@ -110,11 +110,11 @@ A suíte cobre 19 áreas integradas (`19/19 PASSED`) mais os módulos dedicados 
 | `test_pose_tracker` | `sensor/pose_tracker.py` & `body_mask.py` | Rajada de frames com intervalo < 1ms sem disparar exceção de timestamp, máscara anatômica 320x240 e auto-framing `FaceFollowPTZ`. |
 | `test_overlay` | `sensor/tracking_overlay.py` | Renderização do HUD, silhueta ROI e esqueleto sem falhas numpy. |
 | `test_camera_manager` | `sensor/camera_manager.py`, `camera_win32.py`, `framebus_reader.py` & `camera_capture.py` | Snapshot PnP ultrarrápido (< 3ms via `cfgmgr32.dll`), máquina de estados da PS4 Camera, enumeração OpenCV/SetupAPI, leitor `FrameBusReader`, detecção rápida de quadro preto e auto-crop de stereo Side-by-Side. |
-| `test_telemetry_and_adaptive_benchmark` | `sensor/telemetry_benchmark.py` | Correlação cruzada de telemetria, parsing de CSV, auto-registro por ciclo de dança, detecção de processo e mapa em memória, e calibração adaptativa. |
+| `test_telemetry_and_adaptive_benchmark` | `sensor/telemetry_benchmark.py` & `sensor/psmove_shared_memory.py` | Correlação cruzada de telemetria CSV, contrato binário `Local\LegacyPSMoveState` (`PSM1` 128B), rotação 3D da pegada vertical ("joinha"), relatório ZCM2 de 49 bytes, bitmask de botões, retorno RGB/rumble e integridade binária PE32/PE32+ de `LegacyMove.dll` / `LegacyMove_x64.dll`. |
 | `test_ps4_native_backend` | `sensor/ps4_backend/` | Verificação de pacote INF, validação SHA-1/SHA-256 do firmware OV580, depacketizer UVC, demultiplexação independente dos dois sensores (Olho Direito e Esquerdo) e captura ao vivo em hardware físico a 60 FPS. |
 | `test_stereo_vision_engine` | `sensor/stereo_matcher.py` | Calibração de fábrica rígida ($B=85.2\text{ mm}$), sinal correto de `stereoRectify`, triangulação sub-pixel `PyrLK` (curta ~1m em 1280x800 e longa >3.2m no olho direito) + auto-calibração vertical epipolar, máscara de profundidade densa (320x240) e integração com `SkeletonCalibrator`. |
-| `test_ds4_controller` | `sensor/ds4_controller.py` | Identificação de VID/PID oficiais e clones (ShanWan, DragonRise), filtro permissivo, pontuação de interface HID, CRC-32 de Output Report `0x11` e travamento de escala IMU em repouso (proteção contra golpes > 1.46 G). |
-| `test_kinect_emulator` | `sensor/kinect_emulator.py` | Ciclo de vida do daemon em segundo plano para Just Dance Legacy 32-bit, match exato de executável (anti-substring), validação PE32 do fallback `0x9CD250`, persistência de configuração, integridade binária da `Legacy10.dll` e roteamento de callbacks de status. |
+| `test_ds4_controller` | `sensor/ds4_controller.py` | Identificação de VID/PID oficiais e clones (ShanWan, DragonRise), filtro permissivo, pontuação de interface HID, CRC-32 de Output Report `0x11`, gatilho analógico `R2`, streaming PS Move (`set_psmove_streaming`), sincronia Light Bar/rumble e travamento de escala IMU em repouso. |
+| `test_kinect_emulator` | `sensor/kinect_emulator.py` | Ciclo de vida do daemon em segundo plano para Just Dance Legacy 32-bit e Legacy Lab / Legacy Lab Offline 64-bit, match exato de executável (anti-substring), validação PE32/PE32+, integridade binária de `Legacy10*.dll` e `LegacyMove*.dll`, chave `psmove_hooked` e roteamento de callbacks de status. |
 | `test_session_logger` | `sensor/session_logger.py` | Rotação/limpeza automática de sessão anterior, diagnóstico de sistema (SO, CPU, RAM), mapeamento de controles, streaming CSV assíncrono com escaping `csv.writer`, drenagem sem perda de linhas e restauração de exception hooks. |
 | `test_person_lock_subsystem` | `sensor/person_lock.py` & `sensor/pose_filters.py` | Predição inercial em micro-quedas (coasting 3D/2D + translação de máscara + LERP de reentrada), trava de identidade por histograma HSV do tronco e continuidade espacial, fallback anti-giro 360° e zoom adaptativo no `FaceFollowPTZ`, e chaves modulares de bypass. |
 | `test_arm_raise_gesture` | `sensor/gesture_detector.py` | Máquina de estados do gesto de braço levantado (`[ENTER]`), progresso percentual, disparo e cooldown. |

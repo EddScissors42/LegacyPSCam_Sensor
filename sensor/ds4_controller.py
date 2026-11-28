@@ -25,7 +25,13 @@ import time
 from typing import Callable, Dict, List, Optional, Tuple
 import zlib
 
-from sensor.virtual_phone import get_virtual_phone
+from sensor.psmove_shared_memory import (
+    DS4_GYRO_LSB_PER_RAD_S,
+    buttons_dict_to_psmove_mask,
+    ds4_to_psmove_imu,
+    encode_psmove_battery,
+    get_psmove_bridge,
+)
 
 # Windows API constants
 GENERIC_READ = 0x80000000
@@ -448,19 +454,25 @@ class DS4State:
     is_charging: bool = False
     accel_g: Tuple[float, float, float] = (0.0, 1.0, 0.0)
     gyro: Tuple[int, int, int] = (0, 0, 0)
+    gyro_rad_s: Tuple[float, float, float] = (0.0, 0.0, 0.0)
+    trigger_analog: int = 0
     buttons: Dict[str, bool] = field(default_factory=dict)
     sample_rate_hz: float = 0.0
     last_update_ts: float = 0.0
     imu_frozen: bool = False
     controller_name: str = "DualShock 4"
+    psmove_game_connected: bool = False
+    psmove_sphere_rgb: Tuple[int, int, int] = (0, 67, 156)
+    psmove_rumble: int = 0
 
 
 class DS4Controller:
     """
     Manages low-level Bluetooth and USB HID communication with a Sony DualShock 4 controller.
     Runs a dedicated background thread to read Report 0x01 (USB/BT) or Report 0x11 (BT Extended),
-    unpacks motion sensors, and dispatches button events and G-force samples to the Just Dance
-    Virtual Phone bridge.
+    unpacks 6-axis motion sensors (accelerometer + gyroscope) and buttons, streams them directly
+    into the PlayStation Move (ZCM2) shared memory emulator (`Local\\LegacyPSMoveState`), and
+    synchronizes the game's sphere RGB color & rumble back to the DualShock 4 Light Bar & motors.
     """
 
     DPAD_MAP = {
@@ -474,6 +486,8 @@ class DS4Controller:
         7: {"up": True, "right": False, "down": False, "left": True},
         8: {"up": False, "right": False, "down": False, "left": False},
     }
+
+    DEFAULT_LED_RGB: Tuple[int, int, int] = (0, 67, 156)
 
     def __init__(self) -> None:
         self._handle: Optional[wintypes.HANDLE] = None
@@ -490,14 +504,17 @@ class DS4Controller:
         self.hand: str = "right"
         self.sensitivity: float = 1.0
         self.permissive_mode: bool = True
+        self.sync_lightbar: bool = True
+        self.psmove_grip: str = "vertical"
+        self._psmove_streaming: bool = False
 
         # State snapshot
         self.state = DS4State()
 
         # Lightbar color (R, G, B) — Default: PlayStation Blue
-        self.led_r: int = 0
-        self.led_g: int = 67
-        self.led_b: int = 156
+        self.led_r: int = self.DEFAULT_LED_RGB[0]
+        self.led_g: int = self.DEFAULT_LED_RGB[1]
+        self.led_b: int = self.DEFAULT_LED_RGB[2]
 
         # Previous button state for edge triggering
         self._prev_buttons: Dict[str, bool] = {}
@@ -505,6 +522,23 @@ class DS4Controller:
         # Callbacks
         self.on_state_update: Optional[Callable[[DS4State], None]] = None
         self.on_button_press: Optional[Callable[[str], None]] = None
+
+    @property
+    def psmove_streaming(self) -> bool:
+        return self._psmove_streaming
+
+    def set_psmove_streaming(self, enabled: bool) -> None:
+        """Enables or disables live DualShock 4 -> PlayStation Move ZCM2 shared memory streaming."""
+        self._psmove_streaming = bool(enabled)
+        if not self._psmove_streaming:
+            try:
+                get_psmove_bridge().write_inactive()
+            except Exception:
+                pass
+            self.state.psmove_game_connected = False
+            self.state.psmove_rumble = 0
+            self.state.psmove_sphere_rgb = self.DEFAULT_LED_RGB
+            self.set_lightbar(*self.DEFAULT_LED_RGB)
 
     @property
     def is_connected(self) -> bool:
@@ -720,7 +754,12 @@ class DS4Controller:
         return scale_lsb, scale_locked, prev_mag
 
     def disconnect(self) -> None:
-        """Safely shuts down HID polling, turns off the lightbar, joins worker thread, and closes handle."""
+        """Safely shuts down HID polling, marks PS Move inactive, turns off lightbar, joins worker thread, and closes handle."""
+        self._psmove_streaming = False
+        try:
+            get_psmove_bridge().write_inactive()
+        except Exception:
+            pass
         self._stop_event.set()
         with self._lock:
             h_active = self._handle
@@ -935,9 +974,13 @@ class DS4Controller:
         buf = (ctypes.c_ubyte * buf_len)()
         bytes_read = wintypes.DWORD()
 
-        vphone = get_virtual_phone()
+        psmove_bridge = get_psmove_bridge()
         last_out_refresh = time.perf_counter()
         last_wake_poke = time.perf_counter()
+        last_fb_poll = time.perf_counter()
+        last_fb_seq = -1
+        last_game_connected = False
+        last_applied_output: Tuple[int, int, int, int] = (self.led_r, self.led_g, self.led_b, 0)
 
         samples_count = 0
         samples_time_start = time.perf_counter()
@@ -950,6 +993,11 @@ class DS4Controller:
         scale_locked: bool = False
         rest_mag_samples: List[float] = []
         prev_raw_mag: Optional[float] = None
+
+        # Auto gyro zero-bias estimator during brief stillness (prevents PS Move menu flick drift)
+        gyro_bias = [0.0, 0.0, 0.0]
+        gyro_bias_samples: List[Tuple[int, int, int]] = []
+        gyro_bias_locked = False
 
         self.state.connected = True
         self.state.is_usb = self.is_usb
@@ -972,12 +1020,13 @@ class DS4Controller:
             now = time.perf_counter()
             rep_id = data[0]
 
-            # Determine button offsets and default motion offset based on report ID
+            # Determine button/trigger offsets and default motion offset based on report ID
             if rep_id == 0x01:
                 # Standard USB / Bluetooth basic report
                 dpad_byte = data[5] if len(data) > 5 else 0x08
                 btn_byte1 = data[6] if len(data) > 6 else 0
                 btn_byte2 = data[7] if len(data) > 7 else 0
+                r2_analog_raw = data[9] if len(data) > 9 else -1
                 batt_byte = data[30] if len(data) > 30 else 0
                 default_offset = 13
             elif rep_id in range(0x11, 0x20):
@@ -985,6 +1034,7 @@ class DS4Controller:
                 dpad_byte = data[7] if len(data) > 7 else 0x08
                 btn_byte1 = data[8] if len(data) > 8 else 0
                 btn_byte2 = data[9] if len(data) > 9 else 0
+                r2_analog_raw = data[11] if len(data) > 11 else -1
                 batt_byte = data[32] if len(data) > 32 else 0
                 default_offset = 15
             elif rep_id == 0x31:
@@ -992,6 +1042,7 @@ class DS4Controller:
                 dpad_byte = data[8] if len(data) > 8 else 0x08
                 btn_byte1 = data[9] if len(data) > 9 else 0
                 btn_byte2 = data[10] if len(data) > 10 else 0
+                r2_analog_raw = data[6] if len(data) > 6 else -1
                 batt_byte = data[53] if len(data) > 53 else 0
                 default_offset = 16
             elif len(data) >= 64:
@@ -999,6 +1050,7 @@ class DS4Controller:
                 dpad_byte = data[4] if len(data) > 4 else 0x08
                 btn_byte1 = data[5] if len(data) > 5 else 0
                 btn_byte2 = data[6] if len(data) > 6 else 0
+                r2_analog_raw = data[8] if len(data) > 8 else -1
                 batt_byte = data[29] if len(data) > 29 else 0
                 default_offset = 12
             else:
@@ -1006,6 +1058,7 @@ class DS4Controller:
                 dpad_byte = data[5] if len(data) > 5 else 0x08
                 btn_byte1 = data[6] if len(data) > 6 else 0
                 btn_byte2 = data[7] if len(data) > 7 else 0
+                r2_analog_raw = -1
                 batt_byte = 0
                 default_offset = -1
 
@@ -1119,11 +1172,11 @@ class DS4Controller:
             raw_ay = (acc_y / detected_scale_lsb) * self.sensitivity
             raw_az = (acc_z / detected_scale_lsb) * self.sensitivity
 
-            phone_ax = round(raw_ax, 4)
-            phone_ay = round(raw_ay, 4)
-            phone_az = round(raw_az, 4)
+            accel_ax = round(raw_ax, 4)
+            accel_ay = round(raw_ay, 4)
+            accel_az = round(raw_az, 4)
 
-            accel_mag = math.sqrt(phone_ax * phone_ax + phone_ay * phone_ay + phone_az * phone_az)
+            accel_mag = math.sqrt(accel_ax * accel_ax + accel_ay * accel_ay + accel_az * accel_az)
             if accel_mag < 0.05:
                 if consecutive_zero_accel >= 40 and not self.state.imu_frozen:
                     self.state.imu_frozen = True
@@ -1131,9 +1184,26 @@ class DS4Controller:
                 if self.state.imu_frozen:
                     self.state.imu_frozen = False
 
-            # Feed to Virtual Phone scoring bridge if enabled
-            if vphone.enabled:
-                vphone.update_from_hardware_accel(phone_ax, phone_ay, phone_az)
+            # Resting gyroscope zero-bias calibration (auto-locks after ~50 still samples)
+            if not gyro_bias_locked:
+                if abs(gyro_x) < 180 and abs(gyro_y) < 180 and abs(gyro_z) < 180:
+                    gyro_bias_samples.append((gyro_x, gyro_y, gyro_z))
+                    if len(gyro_bias_samples) >= 50:
+                        n_b = float(len(gyro_bias_samples))
+                        gyro_bias[0] = sum(s[0] for s in gyro_bias_samples) / n_b
+                        gyro_bias[1] = sum(s[1] for s in gyro_bias_samples) / n_b
+                        gyro_bias[2] = sum(s[2] for s in gyro_bias_samples) / n_b
+                        gyro_bias_locked = True
+                else:
+                    gyro_bias_samples.clear()
+
+            gx_rad = ((gyro_x - gyro_bias[0]) / DS4_GYRO_LSB_PER_RAD_S) * self.sensitivity
+            gy_rad = ((gyro_y - gyro_bias[1]) / DS4_GYRO_LSB_PER_RAD_S) * self.sensitivity
+            gz_rad = ((gyro_z - gyro_bias[2]) / DS4_GYRO_LSB_PER_RAD_S) * self.sensitivity
+
+            trigger_val = r2_analog_raw if r2_analog_raw >= 0 else (255 if btn_r2 else 0)
+            if btn_r2 and trigger_val < 200:
+                trigger_val = 255
 
             curr_buttons = {
                 "cross": btn_cross,
@@ -1154,17 +1224,78 @@ class DS4Controller:
                 "touchpad": btn_touch,
             }
 
-            # Edge triggering for button actions (send once per press)
+            # Edge triggering for button press callbacks & session log
             for btn_name, is_pressed in curr_buttons.items():
                 was_pressed = self._prev_buttons.get(btn_name, False)
                 if is_pressed and not was_pressed:
-                    self._handle_button_press(btn_name, vphone)
+                    self._handle_button_press(btn_name)
 
             self._prev_buttons = curr_buttons
 
             # Battery level parsing
             batt_level = min(100, (batt_byte & 0x0F) * 10)
             is_charging = bool(batt_byte & 0x10)
+
+            # Stream 6-axis IMU + buttons to PlayStation Move ZCM2 Shared Memory when active
+            if self._psmove_streaming:
+                acc_counts, gyro_counts = ds4_to_psmove_imu(
+                    (accel_ax, accel_ay, accel_az),
+                    (gx_rad, gy_rad, gz_rad),
+                    grip=self.psmove_grip,
+                )
+                btn_mask = buttons_dict_to_psmove_mask(curr_buttons, trigger_analog=trigger_val)
+                batt_code = encode_psmove_battery(batt_level, is_charging=is_charging)
+                psmove_bridge.write_state(
+                    active=True,
+                    accel_counts=acc_counts,
+                    gyro_counts=gyro_counts,
+                    buttons_mask=btn_mask,
+                    trigger_analog=trigger_val,
+                    battery_code=batt_code,
+                )
+
+                # Poll Game -> Sensor feedback (~30 Hz) to sync PS Move sphere RGB & rumble to DS4
+                if (now - last_fb_poll) >= 0.033:
+                    last_fb_poll = now
+                    fb = psmove_bridge.read_feedback()
+                    game_conn = bool(fb.get("game_connected", False))
+                    fb_seq = int(fb.get("fb_seq", 0))
+                    sphere_rgb = tuple(fb.get("led_rgb", self.DEFAULT_LED_RGB))
+                    rumble_val = int(fb.get("rumble", 0))
+
+                    self.state.psmove_game_connected = game_conn
+                    self.state.psmove_rumble = rumble_val if game_conn else 0
+                    if game_conn and any(c > 0 for c in sphere_rgb):
+                        self.state.psmove_sphere_rgb = sphere_rgb
+                    elif not game_conn:
+                        self.state.psmove_sphere_rgb = self.DEFAULT_LED_RGB
+
+                    if self.sync_lightbar:
+                        if game_conn and fb_seq != last_fb_seq:
+                            last_fb_seq = fb_seq
+                            lr, lg, lb = sphere_rgb if any(c > 0 for c in sphere_rgb) else self.DEFAULT_LED_RGB
+                            target_out = (lr, lg, lb, rumble_val)
+                            if target_out != last_applied_output:
+                                last_applied_output = target_out
+                                self.led_r, self.led_g, self.led_b = lr, lg, lb
+                                with self._lock:
+                                    if self._handle and not self._stop_event.is_set():
+                                        self._send_output_report(
+                                            r=lr,
+                                            g=lg,
+                                            b=lb,
+                                            rumble_small=rumble_val,
+                                            rumble_large=rumble_val,
+                                        )
+                        elif last_game_connected and not game_conn:
+                            # Game closed PS Move handle -> restore PlayStation Blue & stop rumble
+                            dr, dg, db = self.DEFAULT_LED_RGB
+                            self.led_r, self.led_g, self.led_b = dr, dg, db
+                            last_applied_output = (dr, dg, db, 0)
+                            with self._lock:
+                                if self._handle and not self._stop_event.is_set():
+                                    self._send_output_report(r=dr, g=dg, b=db, rumble_small=0, rumble_large=0)
+                    last_game_connected = game_conn
 
             # Update sample rate counter
             samples_count += 1
@@ -1175,8 +1306,10 @@ class DS4Controller:
                 samples_time_start = now
 
             # Update state snapshot
-            self.state.accel_g = (phone_ax, phone_ay, phone_az)
+            self.state.accel_g = (accel_ax, accel_ay, accel_az)
             self.state.gyro = (gyro_x, gyro_y, gyro_z)
+            self.state.gyro_rad_s = (round(gx_rad, 3), round(gy_rad, 3), round(gz_rad, 3))
+            self.state.trigger_analog = trigger_val
             self.state.buttons = curr_buttons
             self.state.battery_pct = batt_level
             self.state.is_charging = is_charging
@@ -1185,41 +1318,23 @@ class DS4Controller:
             if self.on_state_update is not None:
                 self.on_state_update(self.state)
 
-            # Periodic heartbeat (every 4s) to keep lightbar/rumble alive
+            # Periodic heartbeat (every 4s) to keep lightbar alive
             if now - last_out_refresh > 4.0:
                 last_out_refresh = now
                 with self._lock:
                     if self._handle and not self._stop_event.is_set():
                         self._send_output_report(self.led_r, self.led_g, self.led_b)
 
-    def _handle_button_press(self, btn: str, vphone) -> None:
-        """
-        Handles physical button presses on the DualShock 4:
-          - L1: Previous Coach (cycle backward)
-          - R1: Next Coach (cycle forward)
-        Face buttons (Cross/X, Circle, Triangle, Square) remain intentionally unmapped
-        to prevent accidental inputs/missclicks when holding or gripping the controller
-        firmly during dance moves.
-        """
+    def _handle_button_press(self, btn: str) -> None:
+        """Dispatches physical DualShock 4 button press callbacks and logs to session telemetry."""
         if self.on_button_press is not None:
             self.on_button_press(btn)
 
         try:
             from sensor.session_logger import get_session_logger
-            coach_id = getattr(vphone, "current_coach_id", 0) if vphone else 0
-            get_session_logger().log_controller_button(btn.upper(), coach_id=coach_id, action="press")
+            get_session_logger().log_controller_button(btn.upper(), coach_id=0, action="press")
         except Exception:
             pass
-
-        if not vphone or not vphone.enabled:
-            return
-
-        if btn == "l1":
-            vphone.change_coach(-1)
-            self.trigger_rumble(small=120, large=0, duration_sec=0.08)
-        elif btn == "r1":
-            vphone.change_coach(+1)
-            self.trigger_rumble(small=120, large=0, duration_sec=0.08)
 
 
 _global_ds4_controller: Optional[DS4Controller] = None

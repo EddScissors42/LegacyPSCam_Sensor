@@ -180,7 +180,7 @@ python main.py [--version] [--portable] [--start] [--mode {pscam,webcam,phone_ca
   - `pscam`: Seleciona as otimizações para a PlayStation 4 Camera (60 FPS, YUY2/NV12, Stereo Vision padrão).
   - `webcam`: Seleciona as otimizações para webcams convencionais (30/60 FPS DirectShow).
   - `phone_cam`: Seleciona o modo Smartphone Camera via Wi-Fi WebApp (QR Code + TLS/WSS).
-  - `ds4`: Inicia o modo de controle sem fio/USB DualShock 4 (IMU 500+ Hz via Virtual Phone).
+  - `ds4`: Inicia o modo de controle sem fio/USB DualShock 4 emulando um PlayStation Move nativo (ZCM2 via `Local\LegacyPSMoveState`).
 - `--camera <int>`: Define o índice numérico do dispositivo de vídeo a ser aberto pelo OpenCV (`0`, `1`, etc.), aplicado tanto no modo `--start` quanto na GUI.
 
 ---
@@ -226,7 +226,7 @@ Para desenvolvedores que importam os módulos internamente:
 - `check_arm_raised(px_joints) -> bool`: Avalia os 20 joints 2D do jogador (`px_joints`), retornando `True` caso o pulso e a mão esquerda ou direita estejam confortavelmente elevados acima do nível da cabeça ou ombros.
 - `dispatch_enter_keystroke() -> None`: Dispara de forma assíncrona (thread desacoplada) o evento físico de teclado `VK_RETURN` (`0x0D`, scan code `0x1C`) para o processo do Just Dance PC via `ctypes.windll.user32.keybd_event`.
 - `ArmRaiseGestureDetector(enabled=True, hold_seconds=2.0, cooldown_seconds=2.5, dispatch_keystroke=True)`:
-  - `update(px_joints, is_tracked, vphone=None, now=None) -> dict` / `update_multi(players_px_joints, is_tracked=True, vphone=None, now=None) -> dict`: Gerencia a máquina de estados do gesto em 1P e 2P (reiniciando o temporizador ao alternar de jogador ativo entre P1 e P2), retorna schema consistente incluindo `"hand_pos"`, aciona `Enter` / `VALID` ao completar `hold_seconds` e aplica cooldown.
+  - `update(px_joints, is_tracked, now=None) -> dict` / `update_multi(players_px_joints, is_tracked=True, now=None) -> dict`: Gerencia a máquina de estados do gesto em 1P e 2P (reiniciando o temporizador ao alternar de jogador ativo entre P1 e P2), retorna schema consistente incluindo `"hand_pos"`, aciona `Enter` ao completar `hold_seconds` e aplica cooldown.
 
 ### `pose_tracker.PoseTracker`
 - `PoseTracker(model_path=None, detection_confidence=0.5, smoothing_alpha=0.55, target_height_m=1.75, cfg=None, model_variant=None)`: Construtor do motor de IA (`model_variant` aceita `"lite"` ou `"full"`, com fallback automático de `"heavy"` legado para `"full"`).
@@ -307,7 +307,6 @@ O pacote `ui` expõe uma interface modular baseada exclusivamente em **PySide6 (
 - `ui.LegacySensorGUI`: Alias padrão para `LegacySensorQtGUI`.
 - `ui.pages`: Exporta `UIPagesMixin` com os construtores declarativos das 4 páginas (`_build_video_view`, `_build_calib_view`, `_build_exp_view`, `_build_ds4_view`).
 - `ui.widgets`: Exporta `pil_to_qpixmap`, `SlidingStackedWidget`, `DeviceNavCard`, `CalibPresetCard` e `SettingBlock`.
-- `ui.benchmark_dialog`: Exporta `TelemetryBenchmarkChart` e `TelemetryBenchmarkDialog`.
 - `ui.HAS_QT -> bool`: Booleano que indica se o PySide6 está instalado e operacional.
 
 ---
@@ -339,6 +338,8 @@ Módulo nativo Windows HID (zero dependências) para leitura de alta taxa (500+ 
 - `DS4Controller.disconnect() -> None`: Desativa a barra de luz e fecha o handle Win32 de forma segura.
 - `DS4Controller.trigger_rumble(small, large, duration_sec) -> None`: Dispara um pulso háptico assíncrono.
 - `DS4Controller.set_lightbar(r, g, b) -> None`: Altera a cor RGB da barra de luz LED.
+- `DS4Controller.set_psmove_streaming(enabled: bool) -> None`: Ativa ou desativa a alimentação contínua da memória compartilhada `Local\LegacyPSMoveState` e o loop de retorno (30 Hz) da esfera RGB e rumble do jogo para o DualShock 4.
+- `DS4Controller.set_sync_lightbar(enabled: bool) -> None`: Controla se a Light Bar e os motores de vibração do DualShock 4 espelham os relatórios `0x06`/`0x02` do PlayStation Move enviados pelo Just Dance.
 - `DS4State`: Dataclass contendo:
   - `connected: bool`
   - `is_usb: bool`
@@ -347,9 +348,11 @@ Módulo nativo Windows HID (zero dependências) para leitura de alta taxa (500+ 
   - `accel_g: Tuple[float, float, float]`
   - `gyro: Tuple[float, float, float]`
   - `buttons: Dict[str, bool]`
+  - `trigger_r2: int`: Valor analógico do gatilho `R2` (`0..255`), mapeado 1:1 para o gatilho `T` do PS Move.
   - `sample_rate_hz: float`
   - `imu_frozen: bool`: Flag booleana que acusa quando a magnitude do acelerômetro é $< 0.05G$ por 50 leituras seguidas (sensor ausente ou sem envio pelo Bluetooth).
   - `controller_name: str`: Nome legível do controle conectado.
+  - `psmove_streaming: bool`: Indica se o controle está transmitindo ativamente para o emulador PlayStation Move ZCM2.
 
 ### Estrutura do Pacote Bluetooth Output Report 0x11 (78 Bytes)
 - **Byte 0:** `0x11` (Report ID)
@@ -362,21 +365,42 @@ Módulo nativo Windows HID (zero dependências) para leitura de alta taxa (500+ 
 
 ---
 
-## 9. Celular Virtual e Auto-Detecção de Músicas (`sensor.virtual_phone`)
+## 9. Emulação Nativa de PlayStation Move ZCM2 (`sensor.psmove_shared_memory` & `tools/LegacyMove*.dll`)
 
-O módulo `sensor.virtual_phone` gerencia a comunicação com o Just Dance através do protocolo WebSocket `/smartphone` (v1/v2):
+O módulo `sensor.psmove_shared_memory` e as bibliotecas proxy in-process `tools/LegacyMove.dll` (32-bit) e `tools/LegacyMove_x64.dll` (64-bit) emulam um **PlayStation Move Motion Controller ZCM2** (`VID 0x054C / PID 0x0C5E`) diretamente na memória do Just Dance PC (`Legacy.exe`, `Legacy Lab.exe` e `LegacyLab_Offline.exe`).
 
-### Funções de Auto-Detecção de Processo e Música Ativa
-- `find_just_dance_pids() -> List[int]`: Enumera os processos em execução via `CreateToolhelp32Snapshot` Win32 buscando instâncias de `Legacy.exe`, `justdance.exe` e variantes `jd20*`/`jd21*`/`jd22*` (latência ~0.5ms).
-- `detect_active_song_from_game_process() -> str`: Varre páginas de dados privadas (`MEM_COMMIT`, ignorando `MEM_IMAGE` e páginas executáveis) do processo Just Dance com um buffer reutilizável pré-alocado de 1 MB para localizar a stream ativa `/map/<MapName>/...webm`. Converte o identificador do mapa (ex: `SmalltownBoy`) no título formatado da música (`Smalltown Boy`).
-- `VirtualPhoneController.current_song`: Propriedade que retorna o nome da música ativa, executando a busca em memória sob demanda apenas quando a gravação de telemetria ou benchmark automático estiverem ativos (`auto_record_enabled` ou `_logging_enabled`), com intervalo mínimo de 2.5s.
+### 9.1 Contrato Binário da Memória Compartilhada (`Local\LegacyPSMoveState` — 128 Bytes)
+- **Identificador (Tag):** `Local\LegacyPSMoveState`
+- **Tamanho Total:** Exatamente **128 bytes** (Little-Endian), divididos em dois blocos independentes de 64 bytes:
 
-### `sensor.virtual_phone.HandAccelerometer`
-- `HandAccelerometer(hand="right", sensitivity=1.0)`: Converte as 20 articulacoes do Kinect em aceleracao 3D [ax, ay, az] compativel com o protocolo de pontuacao de smartphone do Just Dance.
-  - **Filtro de Velocidade Pre-Derivada:** Filtro exponencial com tau = 45ms para supressao de ruido de segunda ordem.
-  - **Escala de Forca G Calibrada:** Ganho calibrado contra ground truth de controle fisico DualShock 4 (Smalltown Boy).
-  - **Teto Vetorial 3D:** Clamping de magnitude Euclidiana a 7.0G maximo.
-  - **Convencao de Eixos:** Screen-relative (+Y ao longo do antebraco, +Z em direcao ao dancarino).
+#### Bloco Sensor → Jogo (`0x00 - 0x3F`, 64 bytes — Seqlock `<IIIIQffffffIIBBBB`)
+| Offset | Campo | Tipo | Descrição |
+|---|---|---|---|
+| `0x00 - 0x03` | `magic` | `uint32` | `0x314D5350` (`'PSM1'`). |
+| `0x04 - 0x07` | `version` | `uint32` | `1`. |
+| `0x08 - 0x0B` | `seq` | `uint32` | Contador seqlock (ímpar durante gravação, par ao concluir). |
+| `0x0C - 0x0F` | `active` | `uint32` | `1` quando o modo DS4 está ativo; `0` torna o PS Move virtual 100% invisível ao jogo. |
+| `0x10 - 0x17` | `timestamp_ms` | `uint64` | Timestamp Unix em milissegundos. |
+| `0x18 - 0x23` | `accel_x/y/z` | `3 × float32` | Aceleração em `G` já rotacionada para o referencial do PS Move. |
+| `0x24 - 0x2F` | `gyro_x/y/z` | `3 × float32` | Velocidade angular em `rad/s` já rotacionada (com subtração de zero-bias em repouso). |
+| `0x30 - 0x33` | `buttons` | `uint32` | Bitmask de botões PS Move (`Move`, `T`, `Cross`, `Circle`, `Square`, `Triangle`, `Start`, `Select`, `PS`). |
+| `0x34 - 0x37` | `trigger` | `uint32` | Valor analógico do gatilho `T` (`0..255`). |
+| `0x38` | `battery` | `uint8` | Nível codificado PS Move (`0..5`, `0xEE` carregando, `0xEF` cheio). |
+| `0x39 - 0x3B` | `reserved` | `3 × uint8` | Reservado (`0`). |
+
+#### Bloco Jogo → Sensor (`0x40 - 0x7F`, 64 bytes — Feedback `<IBBBBIQ` + padding)
+| Offset | Campo | Tipo | Descrição |
+|---|---|---|---|
+| `0x40 - 0x43` | `out_seq` | `uint32` | Sequência incrementada pela `LegacyMove*.dll` a cada `WriteFile` (`0x06`/`0x02`). |
+| `0x44 - 0x46` | `led_r/g/b` | `3 × uint8` | Cor RGB solicitada pelo jogo para a esfera luminosa do PS Move. |
+| `0x47` | `rumble` | `uint8` | Intensidade de vibração solicitada pelo jogo (`0..255`, ex.: Gold Moves). |
+| `0x48 - 0x4B` | `game_connected` | `uint32` | `1` enquanto o jogo mantém o handle virtual do PS Move aberto. |
+| `0x4C - 0x53` | `out_ts_ms` | `uint64` | Timestamp em milissegundos da última atualização do jogo. |
+
+### 9.2 Rotação 3D da Pegada Vertical ("Joinha") & Relatório HID ZCM2 (49 Bytes)
+- **Transformação Própria ($\det = +1$):** `ds4_to_psmove_imu(accel_g, gyro_dps)` aplica `(move_x, move_y, move_z) = (+ds4_x, -ds4_z, +ds4_y)`, alinhando a barra de luz do DualShock 4 apontando para cima (`-Z_ds4`) com a esfera do PS Move (`+Y_move` = `+4400` counts/G em repouso) e o touchpad (`+Y_ds4`) com a face dos botões frontais (`+Z_move`).
+- **Escalas Lineares Nativas ZCM2:** Com `FeatureReportByteLength = 0` em `HidP_GetCaps`, os três binários do Just Dance aplicam exatamente **`4400.0 counts/G`** (acelerômetro) e **`1015.0 counts/(rad/s)`** (giroscópio) no relatório HID `0x01` de 49 bytes (`buf[1..4]` botões + `buf[4]&0x0F` seq, `buf[5]` gatilho `T`, `buf[11]`/`buf[43]` timestamp 16-bit, `buf[12]` bateria, `buf[13..18]` accel int16 LE, `buf[25..30]` gyro int16 LE).
+- **API Python (`sensor.psmove_shared_memory`):** `get_psmove_bridge()`, `close_psmove_bridge()`, `PSMoveSharedMemory.write_state(...)`, `write_inactive()`, `read_feedback()`, `ds4_to_psmove_imu(...)`, `buttons_dict_to_psmove_mask(...)`, `encode_zcm2_input_report(...)`, `encode_psmove_battery(...)`.
 
 ---
 
@@ -403,18 +427,18 @@ O pacote `sensor.stereo_matcher` implementa o pipeline óptico de visão estére
 
 ---
 
-## 11. Emulador de Kinect em Memória (`sensor.kinect_emulator`)
+## 11. Emulador de Kinect e PlayStation Move em Memória (`sensor.kinect_emulator`)
 
-O módulo `sensor.kinect_emulator` emula o sensor Kinect diretamente na memória RAM do Just Dance Legacy (32-bit, modo *Zero-File-Replacement* com `tools/Legacy10.dll`, integrado à Ponte de Memória Compartilhada), sem exigir a substituição ou alteração de qualquer arquivo no disco do jogo:
+O módulo `sensor.kinect_emulator` emula os sensores **Kinect** (`tools/Legacy10.dll` / `tools/Legacy10_x64.dll`) e **PlayStation Move ZCM2** (`tools/LegacyMove.dll` / `tools/LegacyMove_x64.dll`) diretamente na memória RAM do Just Dance Legacy (32-bit) e Legacy Lab / Legacy Lab Offline (64-bit), sem exigir a substituição ou alteração de qualquer arquivo no disco do jogo:
 
-- `KINECT_ORDINALS_ORDER = [16, 5, 6, 21, 22, 9, 17, 26]`: Ordem dos 8 ordinais da API NUI mapeados na tabela IAT do `Legacy.exe` (32-bit).
-- `TARGET_PROCESS_NAMES = ["legacy.exe", "justdance.exe"]`: Executáveis 32-bit monitorados pelo daemon.
+- `KINECT_ORDINALS_ORDER = [16, 5, 6, 21, 22, 9, 17, 26]`: Ordem dos 8 ordinais da API NUI mapeados na tabela IAT / Delay-IAT.
+- `TARGET_PROCESS_NAMES`: Monitora executáveis 32-bit (`legacy.exe`, `justdance.exe`, `justdance2017.exe`, `legacyoffline.exe`) e 64-bit (`legacy lab.exe`, `legacylab.exe`, `legacylab_offline.exe`, `legacy lab offline.exe`, `legacylaboffline.exe`), ignorando launchers (`legacylab-launcher.exe`).
 - `KinectEmulatorDaemon(cfg=None)`:
   - `start() -> None` / `stop() -> None`: Inicia e encerra a thread daemon de monitoramento de processos (`KinectEmulatorDaemon`).
-  - `get_status() -> Dict[str, Any]`: Retorna o estado atual (`enabled`, `running`, `connected`, `game_name`, `pid`, `mode` `"iat_hook_32"`).
+  - `get_status() -> Dict[str, Any]`: Retorna o estado atual (`enabled`, `running`, `connected`, `game_name`, `pid`, `mode` `"iat_hook_32"` / `"iat_hook_64"`, `psmove_hooked`).
   - `register_status_callback(cb: Callable[[bool, str, int], None]) -> None`: Registra callback acionado ao conectar ou desconectar do processo do jogo.
+  - `_inject_psmove_dll(pid, is_32bit) -> bool`: Injeta `LegacyMove.dll` (32-bit) ou `LegacyMove_x64.dll` (64-bit) via `LoadLibraryW` (com staging em `%APPDATA%\LegacyPSCam_Sensor\tools\`), habilitando a emulação nativa do PS Move ZCM2 sempre que `Local\LegacyPSMoveState.active == 1`.
   - `_scan_for_game_process() -> Optional[Dict[str, Any]]`: Varre processos ativos em $<0.5\text{ ms}$ via snapshot de kernel `CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)`.
-  - `_is_target_32bit(pid: int) -> bool`: Verifica via `IsWow64Process` se o processo alvo é 32-bit (WoW64 / PE32).
   - `_log_diag_once(pid, reason_key, message)`: Registra diagnósticos de injeção sem spam (incluindo detecção de `ERROR_ACCESS_DENIED (5)` quando o jogo roda como Administrador).
 
 ---

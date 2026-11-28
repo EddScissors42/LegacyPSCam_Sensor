@@ -1,7 +1,7 @@
 """
 Declarative Qt 6 Page 3 Builder: DualShock 4 Controller Settings.
 Constructs the caution banner, Permissive Discovery toggle, disconnected balloon,
-and connected controller hardware + Scoring Bridge container (ds4_info_frame).
+and connected controller hardware + PlayStation Move (ZCM2) Emulator block (ds4_info_frame).
 """
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -17,7 +17,7 @@ class UIDS4PageMixin:
     """Declarative builder for Page 3 (DualShock 4 Controller Settings)."""
 
     def _build_ds4_view(self):
-        """Constructs Page 3: DualShock 4 [EXPERIMENTAL] Controller Settings."""
+        """Constructs Page 3: DualShock 4 Controller & PlayStation Move Emulator Settings."""
         self.page_ds4 = QWidget()
         layout = QVBoxLayout(self.page_ds4)
         layout.setContentsMargins(0, 4, 6, 0)
@@ -35,13 +35,16 @@ class UIDS4PageMixin:
         )
         ds4_layout.addWidget(lbl_title)
 
-        lbl_sub = QLabel("Configure motion sensors, tracked hand and hardware responsiveness.", ds4_card)
+        lbl_sub = QLabel(
+            "Emulate a native PlayStation Move (ZCM2) motion controller using your DualShock 4's 6-axis IMU.",
+            ds4_card,
+        )
         lbl_sub.setStyleSheet(
             f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
         )
         ds4_layout.addWidget(lbl_sub)
 
-        # Warning Callout Box (Kept in same position)
+        # Warning Callout Box
         warn_box = QFrame(ds4_card)
         warn_box.setStyleSheet("""
             QFrame {
@@ -55,15 +58,16 @@ class UIDS4PageMixin:
         warn_layout.setSpacing(12)
 
         lbl_warn_icon = QLabel("[!]", warn_box)
-        lbl_warn_icon.setStyleSheet("font-family: monospace; font-size: 14px; font-weight: bold; color: #92400E; background: transparent; border: none;")
+        lbl_warn_icon.setStyleSheet(
+            "font-family: monospace; font-size: 14px; font-weight: bold; color: #92400E; background: transparent; border: none;"
+        )
         warn_layout.addWidget(lbl_warn_icon, alignment=Qt.AlignmentFlag.AlignTop)
 
         lbl_warn_text = QLabel(
-            "CAUTION: Playing with a DualShock 4 is for lunatics! Only do this if you want to do "
-            "wild experiments, and do not forget to hold the controller so f*ing firmly! "
-            "This feature is ultra-experimental and may not be supported in future versions. (maybe...)\n\n"
-            "This controller mode automatically enables the virtual phone feature, and may not work as intended. Use at your own risk.",
-            warn_box
+            "CAUTION: Hold the DualShock 4 firmly while dancing! This mode emulates a native PlayStation Move "
+            "controller in memory (Legacy 2018 Offline, Legacy Lab, and Legacy Lab Offline) using your controller's "
+            "6-axis accelerometer and gyroscope with zero driver installation required.",
+            warn_box,
         )
         lbl_warn_text.setWordWrap(True)
         lbl_warn_text.setStyleSheet(
@@ -72,7 +76,7 @@ class UIDS4PageMixin:
         warn_layout.addWidget(lbl_warn_text, stretch=1)
         ds4_layout.addWidget(warn_box)
 
-        # Permissive Mode Toggle (Kept in same position)
+        # Permissive Mode Toggle
         perm_box = QFrame(ds4_card)
         perm_box.setStyleSheet(f"""
             QFrame {{
@@ -150,7 +154,6 @@ class UIDS4PageMixin:
         card_layout.addLayout(text_col, stretch=1)
         ds4_disc_layout.addWidget(self.ds4_status_card)
 
-        # Full-width action button matching webcam's "Search for Webcams"
         self.btn_refresh_ds4 = QPushButton("Search for Controllers", self.ds4_disconnected_box)
         self.btn_refresh_ds4.setProperty("class", "btn_balloon_action")
         self.btn_refresh_ds4.setFixedHeight(42)
@@ -168,7 +171,7 @@ class UIDS4PageMixin:
         ds4_info_layout.setContentsMargins(0, 0, 0, 0)
         ds4_info_layout.setSpacing(10)
 
-        # Block 1: Active Controller Device & Refresh (Full-width block matching block_dev of Webcam)
+        # Block 1: Active Controller Device & Refresh
         block_ds4_dev = SettingBlock(
             "CONTROLLER HARDWARE",
             "Active Wireless / USB Motion Device",
@@ -184,7 +187,6 @@ class UIDS4PageMixin:
         dev_ctrl_row.setContentsMargins(0, 0, 0, 0)
         dev_ctrl_row.setSpacing(8)
 
-        # Styled Status badge container
         status_box = QFrame(block_ds4_dev)
         status_box.setFixedHeight(32)
         status_box.setStyleSheet(f"""
@@ -215,11 +217,10 @@ class UIDS4PageMixin:
 
         ds4_info_layout.addWidget(block_ds4_dev)
 
-        # Block 2: Side-by-side Blocks for Tracked Hand & Sensitivity (Matching block_res & block_fps of Webcam)
+        # Block 2: Side-by-side Blocks for Tracked Hand & Sensitivity
         row_settings = QHBoxLayout()
         row_settings.setSpacing(10)
 
-        # Hand block
         block_hand = SettingBlock(
             "TRACKED HAND",
             "Holding Controller",
@@ -241,10 +242,9 @@ class UIDS4PageMixin:
         hand_layout.addWidget(self.cb_ds4_hand)
         row_settings.addWidget(block_hand, stretch=1)
 
-        # Sensitivity block
         block_sens = SettingBlock(
             "MOTION SENSITIVITY",
-            "Hardware Accelerometer Gain",
+            "Hardware IMU Gain",
             object_name="settingBlockDs4Sens",
             font_heading=self.font_heading,
             font_body=self.font_body,
@@ -322,16 +322,16 @@ class UIDS4PageMixin:
         actions_row.addStretch()
         ds4_info_layout.addLayout(actions_row)
 
-        # Hidden Telemetry Readout (kept for backward compatibility, hidden per user request)
+        # Hidden Telemetry Readout (kept for backward compatibility)
         self.lbl_ds4_accel = QLabel("", self.ds4_info_frame)
         self.lbl_ds4_accel.setVisible(False)
         ds4_info_layout.addWidget(self.lbl_ds4_accel)
 
-        # Instruction details
+        # Grip instruction details
         lbl_instructions = QLabel(
-            "• Hold the DualShock 4 in your active dancing hand with the light bar pointing forward.\n"
-            "• When started, the controller's internal 6-axis IMU will stream motion data directly to Just Dance via the Virtual Phone scoring bridge.",
-            self.ds4_info_frame
+            "• Hold the DualShock 4 vertically (thumbs-up grip) with your fingers near the touchpad and thumb below the right stick.\n"
+            "• Click START CONTROLLER (DS4) and Just Dance will automatically detect a PlayStation Move (ZCM2) within ~2 seconds.",
+            self.ds4_info_frame,
         )
         lbl_instructions.setWordWrap(True)
         lbl_instructions.setStyleSheet(
@@ -340,46 +340,46 @@ class UIDS4PageMixin:
         ds4_info_layout.addWidget(lbl_instructions)
 
         # =====================================================================
-        # Scoring Bridge (Just Dance Controller App mode) Block
+        # PlayStation Move (ZCM2) Native Emulator Block
         # Lives inside ds4_info_frame so it ONLY appears when a DS4 is connected.
         # =====================================================================
-        self.scoring_bridge_box = QFrame(self.ds4_info_frame)
-        self.scoring_bridge_box.setObjectName("settingBlockScoringBridge")
-        self.scoring_bridge_box.setStyleSheet(f"""
-            QFrame#settingBlockScoringBridge {{
+        self.psmove_bridge_box = QFrame(self.ds4_info_frame)
+        self.psmove_bridge_box.setObjectName("settingBlockPSMoveBridge")
+        self.psmove_bridge_box.setStyleSheet(f"""
+            QFrame#settingBlockPSMoveBridge {{
                 background-color: #FFFFFF;
                 border: 1px solid {PALETTE["border_subtle"]};
                 border-radius: 10px;
             }}
-            QFrame#settingBlockScoringBridge:hover {{
+            QFrame#settingBlockPSMoveBridge:hover {{
                 border-color: {PALETTE["input_border"]};
             }}
         """)
-        sb_layout = QVBoxLayout(self.scoring_bridge_box)
-        sb_layout.setContentsMargins(14, 12, 14, 12)
-        sb_layout.setSpacing(8)
+        pm_layout = QVBoxLayout(self.psmove_bridge_box)
+        pm_layout.setContentsMargins(14, 12, 14, 12)
+        pm_layout.setSpacing(8)
 
-        lbl_sb_title = QLabel("SCORING BRIDGE (JUST DANCE CONTROLLER APP MODE)", self.scoring_bridge_box)
-        lbl_sb_title.setStyleSheet(
+        lbl_pm_title = QLabel("PLAYSTATION MOVE EMULATOR (NATIVE ZCM2)", self.psmove_bridge_box)
+        lbl_pm_title.setStyleSheet(
             f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['blue_dark']}; background: transparent; border: none;"
         )
-        sb_layout.addWidget(lbl_sb_title)
+        pm_layout.addWidget(lbl_pm_title)
 
-        self.lbl_ds4_sb_desc = QLabel(
-            "Connects to Just Dance via WebSocket/TLS (/smartphone) and streams the DualShock 4's built-in 3D "
-            "accelerometer (IMU) telemetry directly into the game's smartphone scoring channel.",
-            self.scoring_bridge_box
+        self.lbl_ds4_pm_desc = QLabel(
+            "Exposes a virtual PlayStation Move (ZCM2) controller directly in memory to Just Dance PC "
+            "(6-axis accelerometer + gyroscope, native menu buttons, Light Bar color sync, and Gold Move rumble).",
+            self.psmove_bridge_box,
         )
-        self.lbl_ds4_sb_desc.setWordWrap(True)
-        self.lbl_ds4_sb_desc.setStyleSheet(
+        self.lbl_ds4_pm_desc.setWordWrap(True)
+        self.lbl_ds4_pm_desc.setStyleSheet(
             f"font-family: '{self.font_body}'; font-size: 11px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
         )
-        sb_layout.addWidget(self.lbl_ds4_sb_desc)
+        pm_layout.addWidget(self.lbl_ds4_pm_desc)
 
-        # Status badge container
-        sb_status_box = QFrame(self.scoring_bridge_box)
-        sb_status_box.setFixedHeight(32)
-        sb_status_box.setStyleSheet(f"""
+        # Status badge container with live sphere color swatch
+        pm_status_box = QFrame(self.psmove_bridge_box)
+        pm_status_box.setFixedHeight(32)
+        pm_status_box.setStyleSheet(f"""
             QFrame {{
                 background-color: #F8FAFC;
                 border: 1px solid {PALETTE["border_subtle"]};
@@ -387,53 +387,68 @@ class UIDS4PageMixin:
                 padding: 0px 8px;
             }}
         """)
-        sb_st_layout = QHBoxLayout(sb_status_box)
-        sb_st_layout.setContentsMargins(8, 0, 8, 0)
+        pm_st_layout = QHBoxLayout(pm_status_box)
+        pm_st_layout.setContentsMargins(8, 0, 8, 0)
+        pm_st_layout.setSpacing(8)
 
-        self.lbl_ds4_sb_status = QLabel("Status: Disconnected", sb_status_box)
-        self.lbl_ds4_sb_status.setStyleSheet(
+        self.lbl_psmove_swatch = QLabel("", pm_status_box)
+        self.lbl_psmove_swatch.setFixedSize(12, 12)
+        self.lbl_psmove_swatch.setStyleSheet(
+            "background-color: #00439C; border: 1px solid #CBD5E1; border-radius: 6px;"
+        )
+        pm_st_layout.addWidget(self.lbl_psmove_swatch)
+
+        self.lbl_ds4_pm_status = QLabel("Status: Ready (Start controller session to connect to Just Dance)", pm_status_box)
+        self.lbl_ds4_pm_status.setStyleSheet(
             f"font-family: '{self.font_heading}'; font-size: 11px; font-weight: bold; color: {PALETTE['text_muted']}; background: transparent; border: none;"
         )
-        sb_st_layout.addWidget(self.lbl_ds4_sb_status)
-        sb_layout.addWidget(sb_status_box)
+        pm_st_layout.addWidget(self.lbl_ds4_pm_status, stretch=1)
+        pm_layout.addWidget(pm_status_box)
 
-        # Action buttons row: Reconnect Game, Auto-Find, Skip Finish
-        btn_sb_outline_style = getattr(self, "_btn_vphone_outline_style", "")
+        # Light Bar & Rumble Sync checkbox
+        self.chk_ds4_sync_lightbar = QCheckBox(
+            "Sync DualShock 4 Light Bar & Rumble with Just Dance Player Color",
+            self.psmove_bridge_box,
+        )
+        self.chk_ds4_sync_lightbar.setChecked(bool(self.cfg.get("ds4_sync_lightbar", True)))
+        self.chk_ds4_sync_lightbar.setStyleSheet(f"""
+            QCheckBox {{
+                font-family: '{self.font_body}';
+                font-size: 11px;
+                font-weight: 600;
+                color: {PALETTE['text_main']};
+                background: transparent;
+            }}
+            QCheckBox::indicator {{
+                width: 15px;
+                height: 15px;
+                border-radius: 3px;
+                border: 1px solid {PALETTE['tab_gray_border']};
+            }}
+            QCheckBox::indicator:checked {{
+                background-color: {PALETTE['ps_blue']};
+                border-color: {PALETTE['ps_blue']};
+            }}
+        """)
+        self.chk_ds4_sync_lightbar.stateChanged.connect(self._on_ds4_sync_lightbar_changed)
+        pm_layout.addWidget(self.chk_ds4_sync_lightbar)
 
-        sb_btn_row = QHBoxLayout()
-        sb_btn_row.setSpacing(8)
+        # Compact button map reference
+        lbl_btn_map = QLabel(
+            "Buttons: R2 = Trigger (T)  •  Cross / R1 = Move (Confirm)  •  Circle = Back  •  Options = Start  •  PS = Menu",
+            self.psmove_bridge_box,
+        )
+        lbl_btn_map.setWordWrap(True)
+        lbl_btn_map.setStyleSheet(
+            f"font-family: '{self.font_body}'; font-size: 10px; color: {PALETTE['text_muted']}; background: transparent; border: none;"
+        )
+        pm_layout.addWidget(lbl_btn_map)
 
-        self.btn_ds4_sb_reconnect = QPushButton("Reconnect Game", self.scoring_bridge_box)
-        self.btn_ds4_sb_reconnect.setFixedHeight(34)
-        self.btn_ds4_sb_reconnect.setStyleSheet(btn_sb_outline_style)
-        self.btn_ds4_sb_reconnect.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_ds4_sb_reconnect.clicked.connect(self._on_vphone_reconnect_clicked)
-
-        self.btn_ds4_sb_discover = QPushButton("Auto-Find", self.scoring_bridge_box)
-        self.btn_ds4_sb_discover.setFixedHeight(34)
-        self.btn_ds4_sb_discover.setStyleSheet(btn_sb_outline_style)
-        self.btn_ds4_sb_discover.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_ds4_sb_discover.clicked.connect(self._on_vphone_discover_clicked)
-
-        self.btn_ds4_sb_ftue = QPushButton("Skip Finish", self.scoring_bridge_box)
-        self.btn_ds4_sb_ftue.setFixedHeight(34)
-        self.btn_ds4_sb_ftue.setStyleSheet(btn_sb_outline_style)
-        self.btn_ds4_sb_ftue.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_ds4_sb_ftue.setToolTip("Skip phone tutorial prompt in Just Dance PC")
-        self.btn_ds4_sb_ftue.clicked.connect(self._on_skip_finish_clicked)
-
-        sb_btn_row.addWidget(self.btn_ds4_sb_reconnect)
-        sb_btn_row.addWidget(self.btn_ds4_sb_discover)
-        sb_btn_row.addWidget(self.btn_ds4_sb_ftue)
-        sb_btn_row.addStretch()
-        sb_layout.addLayout(sb_btn_row)
-
-        ds4_info_layout.addWidget(self.scoring_bridge_box)
-        self.btn_ds4_skip_finish = self.btn_ds4_sb_ftue
+        ds4_info_layout.addWidget(self.psmove_bridge_box)
 
         ds4_layout.addWidget(self.ds4_info_frame)
 
-        # Initial visibility: disconnected balloon shown, details & Scoring Bridge hidden until connected
+        # Initial visibility: disconnected balloon shown, details & PS Move Emulator hidden until connected
         self.ds4_disconnected_box.setVisible(True)
         self.ds4_info_frame.setVisible(False)
         layout.addWidget(ds4_card)
@@ -441,4 +456,4 @@ class UIDS4PageMixin:
 
         self.scroll_ds4 = self._create_scroll_page(self.page_ds4)
         self.stacked_view.addWidget(self.scroll_ds4)
-        self._update_vphone_ui_readout()
+        self._update_device_readout()

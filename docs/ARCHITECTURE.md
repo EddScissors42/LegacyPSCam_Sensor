@@ -12,7 +12,7 @@ O sistema é baseado em uma **arquitetura modular em pacotes**, onde cada etapa 
 LegacyPSCam_Sensor/
 ├── main.py                     # Ponto de entrada (CLI dispatcher e inicializador)
 ├── test_suite.py               # Suíte de testes automatizados isolados (19/19 suítes integradas + tests/)
-├── tests/                      # Suíte modular unittest (vphone_protocol, tracking_math, controllers_and_cli)
+├── tests/                      # Suíte modular unittest (tracking_math, controllers_and_cli)
 ├── config.json                 # Template local de configurações (persistência real em %APPDATA%)
 ├── THIRD_PARTY_NOTICES.md      # Avisos de direitos autorais, licenças e separação de IP do firmware
 ├── driver/
@@ -44,11 +44,10 @@ LegacyPSCam_Sensor/
 │   ├── phone_camera.py         # Servidor WebApp HTTPS/WSS para câmera de smartphone via Wi-Fi
 │   ├── qr_encoder.py           # Codificador QR Code ISO/IEC 18004 puro em Python (GF(256) + Pillow)
 │   ├── tls_manager.py          # Gerador de certificados TLS X.509v3 autoassinados em ASN.1 DER puro
-│   ├── virtual_phone.py        # Orquestrador VirtualPhoneController (UbiArt /smartphone)
-│   ├── vphone_protocol.py      # Primitivas UbiArt: HandAccelerometer, WebSocket RFC 6455, AdaptiveTuner e detector de música
-│   ├── telemetry_benchmark.py  # Benchmark comparativo de telemetria (Câmera vs DS4), alinhamento temporal e ganho
-│   ├── ds4_controller.py       # Driver Bluetooth/USB HID nativo DualShock 4 (500+ Hz, IMU, botões e vibração)
-│   ├── kinect_emulator.py      # Emulador de Kinect na memória para Just Dance Legacy 32-bit (hot-patching IAT)
+│   ├── psmove_shared_memory.py # Ponte IPC seqlock (Local\LegacyPSMoveState, PSM1 128B) e codificador ZCM2 49B
+│   ├── telemetry_benchmark.py  # Utilitários de benchmark comparativo de telemetria CSV e alinhamento temporal
+│   ├── ds4_controller.py       # Driver Bluetooth/USB HID nativo DualShock 4 (500+ Hz, IMU -> PS Move ZCM2, RGB & vibração)
+│   ├── kinect_emulator.py      # Emulador in-memory de Kinect (Legacy10*.dll) e PS Move (LegacyMove*.dll) para x86 e x64
 │   ├── kinect_shared_memory.py # Driver IPC singleton KinectBridge (JDP1 344B + JDP2 664B + JMI1/2 1.3MB + JXC1 28B)
 │   ├── tracking_session.py     # Orquestrador do loop de rastreamento (1P/2P) e eventos de teclado
 │   ├── tracking_overlay.py     # Renderização visual do esqueleto (P1 Azul / P2 Laranja Claro), silhueta e HUD
@@ -60,26 +59,25 @@ LegacyPSCam_Sensor/
 │   │   ├── __init__.py         # Combina os 4 mixins de página + helpers (_create_scroll_page, _create_reload_button)
 │   │   ├── video_page.py       # Página 0: Video Settings (PS4 Camera, Webcam, Phone Camera QR e Display Options)
 │   │   ├── tracking_page.py    # Página 1: Quality Presets (Performance/Balanced/High/Custom), 1P/2P e 4 opções manuais de Tracking
-│   │   ├── experimental_page.py# Página 2: Experimental Features (Auto-Frame PTZ e Virtual Phone)
-│   │   └── ds4_page.py         # Página 3: DualShock 4 Controller Settings (com Scoring Bridge condicionado à conexão)
+│   │   ├── experimental_page.py# Página 2: Experimental Features (Auto-Frame PTZ nos modos de câmera)
+│   │   └── ds4_page.py         # Página 3: DualShock 4 Controller Settings (com cartão PlayStation Move Emulator ZCM2)
 │   ├── styles.py               # Construtor centralizado da folha de estilos QSS (PlayStation Blue / Crisp White)
 │   ├── mixins/                 # Mixins modulares de apresentação e handlers de eventos da janela Qt 6
 │   │   ├── __init__.py         # Exports unificados dos 5 mixins da interface
-│   │   ├── device_readout.py   # UIDeviceReadoutMixin (readouts ao vivo de DS4, Virtual Phone e Phone Camera)
+│   │   ├── device_readout.py   # UIDeviceReadoutMixin (readouts ao vivo de DS4, PS Move Emulator e Phone Camera)
 │   │   ├── camera_handlers.py  # UICameraHandlersMixin (modos, abas, PS4 Camera state, Webcam e presets)
 │   │   ├── phone_handlers.py   # UIPhoneHandlersMixin (Phone Camera QR, IP LAN, Firewall e desconexão)
-│   │   ├── ds4_vphone_handlers.py # UIDS4VPhoneHandlersMixin (DualShock 4, Scoring Bridge, Benchmark e Logs)
+│   │   ├── ds4_handlers.py     # UIDS4HandlersMixin (DualShock 4, sincronia Light Bar/Rumble PS Move e Logs)
 │   │   └── tracking_handlers.py   # UITrackingHandlersMixin (calibração, 2P, download de modelos AI e Start/Stop)
 │   ├── widgets.py              # Componentes Qt 6 reutilizáveis (SlidingStackedWidget, DeviceNavCard, CalibPresetCard, SettingBlock)
-│   ├── benchmark_dialog.py     # Diálogo e gráfico 2D QPainter de benchmark comparativo (Câmera vs DS4)
 │   ├── theme.py                # Paleta de cores, tipografia e Quality Presets (Performance, Balanced [RECOMMENDED], High, Custom)
 │   ├── icons.py                # Gerador e renderizador de ícones vetoriais e supersampled
 │   └── controllers/            # Camada de Controle Desacoplada (MVP / Controller Facade)
 │       ├── __init__.py         # Exports unificados da camada de controle
 │       ├── app_controller.py   # SensorAppController (fachada central QObject que coordena a aplicação)
 │       ├── camera_controller.py# CameraController (descoberta PnP, warm-up assíncrono, standby throttling)
-│       ├── device_controller.py# DeviceController (Phone Camera HTTPS/WSS, DS4 HID/Bluetooth, Celular Virtual)
-│       └── session_controller.py# SessionController (orquestrador do loop de rastreamento, Kinect daemon e IPC)
+│       ├── device_controller.py# DeviceController (Phone Camera HTTPS/WSS, DS4 HID/Bluetooth e readout PS Move ZCM2)
+│       └── session_controller.py# SessionController (orquestrador do loop de rastreamento, Kinect/PS Move daemon e IPC)
 ├── assets/                     # Recursos visuais e mídias
 │   ├── icons/                  # Ícones SVG/PNG, app_icon.ico e splash.png ("Hold on... and warm up!")
 │   ├── fonts/                  # Fontes TTF (Kanit, InterTight, NationalPark)
@@ -88,9 +86,12 @@ LegacyPSCam_Sensor/
 │   ├── pose_landmarker_lite.task  # Modelo MediaPipe Pose Lite (Perfil Competitivo — embutido offline)
 │   └── pose_landmarker_full.task  # Modelo MediaPipe Pose Full (Perfil Equilibrado — cache sob demanda em %APPDATA%\models)
 └── tools/
-    ├── Legacy10.dll               # DLL proxy de 32 bits injetada em memória pelo Emulate Kinect (Legacy.exe)
-    ├── Legacy10_x64.dll           # DLL proxy de 64 bits injetada em memória pelo Emulate Kinect (Legacy Lab.exe)
+    ├── Legacy10.dll               # DLL proxy Kinect de 32 bits injetada em memória (Legacy.exe)
+    ├── Legacy10_x64.dll           # DLL proxy Kinect de 64 bits injetada em memória (Legacy Lab.exe / LegacyLab_Offline.exe)
     ├── legacy10_x64_src/          # Código-fonte C++ e arquivo .def da Legacy10_x64.dll (ABI Kinect SDK v1.8 x64)
+    ├── LegacyMove.dll             # DLL proxy PlayStation Move ZCM2 de 32 bits injetada em memória (Legacy.exe)
+    ├── LegacyMove_x64.dll         # DLL proxy PlayStation Move ZCM2 de 64 bits injetada em memória (Legacy Lab / Offline)
+    ├── legacymove_src/            # Código-fonte C++ da LegacyMove.dll / LegacyMove_x64.dll (SetupAPI/HID/Kernel32 IAT)
     └── get_cameras.ps1            # Script PowerShell auxiliar para enumeração de câmeras WinRT
 ```
 
@@ -166,7 +167,7 @@ flowchart TD
 - **Relações:** Instancia `ConfigManager` e aciona `ui.launch_app(cli_overrides=...)` ou `tracking_session.py`.
 
 ### 2. `gui_qt.py`, `ui/mixins/` e `ui/pages/` — Interface do Usuário (Painel de Controle PlayStation em Qt 6)
-- **Responsabilidade:** Interface visual moderna desenvolvida em **PySide6 (Qt 6)**, dividida entre a casca principal da janela (`gui_qt.py`), os 5 mixins de eventos e readouts (`ui/mixins/`), o pacote declarativo das 4 páginas de navegação (`ui/pages/`: `video_page.py`, `tracking_page.py`, `experimental_page.py`, `ds4_page.py` expostos via `UIPagesMixin`) e os componentes reutilizáveis (`widgets.py`, incluindo `SettingBlock`). Conta com animações fluidas de transição entre abas (`SlidingStackedWidget`), layout dividido com barra lateral estilizada de seleção de dispositivo (PlayStation 4 Camera, Webcam Padrão, DualShock 4 e Phone Camera), abas superiores centralizadas ("Video Settings", "Tracking", "Controller Settings", "Experimental"), paleta oficial PlayStation Blue (`#00439C`), cards com sombras suaves e ícones vetoriais anti-aliased. Permite selecionar entre os 4 Quality Presets de rastreamento (**Performance**, **Balanced — Lite AI recomendado**, **High — Full AI** e **Custom** ativado automaticamente ao alterar qualquer controle manual de `AI Model`, `Inference Quality`, `Silhouette Cutout` ou `Player Lock`), conta com calibração automática, pílula dedicada de Scoring Bridge integrada dentro de `ds4_info_frame` (exibida somente quando um DualShock 4 está conectado) e aba Experimental contextual por modo.
+- **Responsabilidade:** Interface visual moderna desenvolvida em **PySide6 (Qt 6)**, dividida entre a casca principal da janela (`gui_qt.py`), os 5 mixins de eventos e readouts (`ui/mixins/`), o pacote declarativo das 4 páginas de navegação (`ui/pages/`: `video_page.py`, `tracking_page.py`, `experimental_page.py`, `ds4_page.py` expostos via `UIPagesMixin`) e os componentes reutilizáveis (`widgets.py`, incluindo `SettingBlock`). Conta com animações fluidas de transição entre abas (`SlidingStackedWidget`), layout dividido com barra lateral estilizada de seleção de dispositivo (PlayStation 4 Camera, Webcam Padrão, DualShock 4 e Phone Camera), abas superiores centralizadas ("Video Settings", "Tracking", "Controller Settings", "Experimental"), paleta oficial PlayStation Blue (`#00439C`), cards com sombras suaves e ícones vetoriais anti-aliased. Permite selecionar entre os 4 Quality Presets de rastreamento (**Performance**, **Balanced — Lite AI recomendado**, **High — Full AI** e **Custom** ativado automaticamente ao alterar qualquer controle manual de `AI Model`, `Inference Quality`, `Silhouette Cutout` ou `Player Lock`), conta com calibração automática, cartão **PLAYSTATION MOVE EMULATOR (NATIVE ZCM2)** integrado dentro de `ds4_info_frame` (exibido somente quando um DualShock 4 está conectado, com amostra RGB da esfera ao vivo e toggle de sincronia da Light Bar/Rumble) e aba Experimental contextual por modo.
 - **Ciclo de Vida do Driver e Hotplug Reativo:** Monitora a cada 1.0 segundo o hardware PnP e o ciclo de vida da PS4 Camera (`NOT_INSTALLED`, `DISCONNECTED`, `DRIVER_STOPPED`, `BOOTLOADER_UPLOADING`, `WAITING_VCAM`, `READY`).
 - **Threading Não-Bloqueante:** Tanto a enumeração de câmeras do OpenCV quanto o desligamento de câmeras pré-aquecidas em standby (`CameraController.cancel_warmup(sync=False)` com thread `CameraPrewarmCloser` serializada) e a sessão de rastreamento executam em threads assíncronas dedicadas, mantendo a janela do Qt 6 totalmente fluida a 60 FPS e sem congelamentos ao trocar de modo (ex.: `Webcam → DualShock 4` ou `Phone Camera`).
 
@@ -203,9 +204,9 @@ flowchart TD
 - **Responsabilidade:** 
   1. `draw_rounded_glass_pill`: Desenho ultra-otimizado (< 0.05ms) de cápsulas flutuantes translúcidas ("Glass Pills") com cantos arredondados e bordas anti-aliasing sobre ROIs restritos.
   2. `draw_player_silhouette`: Extrai os contornos da máscara anatômica `320x240`, escala os vértices para o frame de preview e renderiza a silhueta semitransparente ("sombrinha") com contorno neon duplo (glow suave colorido de 3px + linha branca nítida de 1px com `cv2.LINE_AA`).
-  3. `draw_skeleton`: Desenha articulações e ossos coloridos por jogador (P1 Azul / P2 Laranja Claro). Inclui a **Scoring Hand Aura**, halo dinâmico pulsante na mão de pontuação (Virtual Phone) cuja amplitude e brilho reagem à velocidade do braço (`hand_speed`).
+  3. `draw_skeleton`: Desenha articulações e ossos coloridos por jogador (P1 Azul / P2 Laranja Claro).
   4. `draw_gesture_feedback`: Anel radial neon de progresso (0° a 360°) posicionado dinamicamente ao redor da mão erguida do jogador (`hand_pos`), com ponto luminoso orbitante e ondas expansivas verdes ao disparar o comando de `[ENTER]`.
-  5. `draw_hud`: Interface moderna dividida em 4 cápsulas flutuantes: Branding & Câmera no canto superior esquerdo, Métricas de FPS & IPC no canto superior direito, Status & Calibração dos Dançarinos empilhado logo abaixo do bloco de FPS na lateral direita (eliminando compressão horizontal em resoluções 4:3 como 640x480 e deixando o centro desobstruído), e Atalhos de Teclado compactos na base. Suporta 3 modos cicláveis com a tecla `[H]` (Modo 0: Completo, Modo 1: Minimalista, Modo 2: Desligado/Espelho Puro).
+  5. `draw_hud` e `draw_controller_hud`: Interface moderna dividida em cápsulas flutuantes (modo câmera: Branding, FPS & IPC, Status dos Dançarinos e Atalhos; modo DualShock 4: Branding, Telemetria Hz/Bateria/PS Move, Orbe RGB da esfera sincronizada, Motion Force 3D e mapa de botões PS Move). Suporta 3 modos cicláveis com a tecla `[H]` (Modo 0: Completo, Modo 1: Minimalista, Modo 2: Desligado/Espelho Puro).
 
 ### 7. `kinect_shared_memory.py` — Ponte IPC Multi-Canal (`KinectBridge`)
 - **Responsabilidade:** Gerencia os três canais de memória mapeada consumidos pelo `Kinect10.dll`:
@@ -219,43 +220,38 @@ flowchart TD
 
 ### 9. `ds4_controller.py` — Driver Nativo DualShock 4 & Controles Compatíveis (Nível A) Bluetooth/USB HID
 - **Responsabilidade:** Comunicação direta de ultra-alta frequência via Win32 SetupAPI e HID com controles Sony DualShock 4, controles licenciados de terceiros (Hori, Nacon, Razer, Astro, Scuf) e réplicas/clones com chipsets comuns (ShanWan, DragonRise) conectados por Bluetooth ou USB:
-  1. Suporta nativamente relatórios padrão `0x01` (64 bytes) e relatórios estendidos `0x11` (78 bytes).
+  1. Suporta nativamente relatórios padrão `0x01` (64 bytes) e relatórios estendidos `0x11` (78 bytes), incluindo leitura analógica do gatilho `R2` (`0..255`).
   2. Suporte adaptativo de Output Report para vibração háptica (rumble) e lightbar RGB (`32 bytes` report `0x05` ou `78 bytes` report `0x11` com CRC-32).
-  3. Desacoplamento total de hardware de câmera durante o modo de controle.
-  4. Mapeamento de 3 eixos de aceleração diretamente para o protocolo de pontuação do Just Dance PC através do `virtual_phone.py`.
-  5. Modo Permissivo com identificação amigável do modelo (`detect_controller_name`) e bloqueio preventivo de gamepads Xbox.
-  6. Diagnóstico contínuo de integridade do sensor de aceleração (`imu_frozen`) para sinalizar réplicas que necessitam de conexão cabeada USB.
+  3. Calibração automática de zero-bias do giroscópio em repouso (primeiras 50 amostras estáveis) e streaming em tempo real dos 6 eixos IMU + botões 1:1 para o `PSMoveSharedMemory`.
+  4. Polling de feedback a ~30 Hz lendo a cor RGB da esfera do PS Move e o rumble enviados pelo Just Dance (`0x06`/`0x02`) e espelhando-os na Light Bar e motores hápticos do DualShock 4 (restaurando PlayStation Blue `(0, 67, 156)` ao encerrar).
+  5. Desacoplamento total de hardware de câmera durante o modo de controle.
+  6. Modo Permissivo com identificação amigável do modelo (`detect_controller_name`), bloqueio preventivo de gamepads Xbox e diagnóstico contínuo de sensor IMU congelado (`imu_frozen`).
 
-### 10. `virtual_phone.py` — Emulador de Celular UbiArt Just Dance Controller & Calibração Adaptativa
-- **Responsabilidade:** Emula um smartphone conectado via WebSocket local (`/smartphone`), permitindo dançar músicas que exigem controle de mão tanto por visão computacional da mão quanto via hardware físico (DualShock 4).
-- **Auto-Detecção Multi-Versão:** Descoberta via UDP 6000/7000 com prioridade localhost (127.0.0.1) e negociação de subprotocolo estrito:
-  - `v2.phonescoring.jd.ubisoft.com` com WSS/TLS para Just Dance 2020–2022.
-  - `v1.phonescoring.jd.ubisoft.com` com WS plain TCP para Just Dance 2017/2018 Legacy Offline.
-- **Rastreamento de Música e Ciclo de Vida:** Extração de `mapName` do pacote `JD_PhoneUiSetupData` e monitoramento de ativação de pontuação (`JD_EnableScoringPhoneData`) para disparo de auto-gravação (`logs/[mapName]_[source]_[timestamp].csv`).
-- **Motor Adaptativo (`AdaptiveCalibrationTuner`):** Monitora eventos de feedback de dança (*PERFECT*, *GOOD*, *OK*, *MISS*) em tempo de execução e calibra o ganho da sensibilidade dinamicamente.
+### 10. `psmove_shared_memory.py` & `tools/LegacyMove*.dll` — Emulador Nativo de PlayStation Move (ZCM2)
+- **Responsabilidade:** Emula um controle **PlayStation Move Motion Controller ZCM2** (`VID 0x054C / PID 0x0C5E`) diretamente na memória RAM do Just Dance PC (`Legacy.exe` x86, `Legacy Lab.exe` x64 e `LegacyLab_Offline.exe` x64), sem depender de servidor WebSocket ou drivers de kernel:
+  1. **Memória Compartilhada Seqlock (`Local\LegacyPSMoveState`, 128 bytes, `PSM1`):** Bloco bidirecional com 64 bytes Sensor→Jogo (acelerômetro 3D, giroscópio 3D, máscara de botões PS Move, gatilho `T`, nível de bateria e flag `active`) e 64 bytes Jogo→Sensor (RGB da esfera e rumble).
+  2. **Alinhamento Ergonômico da Pegada Vertical ("Joinha"):** Aplica rotação própria 3D ($\det = +1$) mapeando `(move_x, move_y, move_z) = (+ds4_x, -ds4_z, +ds4_y)` para que a barra de luz do DualShock 4 apontando para cima coincida com a esfera do PS Move (`+Y_move = +4400` counts em repouso) e o touchpad frontal coincida com os botões frontais do PS Move (`+Z_move`).
+  3. **Proxy IAT In-Process (`LegacyMove.dll` / `LegacyMove_x64.dll`):** Intercepta funções `SETUPAPI.dll`, `HID.DLL` e `KERNEL32.dll` dentro do processo do jogo com 100% de passthrough para dispositivos HID reais. Quando `active == 0` (modos de câmera), o PS Move virtual fica 100% invisível ao jogo. Quando `active == 1`, sintetiza relatórios ZCM2 de 49 bytes (`0x01`) a 100 Hz via `ReadFile` overlapped e grava os comandos `0x06`/`0x02` de `WriteFile` no canal de feedback.
 
-### 11. `telemetry_benchmark.py` — Benchmark Comparativo (Câmera vs DualShock 4)
-- **Responsabilidade:** Processamento pós-dança de séries temporais de aceleração:
+### 11. `telemetry_benchmark.py` — Utilitários de Análise de Telemetria CSV
+- **Responsabilidade:** Módulo utilitário de backend para análise de séries temporais de aceleração gravadas em `logs/`:
   1. Parsing de arquivos CSV de telemetria nos formatos legado (10 colunas) e estendido (13 colunas).
-  2. Alinhamento temporal preciso via correlação cruzada (*cross-correlation*) e reamostragem a 60 Hz.
+  2. Alinhamento temporal via correlação cruzada (*cross-correlation*) e reamostragem a 60 Hz.
   3. Cálculo de métricas comparativas: correlação de Pearson, atraso/latência média em milissegundos, picos G e P95.
-  4. Cálculo matemático do ganho de sensibilidade sugerido para equiparar a curva da câmera à aceleração real do acelerômetro de hardware.
-  5. Agrupamento de sessões prontas na pasta `logs/` para exibição instantânea no `TelemetryBenchmarkDialog`.
-  6. *Nota de UI:* Módulo e caixas de diálogo preservados de forma íntegra no backend, porém desabilitados por padrão (`benchmark_auto_record: false`) e desacoplados da interface gráfica Qt 6 (`gui_qt.py`) para manter a experiência enxuta.
 
 ### 12. `session_logger.py` — Subsistema de Log de Sessão e Telemetria de Dança (Diagnóstico de Suporte)
 - **Responsabilidade:** Coordena o ciclo de vida de diagnóstico e o streaming de telemetria contínua da dança em tempo real.
   1. **Ciclo de Vida na Inicialização (Startup Reset):** Limpa e reinicia o log ao abrir o aplicativo, preservando automaticamente o log anterior em `logs/session_previous.log` para segurança contra reaberturas acidentais.
   2. **Cabeçalho Diagnóstico Completo de Sistema:** Registra metadados do Windows (Build/Versão), modelo de CPU, contagem de núcleos, memória RAM física total e disponível via API Win32 `GlobalMemoryStatusEx`, runtime Python (PE compilado vs script) e versão do aplicativo.
-  3. **Mapeamento Ativo de Controles:** Detecta e registra o dispositivo de controle em uso (DualShock 4 Bluetooth/USB, Virtual Phone ou Câmera Óptica), atualizações de bateria, modo de conexão e eventos de botões físicos (L1/R1 de troca de coach).
-  4. **Streaming de Telemetria de Dança (CSV Assíncrono):** A partir do momento do `START TRACKING`, grava em buffer assíncrono em lote (batching) todas as métricas de movimento ($a_x, a_y, a_z, |G|$, velocidade da mão, coordenadas dos joints, FPS e feedbacks de pontuação) com impacto computacional nulo (<0,1% CPU).
+  3. **Mapeamento Ativo de Controles:** Detecta e registra o dispositivo de controle em uso (DualShock 4 Bluetooth/USB em modo PS Move ZCM2 ou Câmera Óptica), atualizações de bateria e modo de conexão.
+  4. **Streaming de Telemetria de Dança (CSV Assíncrono):** A partir do momento do `START TRACKING`, grava em buffer assíncrono em lote (batching) todas as métricas de movimento ($a_x, a_y, a_z, |G|$, velocidade da mão, coordenadas dos joints e FPS) com impacto computacional nulo (<0,1% CPU).
   5. **Resiliência a Falhas (Crash Diagnostics):** Instala interceptores globais para `sys.excepthook` e `threading.excepthook`, garantindo que qualquer encerramento inesperado grave o stack trace completo e feche os arquivos de forma limpa.
 
-### 13. `kinect_emulator.py` — Emulador de Kinect Zero-File em Memória (RAM Hook — 32-bit Legacy & 64-bit Legacy Lab)
-- **Responsabilidade:** Detecção instantânea do processo do Just Dance Legacy (32-bit `Legacy.exe`) e **Legacy Lab / Legacy Lab Offline (64-bit `Legacy Lab.exe`, `LegacyLab_Offline.exe`)** e injeção do sensor diretamente na memória RAM, sem modificar arquivos no disco:
+### 13. `kinect_emulator.py` — Emulador Zero-File em Memória (Kinect + PlayStation Move — 32-bit Legacy & 64-bit Legacy Lab)
+- **Responsabilidade:** Detecção instantânea do processo do Just Dance Legacy (32-bit `Legacy.exe`) e **Legacy Lab / Legacy Lab Offline (64-bit `Legacy Lab.exe`, `LegacyLab_Offline.exe`)** e injeção das DLLs proxy diretamente na memória RAM, sem modificar arquivos no disco:
   1. **Detecção Leve via Toolhelp32:** Varredura em tempo real (< 0.5 ms) identificando processos 32-bit (`Legacy.exe`, `JustDance.exe`) e 64-bit (`Legacy Lab.exe`, `LegacyLab_Offline.exe`), rejeitando launchers (`legacylab-launcher.exe`).
-  2. **Injeção de DLL Proxy Dinâmica (x86 / x64):** Injeta remotamente `tools/Legacy10.dll` (32 bits) ou `tools/Legacy10_x64.dll` (64 bits) através de `VirtualAllocEx`, `WriteProcessMemory` e `CreateRemoteThread(LoadLibraryW)`, com diagnóstico explícito de `ERROR_ACCESS_DENIED (5)` caso o jogo esteja rodando como Administrador e o sensor não.
-  3. **Sobrescrita Atômica da IAT & Delay-IAT (Import Address Table):** Localiza e atualiza os 8 ponteiros IAT ou Delay-IAT (`16, 5, 6, 21, 22, 9, 17, 26` + cache `HMODULE` do delay-loader em x64) para rotear as chamadas das funções do Kinect para o proxy em memória, que consome os canais `JDP2`/`JMI2`/`JDP1`/`JMI1`/`JXC1` (1 e 2 jogadores) do Legacy PSCam Sensor.
+  2. **Injeção Dupla de DLLs Proxy (x86 / x64):** Injeta remotamente `tools/Legacy10.dll` + `tools/LegacyMove.dll` (32 bits) ou `tools/Legacy10_x64.dll` + `tools/LegacyMove_x64.dll` (64 bits) através de `VirtualAllocEx`, `WriteProcessMemory` e `CreateRemoteThread(LoadLibraryW)` (com staging seguro em `%APPDATA%\LegacyPSCam_Sensor\tools\`), com diagnóstico explícito de `ERROR_ACCESS_DENIED (5)`.
+  3. **Sobrescrita Atômica da IAT & Delay-IAT (Import Address Table):** Atualiza os 8 ponteiros IAT/Delay-IAT do Kinect (canais `JDP2`/`JMI2`/`JDP1`/`JMI1`/`JXC1`), enquanto a `LegacyMove*.dll` faz seu próprio hook in-process de `SETUPAPI.dll`/`HID.DLL`/`KERNEL32.dll` (canal `Local\LegacyPSMoveState`) e expõe `psmove_hooked` em `get_status()`.
 
 ### 14. `player_slot.py` e `player_reid.py` — Pipeline Multi-Jogador (1P/2P) & Memória Re-ID Anti-Swap
 - **Responsabilidade:** Separação modular entre o estado cinemático/máscara por slot (`player_slot.py`: `PlayerSlotState`, `PlayerFrame`, `MultiPoseFrame`, `compose_player_index_mask`) e o motor de re-identificação/plausibilidade (`player_reid.py`: `AppearanceSignature`, `LongTermIdentityProfile`, `MultiPlayerAssociator`, `is_plausible_human_dancer`, `suppress_duplicate_poses`):
@@ -272,14 +268,14 @@ flowchart TD
   2. **Standby Throttling (<0.4% CPU):** Reduz a taxa de polling em idle para ~12 FPS no menu, eliminando consumo desnecessário de CPU antes do início da dança.
   3. **Handoff Atômico e Ativação Instantânea (`activate_live()`):** Ao clicar em "START TRACKING", a instância pré-aquecida é adotada instantaneamente pelo `tracking_session.py` com latência de ~0.3s (redução de 84% frente aos ~2.3s de negociação DirectShow fria).
   4. **Verificação de Compatibilidade (`is_compatible()`):** Se o usuário alterar resolução, preset, orientação ou olho da PS4 Camera, a instância anterior é reciclada com debounce de 300ms.
-  5. **Lazy Loading PEP 562:** Submódulos secundários (`phone_camera`, `virtual_phone`, `ds4_controller`, `telemetry_benchmark`) são carregados sob demanda apenas quando ativados pelo usuário, acelerando a inicialização da aplicação.
+  5. **Lazy Loading PEP 562:** Submódulos secundários (`phone_camera`, `psmove_shared_memory`, `ds4_controller`, `telemetry_benchmark`) são carregados sob demanda apenas quando ativados pelo usuário, acelerando a inicialização da aplicação.
 
 ### 16. `ui/controllers/` — Camada de Controle Desacoplada (MVP / Controller Facade)
 - **Responsabilidade:** Isola completamente a camada visual (`gui_qt.py`) da lógica de baixo nível, hardware, sockets e threads IPC:
   1. **`app_controller.py` (`SensorAppController`):** Fachada central (`QObject`) que atua como ponto único de coordenação entre os subcontroladores e a interface gráfica. Expõe sinais Qt thread-safe (`cameras_refreshed`, `pscam_state_changed`, `tracking_finished`), validação unificada pré-rastreamento (`validate_pre_tracking`) e limpeza determinística (`cleanup`).
   2. **`camera_controller.py` (`CameraController`):** Gerencia a descoberta de hardware PnP em tempo real, monitoramento da máquina de estados da PS4 Camera, thread pool de warm-up em standby com throttling adaptativo, compatibilidade de presets e transição atômica de câmera.
-  3. **`device_controller.py` (`DeviceController`):** Orquestra o ciclo de vida do servidor Phone Camera (HTTPS/WSS e geração PIL de QR Code), DualShock 4 (descoberta HID/Bluetooth, rumble, verificação de IMU congelada e leitura contínua de acelerômetro) e Celular Virtual UbiArt (reconexão, auto-descoberta UDP, bypass FTUE e auto-gravação de telemetria). Opera inteiramente sob demanda via PEP 562.
-  4. **`session_controller.py` (`SessionController`):** Gerencia a thread de execução do rastreamento corporal em background (`tracking_session.py`), a instância do emulador de Kinect na memória (`KinectEmulatorDaemon`) e o fechamento seguro dos canais de memória compartilhada Windows (`KinectBridge`).
+  3. **`device_controller.py` (`DeviceController`):** Orquestra o ciclo de vida do servidor Phone Camera (HTTPS/WSS e geração PIL de QR Code), DualShock 4 (descoberta HID/Bluetooth, rumble, verificação de IMU congelada, leitura contínua de acelerômetro e preferência de sincronia da Light Bar) e readout em tempo real da emulação PlayStation Move (`get_psmove_readout`). Opera inteiramente sob demanda via PEP 562.
+  4. **`session_controller.py` (`SessionController`):** Gerencia a thread de execução do rastreamento corporal/controle em background (`tracking_session.py`), a instância do emulador em memória (`KinectEmulatorDaemon`) e o fechamento seguro dos canais de memória compartilhada Windows (`KinectBridge` e `close_psmove_bridge`).
 
 ---
 

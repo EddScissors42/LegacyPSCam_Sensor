@@ -53,7 +53,7 @@ from ui.mixins import (
     UIDeviceReadoutMixin,
     UICameraHandlersMixin,
     UIPhoneHandlersMixin,
-    UIDS4VPhoneHandlersMixin,
+    UIDS4HandlersMixin,
     UITrackingHandlersMixin,
 )
 from ui.icons import (
@@ -83,7 +83,7 @@ class LegacySensorQtGUI(
     UIDeviceReadoutMixin,
     UICameraHandlersMixin,
     UIPhoneHandlersMixin,
-    UIDS4VPhoneHandlersMixin,
+    UIDS4HandlersMixin,
     UITrackingHandlersMixin,
 ):
     """Modern Crisp-White & PlayStation Blue primary window in Qt 6."""
@@ -202,13 +202,13 @@ class LegacySensorQtGUI(
             self.timer_periodic.timeout.connect(self._periodic_check)
             self.timer_periodic.start(1000)
 
-            # Fast UI readout timer for Virtual Phone status & accelerometer (150ms)
-            self.timer_vphone = QTimer(self)
-            self.timer_vphone.timeout.connect(self._update_vphone_ui_readout)
-            self.timer_vphone.start(150)
+            # Fast UI readout timer for DualShock 4, PlayStation Move Emulator & Phone Camera (150ms)
+            self.timer_device_readout = QTimer(self)
+            self.timer_device_readout.timeout.connect(self._update_device_readout)
+            self.timer_device_readout.start(150)
         else:
             self.timer_periodic = None
-            self.timer_vphone = None
+            self.timer_device_readout = None
 
     # =========================================================================
     # CONTROLLER DELEGATES & COMPATIBILITY PROPERTIES
@@ -220,14 +220,6 @@ class LegacySensorQtGUI(
     @property
     def _is_connecting_ds4(self) -> bool:
         return bool(getattr(self.controller.devices, "is_connecting_ds4", False))
-
-    @property
-    def vphone(self):
-        return self.controller.devices.vphone
-
-    @vphone.setter
-    def vphone(self, val):
-        self.controller.devices._vphone = val
 
     @property
     def camera_list(self):
@@ -614,8 +606,8 @@ class LegacySensorQtGUI(
         self._is_closing = True
         if hasattr(self, "timer_periodic") and self.timer_periodic is not None:
             self.timer_periodic.stop()
-        if hasattr(self, "timer_vphone") and self.timer_vphone is not None:
-            self.timer_vphone.stop()
+        if hasattr(self, "timer_device_readout") and self.timer_device_readout is not None:
+            self.timer_device_readout.stop()
         self.controller.cleanup()
         event.accept()
 

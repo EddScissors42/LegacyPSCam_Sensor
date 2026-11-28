@@ -344,8 +344,6 @@ class UITrackingHandlersMixin:
             self._update_start_button_state()
             return
 
-        if hasattr(self, "lbl_vphone_accel"):
-            self.lbl_vphone_accel.setVisible(True)
         self.btn_start.setText("TRACKING IN PROGRESS...")
         self.btn_start.setEnabled(False)
         self.showMinimized()
@@ -355,8 +353,6 @@ class UITrackingHandlersMixin:
         if getattr(self, "_is_closing", False):
             return
         self.is_tracking_active = False
-        if hasattr(self, "lbl_vphone_accel"):
-            self.lbl_vphone_accel.setVisible(False)
         self._update_start_button_state()
         self.showNormal()
         self.activateWindow()

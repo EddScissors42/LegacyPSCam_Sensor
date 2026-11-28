@@ -1,7 +1,7 @@
 """
 Device Controller for Legacy PSCam Sensor.
-Handles secondary peripherals: Phone Camera WebApp, DualShock 4 Controller,
-and Virtual Phone (UbiArt WebSocket / Smartphone Controller Emulator).
+Handles secondary peripherals: Phone Camera WebApp and DualShock 4 Controller
+(with native PlayStation Move ZCM2 emulation).
 Decoupled from Qt UI presentation. Fully lazy via PEP 562.
 """
 import sys
@@ -17,15 +17,13 @@ class DeviceController:
     """
     Manages non-optical hardware and network inputs:
     - Smartphone Camera WebApp (Wi-Fi HTTPS/WSS + QR Code)
-    - DualShock 4 & compatible clone controllers (Bluetooth/USB HID)
-    - Virtual Phone (UbiArt WebSocket emulating Just Dance Controller)
+    - DualShock 4 & compatible clone controllers (Bluetooth/USB HID -> PS Move ZCM2)
     """
     def __init__(self, config_manager: Optional[ConfigManager] = None):
         self.cfg_mgr = config_manager or ConfigManager()
         self.cfg = self.cfg_mgr.config
 
         # Lazy references & non-blocking DS4 probe/connect state
-        self._vphone = None
         self._ds4 = None
         self._ds4_conn_lock = threading.Lock()
         self._is_connecting_ds4 = False
@@ -164,6 +162,7 @@ class DeviceController:
         ds4.hand = str(self.cfg.get("ds4_hand", "right"))
         ds4.sensitivity = float(self.cfg.get("ds4_sensitivity", 1.0))
         ds4.permissive_mode = bool(self.cfg.get("ds4_permissive_mode", True))
+        ds4.sync_lightbar = bool(self.cfg.get("ds4_sync_lightbar", True))
 
     def get_ds4_readout(self) -> Dict[str, Any]:
         """Returns structured dictionary of DualShock 4 connection, battery and IMU metrics."""
@@ -300,124 +299,47 @@ class DeviceController:
         self.get_ds4().sensitivity = sens
         self.cfg_mgr.save()
 
-    # =========================================================================
-    # VIRTUAL PHONE CONTROLLER (UBIART WEBSOCKET EMULATOR)
-    # =========================================================================
-    @property
-    def vphone(self):
-        if self._vphone is None:
-            self._ensure_vphone_configured()
-        return self._vphone
-
-    def _ensure_vphone_configured(self):
-        if self._vphone is None:
-            import sensor
-            self._vphone = sensor.get_virtual_phone()
-            self._vphone.configure(
-                host=str(self.cfg.get("virtual_phone_host", "127.0.0.1")),
-                port=int(self.cfg.get("virtual_phone_port", 8080)),
-                hand=str(self.cfg.get("virtual_phone_hand", "right")),
-                sensitivity=float(self.cfg.get("virtual_phone_sensitivity", 1.0)),
-                phone_name=str(self.cfg.get("virtual_phone_name", "Legacy PSCam Phone")),
-                auto_record=bool(self.cfg.get("benchmark_auto_record", self.cfg.get("virtual_phone_auto_record", False))),
-                adaptive=bool(self.cfg.get("virtual_phone_adaptive", False)),
-            )
-        return self._vphone
-
-    def configure_vphone(self, host: str, port: int, hand: str, sens: float):
-        self.cfg["virtual_phone_host"] = host
-        self.cfg["virtual_phone_port"] = port
-        self.cfg["virtual_phone_hand"] = hand
-        self.cfg["virtual_phone_sensitivity"] = sens
-        self.vphone.configure(host=host, port=port, hand=hand, sensitivity=sens)
+    def set_ds4_sync_lightbar(self, enabled: bool):
+        self.cfg["ds4_sync_lightbar"] = bool(enabled)
+        self.get_ds4().sync_lightbar = bool(enabled)
         self.cfg_mgr.save()
 
-    def get_vphone_readout(self) -> Dict[str, Any]:
-        """Returns status readout of Virtual Phone emulator."""
-        if self._vphone is None and not (
-            self.cfg.get("virtual_phone_enabled", False)
-            or self.cfg.get("benchmark_auto_record", False)
-            or self.cfg.get("virtual_phone_auto_record", False)
-        ):
-            return {
-                "initialized": False,
-                "status_text": "Disabled (Virtual Phone)",
-                "connected": False,
-                "enabled": False,
-                "song_name": "",
-                "is_dancing": False,
-                "is_logging": False,
-            }
+    def get_psmove_readout(self) -> Dict[str, Any]:
+        """Returns live PlayStation Move (ZCM2) emulator link status and sphere color feedback."""
+        from sensor.kinect_emulator import get_kinect_emulator
+        from sensor.psmove_shared_memory import get_psmove_bridge
 
-        vp = self.vphone
-        return {
-            "initialized": True,
-            "status_text": vp.status_text,
-            "connected": vp.connected,
-            "enabled": vp.enabled,
-            "song_name": vp.current_song,
-            "is_dancing": vp.is_dancing,
-            "is_logging": vp.is_logging,
-        }
+        emu_st = get_kinect_emulator(self.cfg).get_status()
+        fb = get_psmove_bridge().read_feedback()
+        ds4 = self._ds4
+        streaming = bool(ds4 is not None and ds4.is_connected and ds4.psmove_streaming)
+        game_conn = bool(fb.get("game_connected", False)) and streaming
+        sphere_rgb = tuple(fb.get("led_rgb", (0, 67, 156))) if game_conn else (0, 67, 156)
+        game_name = emu_st.get("game_name", "")
 
-    def set_vphone_sensitivity(self, sens: float):
-        self.cfg["virtual_phone_sensitivity"] = float(sens)
-        self.vphone.configure(sensitivity=float(sens))
-        self.cfg_mgr.save()
-
-    def set_vphone_auto_record(self, enabled: bool):
-        self.cfg["benchmark_auto_record"] = bool(enabled)
-        self.cfg["virtual_phone_auto_record"] = bool(enabled)
-        self.vphone.set_auto_record(bool(enabled))
-        if enabled and not self.vphone.enabled:
-            self.vphone.set_enabled(True)
-        self.cfg_mgr.save()
-
-    def set_vphone_adaptive(self, enabled: bool):
-        self.cfg["virtual_phone_adaptive"] = bool(enabled)
-        self.vphone.set_adaptive_calibration(bool(enabled))
-        self.cfg_mgr.save()
-
-    def set_vphone_enabled(self, enabled: bool):
-        self.cfg["virtual_phone_enabled"] = bool(enabled)
-        self.vphone.set_enabled(bool(enabled))
-        self.cfg_mgr.save()
-
-    def request_vphone_reconnect(self):
-        self.vphone.request_reconnect()
-
-    def discover_vphone_server_async(self, timeout: float = 1.2, callback=None):
-        def worker():
-            res = self.vphone.discover_server(timeout=timeout)
-            if callback:
-                callback(res[0] if res else "", res[1] if res else 0, res[2] if res else "")
-        threading.Thread(target=worker, daemon=True, name="VPhoneDiscoverThread").start()
-
-    def send_vphone_skip_finish(self):
-        """Sends FTUE_FINISH shortcut packet for Just Dance tutorial."""
-        if not self.vphone.enabled:
-            self.vphone.set_enabled(True)
-        self.vphone.send_input("FTUE_FINISH")
-        self.vphone._ftue_until_ts = time.perf_counter() + 4.0
-
-    def toggle_vphone_logging(self, source: str = "camera") -> Tuple[bool, Optional[str]]:
-        """Toggles accelerometer telemetry recording. Returns (is_logging, path_if_saved)."""
-        vp = self.vphone
-        if not vp.is_logging:
-            path = vp.set_logging(True, source=source)
-            return True, path
+        if game_conn:
+            status_text = f"Connected to {game_name or 'Just Dance'} (ZCM2 Active)"
+        elif streaming and emu_st.get("psmove_hooked"):
+            status_text = f"Streaming to {game_name or 'Just Dance'} — Discovering PS Move..."
+        elif streaming:
+            status_text = "Streaming Ready — Waiting for Just Dance..."
+        elif emu_st.get("psmove_hooked"):
+            status_text = f"Hook Ready ({game_name}) — Click START CONTROLLER (DS4)"
         else:
-            saved_path = vp.log_path
-            vp.set_logging(False)
-            return False, saved_path
+            status_text = "Ready — Click START CONTROLLER (DS4) to emulate PS Move"
+
+        return {
+            "streaming": streaming,
+            "game_connected": game_conn,
+            "psmove_hooked": bool(emu_st.get("psmove_hooked", False)),
+            "game_name": game_name,
+            "sphere_rgb": sphere_rgb,
+            "rumble": int(fb.get("rumble", 0)) if game_conn else 0,
+            "status_text": status_text,
+        }
 
     def cleanup(self):
         """Safely terminates all secondary device services without waking uninstantiated modules."""
-        if self._vphone is not None:
-            try:
-                self._vphone.stop()
-            except Exception:
-                pass
         if self._ds4 is not None:
             try:
                 self._ds4.disconnect()

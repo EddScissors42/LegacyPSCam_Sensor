@@ -38,8 +38,21 @@ from sensor.pose_tracker import (
 )
 from sensor.camera_manager import CameraManager, FrameBusReader
 from sensor.tracking_overlay import TrackingOverlay
-from sensor.virtual_phone import (
-    VirtualPhoneController, HandAccelerometer, get_virtual_phone, PHONE_INPUT_HASHES
+from sensor.psmove_shared_memory import (
+    PSMoveSharedMemory,
+    PSMOVE_SHARED_SIZE,
+    PSMOVE_MAGIC,
+    PSMOVE_ACCEL_COUNTS_PER_G,
+    PSMOVE_GYRO_COUNTS_PER_RAD_S,
+    PSMOVE_BTN_MOVE,
+    PSMOVE_BTN_TRIGGER,
+    PSMOVE_BTN_CROSS,
+    PSMOVE_BTN_CIRCLE,
+    PSMOVE_BTN_START,
+    ds4_to_psmove_imu,
+    buttons_dict_to_psmove_mask,
+    encode_zcm2_input_report,
+    encode_psmove_battery,
 )
 from sensor.session_logger import SessionLogger, get_session_logger, TELEMETRY_CSV_HEADER
 
@@ -65,29 +78,12 @@ def test_config():
     assert "ds4_permissive_mode" in cfg
     assert isinstance(cfg["ds4_permissive_mode"], bool)
     assert DEFAULT_CONFIG["ds4_permissive_mode"] is True
+    assert DEFAULT_CONFIG["ds4_sync_lightbar"] is True
+    assert "virtual_phone_enabled" not in DEFAULT_CONFIG, "Legacy Virtual Phone config keys must be removed"
     assert parse_preset("1280x800 @ 60 FPS") == (1280, 800, 60)
     assert parse_preset("640x480 @ 30 FPS") == (640, 480, 30)
     assert "1280x800 @ 60 FPS" in PRESETS_PSCAM
     assert "640x480 @ 30 FPS" in PRESETS_WEBCAM
-
-    # Verify VirtualPhoneController.set_logging (import re) & JD_PhoneDataCmdSyncEnd (self.accelerometer.hand)
-    from sensor.virtual_phone import VirtualPhoneController
-    with tempfile.TemporaryDirectory() as td:
-        vp = VirtualPhoneController()
-        csv_path = str(Path(td) / "vphone_test.csv")
-        out_path = vp.set_logging(True, custom_path=csv_path, map_name="Rasputin!@#")
-        assert out_path == csv_path and Path(csv_path).exists()
-        vp.set_logging(False)
-
-        class _DummyWS:
-            def __init__(self):
-                self.sent = []
-            def send_text(self, txt):
-                self.sent.append(txt)
-
-        dws = _DummyWS()
-        vp._handle_incoming_message(dws, '{"__class":"JD_PhoneDataCmdSyncEnd","phoneID":7}')
-        assert vp._handshake_complete is True and len(dws.sent) == 1
 
     # Test custom path isolation
     with tempfile.TemporaryDirectory() as td:
@@ -659,7 +655,7 @@ def test_overlay():
     assert overlay.toggle_pip() is False
     assert overlay.pip_mode is False
 
-    # Test Controller Tracking HUD (PlayStation Floating Glass Pills & Motion Aura)
+    # Test Controller Tracking HUD (PlayStation Move ZCM2 Floating Glass Pills)
     ds4_canvas = np.zeros((480, 640, 3), dtype=np.uint8)
     ds4_canvas = overlay.draw_controller_hud(
         ds4_canvas,
@@ -672,13 +668,11 @@ def test_overlay():
         is_charging=False,
         is_connected=True,
         imu_frozen=False,
-        vphone_status="Connected",
-        vphone_connected=True,
+        psmove_status="Linked (Legacy Lab.exe)",
+        psmove_connected=True,
+        sphere_rgb=(255, 0, 128),
         tot_g=1.05,
-        current_coach=0,
-        total_coaches=4,
-        song_name="Levitating",
-        action_toast="Switched to Coach 1",
+        action_toast="DualShock 4 Reconnected",
         accel_axes=(0.15, 0.98, -0.05),
         gyro_axes=(12, -4, 0),
     )
@@ -807,13 +801,17 @@ def test_project_structure():
     assert (BASE_DIR / "sensor" / "gesture_detector.py").exists(), "sensor/gesture_detector.py must exist"
     assert (BASE_DIR / "sensor" / "qr_encoder.py").exists(), "sensor/qr_encoder.py must exist"
     assert (BASE_DIR / "sensor" / "tls_manager.py").exists(), "sensor/tls_manager.py must exist"
-    assert (BASE_DIR / "sensor" / "vphone_protocol.py").exists(), "sensor/vphone_protocol.py must exist"
+    assert (BASE_DIR / "sensor" / "psmove_shared_memory.py").exists(), "sensor/psmove_shared_memory.py must exist"
+    assert not (BASE_DIR / "sensor" / "virtual_phone.py").exists(), "Legacy sensor/virtual_phone.py must be removed"
+    assert not (BASE_DIR / "sensor" / "vphone_protocol.py").exists(), "Legacy sensor/vphone_protocol.py must be removed"
     assert (BASE_DIR / "ui" / "styles.py").exists(), "ui/styles.py must exist"
     assert (BASE_DIR / "ui" / "mixins").is_dir(), "ui/mixins/ package must exist"
     assert (BASE_DIR / "ui" / "mixins" / "device_readout.py").exists(), "ui/mixins/device_readout.py must exist"
     assert (BASE_DIR / "ui" / "mixins" / "camera_handlers.py").exists(), "ui/mixins/camera_handlers.py must exist"
     assert (BASE_DIR / "ui" / "mixins" / "phone_handlers.py").exists(), "ui/mixins/phone_handlers.py must exist"
-    assert (BASE_DIR / "ui" / "mixins" / "ds4_vphone_handlers.py").exists(), "ui/mixins/ds4_vphone_handlers.py must exist"
+    assert (BASE_DIR / "ui" / "mixins" / "ds4_handlers.py").exists(), "ui/mixins/ds4_handlers.py must exist"
+    assert not (BASE_DIR / "ui" / "mixins" / "ds4_vphone_handlers.py").exists(), "Legacy ds4_vphone_handlers.py must be removed"
+    assert not (BASE_DIR / "ui" / "benchmark_dialog.py").exists(), "Legacy ui/benchmark_dialog.py must be removed"
     assert (BASE_DIR / "ui" / "mixins" / "tracking_handlers.py").exists(), "ui/mixins/tracking_handlers.py must exist"
     assert not (BASE_DIR / "ui" / "device_readout_mixin.py").exists(), "Legacy ui/device_readout_mixin.py must be moved into ui/mixins/"
     assert hasattr(sensor, "ArmRaiseGestureDetector")
@@ -874,20 +872,12 @@ def test_project_structure():
         assert win.font_heading == "National Park", f"Expected National Park heading font, got {win.font_heading}"
         assert win.font_body == "Inter Tight", f"Expected Inter Tight body font, got {win.font_body}"
 
-        # Verification of Experimental tab and Virtual Phone controls inside it
+        # Verification of Experimental tab (Virtual Phone & Benchmark removed)
         assert hasattr(win, "btn_tab_exp"), "Experimental tab button must exist"
         assert hasattr(win, "page_exp"), "Experimental page widget must exist"
-        assert hasattr(win, "chk_vphone_enabled"), "Celular Virtual toggle must exist in Experimental"
-        assert hasattr(win, "btn_vphone_ftue"), "Skip Finish button must exist in Celular Virtual block"
-        assert hasattr(win, "benchmark_box") and not win.benchmark_box.isVisible(), "Benchmark feature box must exist preserved but hidden from UI"
-        assert hasattr(win, "chk_benchmark_enabled"), "Benchmark auto-record toggle must exist"
-        assert hasattr(win, "lbl_benchmark_song"), "Benchmark song label must exist"
-        assert hasattr(win, "btn_open_benchmark"), "Benchmark open button must exist"
-        assert hasattr(win, "chk_benchmark_adaptive"), "Benchmark adaptive calibration toggle must exist"
-        assert hasattr(win, "lbl_vphone_song"), "Song label alias must exist"
-        assert hasattr(win, "btn_vphone_benchmark"), "Benchmark button alias must exist"
-        assert hasattr(win, "chk_vphone_auto_record"), "Auto record checkbox alias must exist"
-        assert hasattr(win, "chk_vphone_adaptive"), "Adaptive calibration checkbox alias must exist"
+        assert not hasattr(win, "chk_vphone_enabled"), "Virtual Phone toggle must be removed from UI"
+        assert not hasattr(win, "vphone_box"), "Virtual Phone box must be removed from UI"
+        assert not hasattr(win, "benchmark_box"), "Legacy Benchmark box must be removed from UI"
         assert not hasattr(win, "stereo_box"), "Stereo Vision feature box must be removed from UI"
         assert not hasattr(win, "chk_stereo"), "Stereo Vision toggle checkbox must be removed from UI"
         assert win.cfg.get("stereo_mode") == "sparse_metric", "Stereo Vision must be enabled by default (sparse_metric)"
@@ -907,86 +897,42 @@ def test_project_structure():
         else:
             assert not win.btn_tab_exp.isEnabled(), "Experimental tab must be disabled when camera is not accessible"
 
-        # Verify VirtualPhoneController & HandAccelerometer physics and JSON packets
-        import json
-        ha = HandAccelerometer(hand="right", sensitivity=1.2)
-        j_frame1 = [list(j) for j in NEUTRAL_POSE]
-        j_frame1[9] = (0.25, 0.15, 2.0, 0.95)   # ElbowRight
-        j_frame1[10] = (0.30, 0.25, 1.95, 0.95) # WristRight
-        j_frame1[11] = (0.35, 0.30, 1.90, 0.95) # HandRight
-        acc1 = ha.update(j_frame1, True, now=1.000)
-        assert len(acc1) == 3
-
-        # Fast upward/lateral whip of the right hand over 16ms (60 FPS)
-        j_frame2 = [list(j) for j in j_frame1]
-        j_frame2[10] = (0.55, 0.65, 1.80, 0.95)
-        j_frame2[11] = (0.65, 0.75, 1.75, 0.95)
-        acc2 = ha.update(j_frame2, True, now=1.016)
-        assert abs(acc2[0]) > 0.5 or abs(acc2[1]) > 0.5, f"Expected dynamic G-force spike on fast hand whip, got {acc2}"
-        acc2_mag = math.sqrt(acc2[0]**2 + acc2[1]**2 + acc2[2]**2)
-        assert acc2_mag <= 7.0001, f"Expected vector magnitude clamped to MAX_G (7.0), got {acc2_mag}"
-        assert not hasattr(win, "slider_vphone_sens"), "Sensitivity slider must be removed from GUI per user specifications"
-
-        score_pkt = json.loads(VirtualPhoneController.build_scoring_packet([acc2]))
-        assert "root" in score_pkt and score_pkt["root"]["__class"] == "JD_PhoneScoringData"
-        assert len(score_pkt["root"]["accelData"]) == 1
-        assert len(score_pkt["root"]["accelData"][0]) == 3
-        assert PHONE_INPUT_HASHES["VALID"] == 1084313942
-        assert PHONE_INPUT_HASHES["UP"] == 3690595578
-
-        # Verify VirtualPhoneController.update_from_hardware_accel
-        vp = get_virtual_phone()
-        hw_accel = vp.update_from_hardware_accel(0.05, 1.02, 0.22)
-        assert hw_accel == (0.05, 1.02, 0.22)
-        assert vp.latest_accel == (0.05, 1.02, 0.22)
-
-        # Verify DualShock 4 UI controls and tab switching
+        # Verify DualShock 4 & PlayStation Move Emulator UI controls and tab switching
         assert hasattr(win, "card_ds4"), "DualShock 4 sidebar card must exist"
         assert hasattr(win, "btn_tab_controller"), "Controller Settings tab button must exist"
         assert hasattr(win, "page_ds4"), "DualShock 4 page widget must exist"
         assert hasattr(win, "btn_ds4_rumble"), "Test rumble button must exist in DS4 view"
         assert hasattr(win, "btn_ds4_reconnect"), "Reconnect button must exist in DS4 view"
         assert hasattr(win, "chk_ds4_permissive"), "Permissive mode checkbox must exist in DS4 settings"
-        assert hasattr(win, "scoring_bridge_box"), "Scoring Bridge pill must exist in Controller Settings"
-        assert hasattr(win, "btn_ds4_sb_reconnect"), "Reconnect Game button must exist in Scoring Bridge"
-        assert win.btn_ds4_sb_reconnect.text() == "Reconnect Game", "Button text must be 'Reconnect Game'"
-        assert hasattr(win, "btn_ds4_sb_discover"), "Auto-Find button must exist in Scoring Bridge"
-        assert win.btn_ds4_sb_discover.text() == "Auto-Find", "Button text must be 'Auto-Find'"
-        assert hasattr(win, "btn_ds4_sb_ftue"), "Skip Finish button must exist in Scoring Bridge"
-        assert win.btn_ds4_sb_ftue.text() == "Skip Finish", "Button text must be 'Skip Finish'"
+        assert hasattr(win, "psmove_bridge_box"), "PlayStation Move Emulator card must exist in Controller Settings"
+        assert hasattr(win, "lbl_ds4_pm_status"), "PlayStation Move Emulator status label must exist"
+        assert hasattr(win, "lbl_psmove_swatch"), "PlayStation Move sphere swatch must exist"
+        assert hasattr(win, "chk_ds4_sync_lightbar"), "Light Bar sync checkbox must exist"
+        assert not hasattr(win, "scoring_bridge_box"), "Legacy Virtual Phone Scoring Bridge must be removed"
 
         # Verify Experimental features ARE visible in Camera modes (pscam/webcam/phone_cam)
         for cam_mode in ("pscam", "webcam", "phone_cam"):
             win._set_mode(cam_mode, animate=False)
             assert not win.auto_frame_box.isHidden(), f"Auto-Frame box must be visible in {cam_mode} mode"
-            assert not win.vphone_box.isHidden(), f"Virtual Phone box must be visible in {cam_mode} mode"
             assert win.lbl_exp_empty.isHidden(), f"Empty placeholder must be hidden in {cam_mode} mode"
 
         win._set_mode("ds4")
         assert win.active_tab == "controller", "Should switch to controller settings tab on ds4 mode"
         assert not win.btn_tab_controller.isHidden(), "Controller settings tab must be visible in ds4 mode"
         assert not win.btn_tab_exp.isHidden(), "Experimental tab must be visible in ds4 mode"
-        assert win.chk_vphone_enabled.isChecked(), "Virtual phone must be checked in ds4 mode"
-        assert not win.chk_vphone_enabled.isEnabled(), "Virtual phone checkbox must be disabled/locked in ds4 mode"
-        assert not win.vphone_details_frame.isHidden(), "Virtual phone telemetry details must not be hidden in ds4 mode"
         assert win.auto_frame_box.isHidden(), "Auto-frame box must be hidden in ds4 mode"
-        assert win.vphone_box.isHidden(), "Virtual Phone box in Experimental must be hidden in ds4 mode"
         assert not win.lbl_exp_empty.isHidden(), "Experimental empty placeholder must be visible in ds4 mode"
         assert not hasattr(win, "emulate_kinect_box"), "Emulate Kinect box must be removed from Experimental UI"
         assert not hasattr(win, "chk_emulate_kinect"), "Emulate Kinect checkbox must be removed from Experimental UI"
         assert not hasattr(win, "lbl_emulate_tip"), "Sidebar Emulate Kinect reminder must be removed"
-        assert not hasattr(win, "lbl_vphone_kinect_conflict"), "Conflict label must be removed (no mutual exclusion)"
         win._switch_tab("exp")
         assert win.active_tab == "exp", "Should be able to switch to experimental tab in ds4 mode"
         assert win.btn_tab_exp.isEnabled(), "Experimental tab must be enabled in ds4 mode"
 
-        # Verify Emulate Kinect is ALWAYS active and does NOT disable Virtual Phone Controller
+        # Verify Emulate Kinect + PS Move daemon stays active in both camera and DS4 modes
         assert win.cfg.get("emulate_kinect_enabled") is True, "Emulate Kinect must always be enabled"
         assert win.kinect_emulator.enabled is True and win.kinect_emulator._running is True, "KinectEmulatorDaemon must always be running"
-        win._set_mode("webcam")
-        assert win.chk_vphone_enabled.isEnabled(), "Virtual Phone must remain enabled alongside always-on Emulate Kinect"
         win._set_mode("ds4")
-        assert win.chk_vphone_enabled.isChecked(), "vphone must be checked in ds4 mode"
         assert win.kinect_emulator._running is True, "KinectEmulatorDaemon must stay active in ds4 mode"
 
         win._set_mode("webcam")
@@ -1025,13 +971,10 @@ def test_project_structure():
     assert detect_controller_name("hid#vid_9999&pid_8888") == "Generic / Clone DS4"
 
     from ui.widgets import pil_to_qpixmap, SlidingStackedWidget, DeviceNavCard, CalibPresetCard
-    from ui.benchmark_dialog import TelemetryBenchmarkChart, TelemetryBenchmarkDialog
     assert callable(pil_to_qpixmap)
     assert SlidingStackedWidget is not None
     assert DeviceNavCard is not None
     assert CalibPresetCard is not None
-    assert TelemetryBenchmarkChart is not None
-    assert TelemetryBenchmarkDialog is not None
 
     import assets
     assert hasattr(assets, "ASSETS_DIR")
@@ -1056,57 +999,84 @@ def test_project_structure():
     print("  -> Modular Project Structure PASSED")
 
 def test_telemetry_and_adaptive_benchmark():
-    print("[TEST] Telemetry Benchmark & Adaptive Calibration...")
+    print("[TEST] Telemetry Benchmark & PS Move ZCM2 Emulation Protocol...")
     import math
     import tempfile
     from pathlib import Path
-    from sensor.virtual_phone import AdaptiveCalibrationTuner, get_virtual_phone
     from sensor.telemetry_benchmark import parse_telemetry_csv, compare_telemetries, find_available_benchmarks
 
-    # 1. Test AdaptiveCalibrationTuner
-    tuner = AdaptiveCalibrationTuner(base_sensitivity=1.2)
-    assert tuner.current_sensitivity == 1.2
-    assert tuner.multiplier == 1.0
-    assert tuner.enabled is False
+    # 1. Test PlayStation Move ZCM2 Shared Memory IPC (PSM1 128B Seqlock + Feedback round-trip)
+    test_shm = PSMoveSharedMemory(name="Local\\LegacyPSMoveState_UnitTest")
+    try:
+        st0 = test_shm.read_sensor_state()
+        assert st0["magic"] == PSMOVE_MAGIC
+        assert st0["active"] is False
 
-    # Disabled: feedback should not adjust multiplier
-    tuner.on_feedback("OK", current_speed=1.5, current_accel=(1.5, 2.5, 1.0))
-    assert tuner.multiplier == 1.0
-    assert tuner.counts["OK"] == 1
+        # Vertical thumbs-up DS4 grip: Light Bar pointing UP -> DS4 accel (0, 0, -1g) maps to PS Move (0, +4400, 0)
+        acc_c, gyro_c = ds4_to_psmove_imu((0.0, 0.0, -1.0), (0.0, 0.0, -1.0), grip="vertical")
+        assert acc_c == (0, int(PSMOVE_ACCEL_COUNTS_PER_G), 0), f"Unexpected vertical accel mapping: {acc_c}"
+        assert gyro_c == (0, int(PSMOVE_GYRO_COUNTS_PER_RAD_S), 0), f"Unexpected vertical gyro mapping: {gyro_c}"
 
-    # Enabled: feedback on fast movement should gently boost sensitivity (+3%)
-    tuner.enabled = True
-    tuner._last_adjust_ts = 0.0  # bypass rate limiter
-    mult = tuner.on_feedback("OK", current_speed=1.5, current_accel=(1.5, 2.5, 1.0))
-    assert mult > 1.0
-    assert tuner.current_sensitivity > 1.2
+        btn_mask = buttons_dict_to_psmove_mask(
+            {"cross": True, "circle": True, "options": True, "r2": True},
+            trigger_analog=240,
+        )
+        assert btn_mask & PSMOVE_BTN_CROSS
+        assert btn_mask & PSMOVE_BTN_MOVE
+        assert btn_mask & PSMOVE_BTN_CIRCLE
+        assert btn_mask & PSMOVE_BTN_START
+        assert btn_mask & PSMOVE_BTN_TRIGGER
 
-    # Summary
-    summary = tuner.get_summary()
-    assert summary["total_moves"] == 2
-    assert summary["counts"]["OK"] == 2
-    assert "current_sensitivity" in summary
+        assert encode_psmove_battery(100, is_charging=False) == 5
+        assert encode_psmove_battery(50, is_charging=True) == 0xEE
+        assert encode_psmove_battery(100, is_charging=True) == 0xEF
 
-    # Reset
-    tuner.reset_song("TestMap")
-    assert tuner.total_moves == 0
-    assert tuner.counts["OK"] == 0
+        test_shm.write_state(
+            active=True,
+            accel_counts=acc_c,
+            gyro_counts=gyro_c,
+            buttons_mask=btn_mask,
+            trigger_analog=240,
+            battery_code=5,
+        )
+        st1 = test_shm.read_sensor_state()
+        assert st1["active"] is True
+        assert (st1["seq"] & 1) == 0, "Seqlock must end on even sequence number"
+        assert st1["accel_counts"] == acc_c
+        assert st1["gyro_counts"] == gyro_c
+        assert st1["buttons_mask"] == btn_mask
+        assert st1["trigger_analog"] == 240
 
-    # 2. Test VirtualPhoneController auto-record and song tracking
-    vp = get_virtual_phone()
-    vp.set_auto_record(True)
-    assert vp.auto_record_enabled is True
-    vp.set_adaptive_calibration(True)
-    assert vp.adaptive_tuner.enabled is True
+        # Verify 49-byte ZCM2 HID Input Report 0x01 byte layout
+        rep = encode_zcm2_input_report(acc_c, gyro_c, btn_mask, trigger_analog=240, battery_code=5, seq4=9, ts16=0x1234)
+        assert len(rep) == 49 and rep[0] == 0x01
+        assert (rep[4] & 0x0F) == 9
+        assert rep[5] == 240
+        assert rep[11] == 0x12 and rep[43] == 0x34
+        assert rep[12] == 5
+        assert struct.unpack_from("<hhh", rep, 13) == acc_c
+        assert struct.unpack_from("<hhh", rep, 25) == gyro_c
 
-    # 3. Test Telemetry Benchmark with synthetic data
+        # Verify Game -> Sensor feedback round-trip (RGB sphere color & Gold Move rumble)
+        test_shm.write_feedback_for_test(True, (255, 40, 180), rumble=200, game_pid=4242, fb_seq=7)
+        fb = test_shm.read_feedback()
+        assert fb["game_connected"] is True
+        assert fb["led_rgb"] == (255, 40, 180)
+        assert fb["rumble"] == 200
+        assert fb["game_pid"] == 4242
+        assert fb["fb_seq"] == 7
+
+        test_shm.write_inactive()
+        assert test_shm.read_sensor_state()["active"] is False
+    finally:
+        test_shm.close()
+
+    # 2. Test Telemetry Benchmark CSV Comparator with synthetic data
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp_path = Path(tmp_dir)
         cam_file = tmp_path / "Levitating_camera_1001.csv"
         ds4_file = tmp_path / "Levitating_ds4_1002.csv"
 
-        # Generate 6 seconds of 60Hz synthetic telemetry (360 samples)
-        # Periodic peaks every 1.0s
         with open(cam_file, "w", encoding="utf-8") as f:
             f.write("timestamp_ms,ax,ay,az,speed_mps,alpha,hand_x,hand_y,hand_z,is_tracked,source,map_name,feedback\n")
             for i in range(360):
@@ -1123,13 +1093,12 @@ def test_telemetry_and_adaptive_benchmark():
             for i in range(360):
                 ts = 1000 + i * 16 + 32  # 32ms lag
                 t = i / 60.0
-                peak = math.sin(t * 2 * math.pi) * 2.6  # slightly higher peak
+                peak = math.sin(t * 2 * math.pi) * 2.6
                 ax = peak
                 ay = -1.0 + (peak * 0.5)
                 az = 0.1
                 f.write(f"{ts},{ax:.4f},{ay:.4f},{az:.4f},0.0,1.0,0.0,0.0,0.0,1,ds4,Levitating,\n")
 
-        # Parse CSVs
         cam_data = parse_telemetry_csv(cam_file)
         ds4_data = parse_telemetry_csv(ds4_file)
         assert cam_data["map_name"] == "Levitating"
@@ -1139,7 +1108,6 @@ def test_telemetry_and_adaptive_benchmark():
         assert cam_data["sample_count"] == 360
         assert ds4_data["sample_count"] == 360
 
-        # Run comparison
         res = compare_telemetries(cam_data, ds4_data, current_sensitivity=1.2)
         assert res["map_name"] == "Levitating"
         assert res["correlation_pct"] > 80.0, f"Expected high correlation, got {res['correlation_pct']}%"
@@ -1149,20 +1117,12 @@ def test_telemetry_and_adaptive_benchmark():
         assert len(res["chart_cam"]) == len(res["chart_t"])
         assert len(res["chart_ds4"]) == len(res["chart_t"])
 
-        # Check find_available_benchmarks
         benchmarks = find_available_benchmarks(tmp_path)
         assert len(benchmarks) == 1
         assert benchmarks[0]["map_name"] == "Levitating"
         assert benchmarks[0]["is_ready"] is True
 
-        # Check Just Dance process and song discovery helpers
-        from sensor.virtual_phone import find_just_dance_pids, detect_active_song_from_game_process
-        pids = find_just_dance_pids()
-        assert isinstance(pids, list)
-        song_str = detect_active_song_from_game_process()
-        assert isinstance(song_str, str)
-
-    print("  -> Telemetry Benchmark & Adaptive Calibration PASSED")
+    print("  -> Telemetry Benchmark & PS Move ZCM2 Emulation Protocol PASSED")
 
 def test_ps4_native_backend():
     print("[TEST] PS4 Native WinUSB Backend (Driver, Firmware, UVC Depacketizer, Stereo Demux & Live HW)...")
@@ -1640,6 +1600,17 @@ def test_kinect_emulator():
     spec_src = (base_dir / "legacy_pscam_sensor.spec").read_text(encoding="utf-8")
     assert "VSVersionInfo" in spec_src and "version=pe_version_info" in spec_src, "PyInstaller spec must embed VSVersionInfo PE metadata"
     assert "Legacy10_x64.dll" in spec_src, "PyInstaller spec must bundle tools/Legacy10_x64.dll for 64-bit Legacy Lab"
+    assert "LegacyMove.dll" in spec_src and "LegacyMove_x64.dll" in spec_src, "PyInstaller spec must bundle LegacyMove.dll and LegacyMove_x64.dll"
+
+    # Verify PS Move proxy DLLs (PE32 x86 + PE32+ x64)
+    move32_path = base_dir / "tools" / "LegacyMove.dll"
+    move64_path = base_dir / "tools" / "LegacyMove_x64.dll"
+    assert move32_path.is_file() and move64_path.is_file(), "LegacyMove.dll (x86) and LegacyMove_x64.dll (x64) must exist in tools/"
+    m32_bytes = move32_path.read_bytes()
+    m64_bytes = move64_path.read_bytes()
+    assert m32_bytes[:2] == b"MZ" and m64_bytes[:2] == b"MZ"
+    assert struct.unpack_from("<H", m32_bytes, struct.unpack_from("<I", m32_bytes, 0x3C)[0] + 24)[0] == 0x010B, "LegacyMove.dll must be PE32 (32-bit)"
+    assert struct.unpack_from("<H", m64_bytes, struct.unpack_from("<I", m64_bytes, 0x3C)[0] + 24)[0] == 0x020B, "LegacyMove_x64.dll must be PE32+ (64-bit)"
 
     # 4. Test Daemon Instantiation & Lifecycle
     daemon = KinectEmulatorDaemon({"emulate_kinect_enabled": False})
@@ -2382,7 +2353,12 @@ def test_phone_camera_webapp():
                     assert srv.client_device_name == "iPhone (iOS Safari)"
 
                     assert srv.streaming_active is True, "LatestFrameCamera must activate phone streaming"
-                    edge_data = cam.read_edge_metrics(only_new=True)
+                    edge_data = None
+                    for _ in range(25):
+                        edge_data = cam.read_edge_metrics(only_new=True)
+                        if edge_data is not None:
+                            break
+                        time.sleep(0.01)
                     assert edge_data is not None and edge_data.get("ts_ms") == 123456789
                 finally:
                     cam.release()

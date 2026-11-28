@@ -63,10 +63,10 @@ class TestControllersAndCLI(unittest.TestCase):
                 os.environ["LEGACY_PSCAM_PORTABLE"] = prev
 
     def test_sensor_lazy_exports_complete(self):
-        for submod in ("model_manager", "player_reid", "qr_encoder", "tls_manager", "vphone_protocol"):
+        for submod in ("model_manager", "player_reid", "qr_encoder", "tls_manager", "psmove_shared_memory"):
             mod = getattr(sensor, submod)
             self.assertIsNotNone(mod)
-        for sym in ("avg", "lerp", "suppress_duplicate_poses", "QRCodeGenerator", "SelfSignedTLSManager"):
+        for sym in ("avg", "lerp", "suppress_duplicate_poses", "QRCodeGenerator", "SelfSignedTLSManager", "PSMoveSharedMemory"):
             self.assertIn(sym, sensor.__all__)
             self.assertIsNotNone(getattr(sensor, sym))
 
@@ -111,7 +111,7 @@ class TestControllersAndCLI(unittest.TestCase):
             UIDeviceReadoutMixin,
             UICameraHandlersMixin,
             UIPhoneHandlersMixin,
-            UIDS4VPhoneHandlersMixin,
+            UIDS4HandlersMixin,
             UITrackingHandlersMixin,
         )
 
@@ -119,7 +119,7 @@ class TestControllersAndCLI(unittest.TestCase):
             UIDeviceReadoutMixin,
             UICameraHandlersMixin,
             UIPhoneHandlersMixin,
-            UIDS4VPhoneHandlersMixin,
+            UIDS4HandlersMixin,
             UITrackingHandlersMixin,
         ):
             self.assertTrue(issubclass(LegacySensorQtGUI, mixin_cls))
@@ -224,15 +224,15 @@ class TestControllersAndCLI(unittest.TestCase):
 
                 win = LegacySensorQtGUI(auto_discover=False)
                 try:
-                    # Scoring Bridge MUST live inside ds4_info_frame so it only shows when DS4 is connected
-                    self.assertIs(win.scoring_bridge_box.parent(), win.ds4_info_frame)
+                    # PlayStation Move Emulator card MUST live inside ds4_info_frame so it only shows when DS4 is connected
+                    self.assertIs(win.psmove_bridge_box.parent(), win.ds4_info_frame)
                     self.assertTrue(win.ds4_info_frame.isHidden())
                     self.assertFalse(win.ds4_disconnected_box.isHidden())
-                    # Switching to ds4 mode without controller keeps ds4_info_frame (and Scoring Bridge) hidden
+                    # Switching to ds4 mode without controller keeps ds4_info_frame (and PS Move card) hidden
                     win._set_mode("ds4")
                     win._update_ds4_ui_readout()
                     self.assertTrue(win.ds4_info_frame.isHidden())
-                    self.assertFalse(win.scoring_bridge_box.isVisible())
+                    self.assertFalse(win.psmove_bridge_box.isVisible())
                 finally:
                     win.controller.cleanup()
                     win.close()
